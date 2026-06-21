@@ -1,0 +1,338 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { useModelStore } from '@/store'
+import { Input } from '@/ui/components/Input'
+import { Select } from '@/ui/components/Select'
+import { Button } from '@/ui/components/Button'
+import { notationRegistry } from '@/core/notation'
+import { NodeTypePicker, TypeSwatch } from '@/features/editor-graph/NodeTypePicker'
+
+/** Searchable element-type selector — same picker as the canvas add-node menu. */
+function TypeField({ value, onPick }: { value: string; onPick: (type: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const def = notationRegistry.getElementDef(value)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('mousedown', h)
+    return () => window.removeEventListener('mousedown', h)
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex w-full items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-sm text-[var(--fg)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:outline-none"
+      >
+        {def && <TypeSwatch t={def} size={14} />}
+        <span className="truncate">{def?.label ?? value}</span>
+        <span className="ml-auto shrink-0 text-[var(--fg-subtle)]">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 z-50 mt-1 max-h-72 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl">
+          <NodeTypePicker
+            currentType={value}
+            showRecents={false}
+            onPick={t => { onPick(t); setOpen(false) }}
+            onClose={() => setOpen(false)}
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">{label}</label>
+      {children}
+    </div>
+  )
+}
+
+/** Debounced live commit. */
+function useLiveField<T>(value: T, commit: (v: T) => void, delay = 250) {
+  const [local, setLocal] = useState(value)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const committedRef = useRef(value)
+
+  useEffect(() => { setLocal(value); committedRef.current = value }, [value])
+
+  const onChange = useCallback((v: T) => {
+    setLocal(v)
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => {
+      if (v !== committedRef.current) { committedRef.current = v; commit(v) }
+    }, delay)
+  }, [commit, delay])
+
+  const flush = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current)
+    if (local !== committedRef.current) { committedRef.current = local; commit(local) }
+  }, [local, commit])
+
+  return [local, onChange, flush] as const
+}
+
+function ElementProperties({ elementId }: { elementId: string }) {
+  const element = useModelStore(s => s.model.elements[elementId])
+  const dispatch = useModelStore(s => s.dispatch)
+  const focusNonce = useModelStore(s => s.focusPropertiesNonce)
+  const nameRef = useRef<HTMLInputElement>(null)
+
+  const commitName = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, name: v } }), [dispatch, elementId])
+  const commitDesc = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, description: v || undefined } }), [dispatch, elementId])
+  const commitTech = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, technology: v || undefined } }), [dispatch, elementId])
+  const commitTags = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, tags: v.split(',').map(t => t.trim()).filter(Boolean) } }), [dispatch, elementId])
+
+  const [name, onName, flushName] = useLiveField(element?.name ?? '', commitName)
+  const [desc, onDesc, flushDesc] = useLiveField(element?.description ?? '', commitDesc)
+  const [tech, onTech, flushTech] = useLiveField(element?.technology ?? '', commitTech)
+  const [tagsStr, onTags, flushTags] = useLiveField((element?.tags ?? []).join(', '), commitTags)
+
+  // Only steal focus when the nonce actually changes after mount (i.e. a deliberate request).
+  const seenNonce = useRef(focusNonce)
+  useEffect(() => {
+    if (focusNonce !== seenNonce.current) {
+      seenNonce.current = focusNonce
+      nameRef.current?.focus()
+      nameRef.current?.select()
+    }
+  }, [focusNonce])
+
+  if (!element) return null
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-[var(--fg)]">Element</span>
+        <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--fg-muted)]">{element.id}</code>
+      </div>
+
+      <FieldRow label="Name">
+        <Input ref={nameRef} value={name} onChange={e => onName(e.target.value)} onBlur={flushName} />
+      </FieldRow>
+
+      <FieldRow label="Type">
+        <TypeField
+          value={element.type}
+          onPick={t => {
+            const def = notationRegistry.getElementDef(t)
+            dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, type: t, notation: def?.notation ?? element.notation } })
+          }}
+        />
+      </FieldRow>
+
+      <FieldRow label="Description">
+        <textarea
+          value={desc}
+          onChange={e => onDesc(e.target.value)}
+          onBlur={flushDesc}
+          rows={2}
+          className="w-full resize-none rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-sm text-[var(--fg)] placeholder-[var(--fg-subtle)] focus:border-[var(--accent)] focus:outline-none"
+          placeholder="Optional description"
+        />
+      </FieldRow>
+
+      <FieldRow label="Technology">
+        <Input value={tech} onChange={e => onTech(e.target.value)} onBlur={flushTech} placeholder="e.g. React, Node.js" />
+      </FieldRow>
+
+      <FieldRow label="Tags (comma-separated)">
+        <Input value={tagsStr} onChange={e => onTags(e.target.value)} onBlur={flushTags} placeholder="domain, core" />
+      </FieldRow>
+
+      <Button size="sm" variant="danger" className="mt-1 w-full" onClick={() => dispatch({ type: 'DELETE_ELEMENT', payload: { id: elementId } })}>
+        Delete Element
+      </Button>
+    </div>
+  )
+}
+
+function RelationProperties({ relationId }: { relationId: string }) {
+  const relation = useModelStore(s => s.model.relations[relationId])
+  const elements = useModelStore(s => s.model.elements)
+  const dispatch = useModelStore(s => s.dispatch)
+
+  const commitLabel = useCallback((v: string) => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, label: v || undefined } }), [dispatch, relationId])
+  const [label, onLabel, flushLabel] = useLiveField(relation?.label ?? '', commitLabel)
+
+  if (!relation) return null
+  const src = elements[relation.sourceId]?.name ?? relation.sourceId
+  const tgt = elements[relation.targetId]?.name ?? relation.targetId
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <span className="text-xs font-semibold text-[var(--fg)]">Relation</span>
+      <div className="rounded bg-[var(--surface-2)] p-2 text-xs text-[var(--fg-muted)]">
+        <span className="text-[var(--fg)]">{src}</span>
+        <span className="mx-1">→</span>
+        <span className="text-[var(--fg)]">{tgt}</span>
+      </div>
+
+      <FieldRow label="Label">
+        <Input value={label} onChange={e => onLabel(e.target.value)} onBlur={flushLabel} placeholder="Optional label" />
+      </FieldRow>
+
+      <FieldRow label="Type">
+        <Select value={relation.type} onChange={e => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, type: e.target.value } })}>
+          {notationRegistry.getNotations().map(({ kind, label }) => {
+            const types = notationRegistry.getRelationTypes(kind).filter(t => t.notation === kind || kind === 'generic')
+            if (!types.length) return null
+            return (
+              <optgroup key={kind} label={label}>
+                {types.map(t => <option key={t.type} value={t.type}>{t.label}</option>)}
+              </optgroup>
+            )
+          })}
+        </Select>
+      </FieldRow>
+
+      <FieldRow label="Direction">
+        <Select
+          value={relation.direction}
+          onChange={e => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, direction: e.target.value as 'directed' | 'undirected' | 'bidirectional' } })}
+        >
+          <option value="directed">Directed →</option>
+          <option value="bidirectional">Bidirectional ↔</option>
+          <option value="undirected">Undirected —</option>
+        </Select>
+      </FieldRow>
+
+      <div className="grid grid-cols-2 gap-2">
+        <FieldRow label="Source anchor">
+          <Select
+            value={relation.sourceHandle ?? ''}
+            onChange={e => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, sourceHandle: (e.target.value || undefined) as 't' | 'b' | 'l' | 'r' | undefined } })}
+          >
+            <option value="">Auto</option>
+            <option value="t">Top</option>
+            <option value="b">Bottom</option>
+            <option value="l">Left</option>
+            <option value="r">Right</option>
+          </Select>
+        </FieldRow>
+        <FieldRow label="Target anchor">
+          <Select
+            value={relation.targetHandle ?? ''}
+            onChange={e => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, targetHandle: (e.target.value || undefined) as 't' | 'b' | 'l' | 'r' | undefined } })}
+          >
+            <option value="">Auto</option>
+            <option value="t">Top</option>
+            <option value="b">Bottom</option>
+            <option value="l">Left</option>
+            <option value="r">Right</option>
+          </Select>
+        </FieldRow>
+      </div>
+
+      <Button size="sm" variant="danger" className="mt-1 w-full" onClick={() => dispatch({ type: 'DELETE_RELATION', payload: { id: relationId } })}>
+        Delete Relation
+      </Button>
+    </div>
+  )
+}
+
+function MultiSelectionPanel({ ids }: { ids: string[] }) {
+  const dispatch = useModelStore(s => s.dispatch)
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <span className="text-xs font-semibold text-[var(--fg)]">{ids.length} elements selected</span>
+      <p className="text-xs text-[var(--fg-muted)]">
+        Use “⤢ Selected” in the graph toolbar to arrange just these nodes, or
+        Ctrl/Cmd+D to duplicate them.
+      </p>
+      <Button size="sm" variant="danger" className="w-full" onClick={() => ids.forEach(id => dispatch({ type: 'DELETE_ELEMENT', payload: { id } }))}>
+        Delete {ids.length} Elements
+      </Button>
+    </div>
+  )
+}
+
+function ViewProperties() {
+  const model = useModelStore(s => s.model)
+  const activeViewId = useModelStore(s => s.activeViewId)
+  const dispatch = useModelStore(s => s.dispatch)
+  const renameView = useModelStore(s => s.renameView)
+  const deleteView = useModelStore(s => s.deleteView)
+  const view = activeViewId ? model.views[activeViewId] : undefined
+
+  const commitName = useCallback((v: string) => { if (activeViewId) renameView(activeViewId, v || activeViewId) }, [activeViewId, renameView])
+  const [name, onName, flushName] = useLiveField(view?.name ?? '', commitName)
+
+  if (!view) return null
+  const viewCount = Object.keys(model.views).length
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-[var(--fg)]">View</span>
+        <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--fg-muted)]">{view.id}</code>
+      </div>
+      <FieldRow label="Name">
+        <Input value={name} onChange={e => onName(e.target.value)} onBlur={flushName} />
+      </FieldRow>
+      <FieldRow label="Layout direction">
+        <Select value={view.layoutDirection} onChange={e => dispatch({ type: 'UPDATE_VIEW', payload: { id: view.id, layoutDirection: e.target.value as 'lr' | 'rl' | 'tb' | 'bt' } })}>
+          <option value="tb">Top → Bottom</option>
+          <option value="bt">Bottom → Top</option>
+          <option value="lr">Left → Right</option>
+          <option value="rl">Right → Left</option>
+        </Select>
+      </FieldRow>
+      <FieldRow label="Scope">
+        <Select value={view.includeAll ? 'all' : 'custom'} onChange={e => dispatch({ type: 'UPDATE_VIEW', payload: { id: view.id, includeAll: e.target.value === 'all' } })}>
+          <option value="all">Include everything</option>
+          <option value="custom">Custom (edit in DSL)</option>
+        </Select>
+      </FieldRow>
+      {viewCount > 1 && (
+        <Button size="sm" variant="danger" className="mt-1 w-full" onClick={() => deleteView(view.id)}>Delete View</Button>
+      )}
+    </div>
+  )
+}
+
+function DiagnosticsPanel() {
+  const diagnostics = useModelStore(s => s.diagnostics)
+  if (diagnostics.length === 0) return null
+  return (
+    <div className="border-t border-[var(--border)] p-3">
+      <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">Diagnostics</span>
+      <div className="flex max-h-40 flex-col gap-1 overflow-y-auto">
+        {diagnostics.map((d, i) => (
+          <div key={i} className={`rounded px-2 py-1 text-xs ${
+            d.severity === 'error' ? 'bg-red-500/15 text-red-500' :
+            d.severity === 'warning' ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' :
+            'bg-blue-500/15 text-blue-500'
+          }`}>
+            {d.line ? `[L${d.line}] ` : ''}{d.message}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function PropertiesPanel() {
+  const selectedElementIds = useModelStore(s => s.selectedElementIds)
+  const selectedElementId = useModelStore(s => s.selectedElementId)
+  const selectedRelationId = useModelStore(s => s.selectedRelationId)
+
+  return (
+    <div className="flex h-full flex-col text-[var(--fg)]">
+      <div className="border-b border-[var(--border)] px-3 py-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Properties</span>
+      </div>
+      <div className="flex-1 overflow-y-auto">
+        {selectedElementIds.length > 1 && <MultiSelectionPanel ids={selectedElementIds} />}
+        {selectedElementIds.length === 1 && selectedElementId && <ElementProperties elementId={selectedElementId} />}
+        {selectedElementIds.length === 0 && selectedRelationId && <RelationProperties relationId={selectedRelationId} />}
+        {selectedElementIds.length === 0 && !selectedRelationId && <ViewProperties />}
+      </div>
+      <DiagnosticsPanel />
+    </div>
+  )
+}

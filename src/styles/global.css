@@ -1,0 +1,109 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Light theme (default) ── */
+:root {
+  --surface-0: #f4f5f7;
+  --surface-1: #ffffff;
+  --surface-2: #eef0f3;
+  --surface-3: #e2e5ea;
+  --border: #d8dce2;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --fg: #1f2933;
+  --fg-muted: #5b6573;
+  --fg-subtle: #94a0b0;
+  --edge: #6b7685;
+  --edge-label: #4a5568;
+  --rf-bg-dots: #c5ccd6;
+}
+
+/* ── Dark theme ── */
+.dark {
+  --surface-0: #0a0e16;
+  --surface-1: #0f1623;
+  --surface-2: #18202e;
+  --surface-3: #232c3b;
+  --border: #2a3343;
+  --accent: #3b82f6;
+  --accent-fg: #ffffff;
+  --fg: #e8edf4;
+  --fg-muted: #97a3b4;
+  --fg-subtle: #5f6c7e;
+  --edge: #6b7685;
+  --edge-label: #aab4c2;
+  --rf-bg-dots: #2a3343;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--surface-0);
+  color: var(--fg);
+}
+
+/* React Flow theming via CSS vars */
+.react-flow {
+  --xy-background-color-default: var(--surface-0);
+  --xy-edge-stroke-default: var(--edge);
+  --xy-edge-stroke-selected-default: var(--accent);
+  --xy-node-boxshadow-selected-default: 0 0 0 2px var(--accent);
+  --xy-attribution-background-color-default: transparent;
+}
+.react-flow__background-pattern.dots { color: var(--rf-bg-dots); }
+.react-flow__node { cursor: pointer; font-family: inherit; }
+.react-flow__edge-path { stroke-width: 1.6; }
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path { stroke: var(--accent) !important; stroke-width: 2.2; }
+
+/* keep edge labels above node bodies and arrow heads, even when a node is
+   selected (React Flow elevates selected nodes ~1000) */
+.react-flow__edgelabel-renderer { z-index: 1100 !important; }
+
+/* subtle handles, reveal on node hover */
+.react-flow__handle { opacity: 0; transition: opacity .12s ease; }
+.react-flow__node:hover .react-flow__handle,
+.react-flow__node.selected .react-flow__handle { opacity: 0.9; }
+.react-flow__handle:hover { opacity: 1; }
+
+/* code editor line highlight (used when jumping from graph) */
+.monaco-editor .gms-line-highlight {
+  background: rgba(99, 132, 255, 0.16);
+  border-left: 2px solid var(--accent);
+}
+.react-flow__controls {
+  box-shadow: 0 1px 4px rgba(0,0,0,.2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.react-flow__controls-button {
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  fill: var(--fg);
+}
+.react-flow__controls-button:hover { background: var(--surface-2); }
+.react-flow__minimap {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.react-flow__attribution { display: none; }
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-subtle); }
+
+/* Transitions for theme switch */
+.react-flow__node, .react-flow__edge-path { transition: filter .12s ease; }

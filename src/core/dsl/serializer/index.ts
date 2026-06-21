@@ -1,0 +1,1 @@
+export { serializeModel } from './serializer'
