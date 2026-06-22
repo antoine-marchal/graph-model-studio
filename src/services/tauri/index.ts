@@ -37,3 +37,28 @@ export async function getCliFile(): Promise<{ path: string; content: string } | 
   if (!res) return null
   return { path: res[0], content: res[1] }
 }
+
+export interface ExportRequest {
+  inputContent: string
+  inputName: string
+  output: string
+  format: string
+  width?: number | null
+  height?: number | null
+  theme?: string | null
+  view?: string | null
+}
+
+// Headless export request parsed from `--export` CLI flags (null otherwise).
+export async function getExportRequest(): Promise<ExportRequest | null> {
+  if (!isTauri()) return null
+  const { invoke } = await import('@tauri-apps/api/core')
+  return (await invoke<ExportRequest | null>('get_export_request')) ?? null
+}
+
+// Report headless export result; the Rust side prints and exits the process.
+export async function finishExport(success: boolean, message: string): Promise<void> {
+  if (!isTauri()) return
+  const { invoke } = await import('@tauri-apps/api/core')
+  await invoke('finish_export', { success, message })
+}
