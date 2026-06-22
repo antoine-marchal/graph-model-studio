@@ -44,6 +44,8 @@ export interface ElementTypeDefinition {
   text: string
   accent: string
   icon: IconKind
+  /** optional raster glyph (served from /public); takes precedence over `icon` */
+  iconSrc?: string
   description?: string
   defaultWidth: number
   defaultHeight: number
@@ -91,13 +93,15 @@ const C4_ELEMENTS: ElementTypeDefinition[] = [
 ]
 
 // ─── ArchiMate — layer palettes ──────────────────────────────────────────────
-const A_MOTIVATION = { fill: '#E5C2EC', stroke: '#A04CB0', text: '#2E0F35', accent: '#8E3BA0' }
-const A_STRATEGY = { fill: '#F5D9B5', stroke: '#C6862E', text: '#3A2400', accent: '#B97C2C' }
-const A_BUSINESS = { fill: '#FFF6CC', stroke: '#D4B106', text: '#3A2F00', accent: '#B58900' }
-const A_APP = { fill: '#CFEFFF', stroke: '#1C9CCB', text: '#063043', accent: '#1C9CCB' }
-const A_TECH = { fill: '#D5F5D5', stroke: '#3FA34D', text: '#0B2E12', accent: '#3FA34D' }
-const A_PHYSICAL = { fill: '#D5F5D5', stroke: '#2E7D32', text: '#0B2E12', accent: '#2E7D32' }
-const A_IMPL = { fill: '#FFE0E0', stroke: '#D85B5B', text: '#3E0E0E', accent: '#C84A4A' }
+// Fills follow the project ArchiMate spec (specifications.c4); strokes/accents are
+// darker shades of the same hue, text a near-black of the hue for contrast.
+const A_MOTIVATION = { fill: '#C7C3F4', stroke: '#6F67C9', text: '#221A4D', accent: '#6F67C9' }
+const A_STRATEGY = { fill: '#EFD79A', stroke: '#B08A2E', text: '#3A2A00', accent: '#B08A2E' }
+const A_BUSINESS = { fill: '#F2EEA6', stroke: '#B7A40A', text: '#3A3400', accent: '#B7A40A' }
+const A_APP = { fill: '#A8E7EF', stroke: '#2A9FB3', text: '#06303A', accent: '#2A9FB3' }
+const A_TECH = { fill: '#B9DCAE', stroke: '#4F9A3F', text: '#16320D', accent: '#4F9A3F' }
+const A_PHYSICAL = { fill: '#B9DCAE', stroke: '#2E7D32', text: '#0B2E12', accent: '#2E7D32' }
+const A_IMPL = { fill: '#F3D0D0', stroke: '#C06A6A', text: '#3E1414', accent: '#C06A6A' }
 const A_OTHER = { fill: '#ECEFF1', stroke: '#90A4AE', text: '#1F2933', accent: '#78909C' }
 
 type Pal = { fill: string; stroke: string; text: string; accent: string }
@@ -190,6 +194,43 @@ const ARCHIMATE_ELEMENTS: ElementTypeDefinition[] = [
     ['junctionOr', 'Junction (OR)', 'circle', 'archi-junction', TINY],
   ]),
 ]
+
+// Authentic ArchiMate glyphs (PNG, served from /public/icons/archimate).
+// Keys are element `type`s; values are file basenames (without extension).
+const ARCHIMATE_ICON_FILES: Record<string, string> = {
+  // Business
+  businessActor: 'busactor', businessRole: 'busrole', businessCollaboration: 'buscollab',
+  businessInterface: 'businterface', businessProcess: 'busprocess', businessFunction: 'busfunction',
+  businessInteraction: 'businteraction', businessEvent: 'busevent', businessService: 'busservice',
+  businessObject: 'busobject', contract: 'buscontract', representation: 'busrepresentation', product: 'busproduct',
+  // Application
+  applicationComponent: 'appcomponent', applicationCollaboration: 'appcollab', applicationInterface: 'appinterface',
+  applicationFunction: 'appfunction', applicationInteraction: 'appinteraction', applicationProcess: 'appprocess',
+  applicationEvent: 'appevent', applicationService: 'appservice', dataObject: 'appdataobject',
+  // Technology
+  technologyNode: 'technode', device: 'techdevice', systemSoftware: 'techsoftware',
+  technologyCollaboration: 'techcollab', technologyInterface: 'techinterfac', path: 'techpaths',
+  communicationNetwork: 'technetwork', technologyFunction: 'techfunction', technologyProcess: 'techprocess',
+  technologyInteraction: 'techinteract', technologyEvent: 'techevent', technologyService: 'techservice',
+  artifact: 'techartifact',
+  // Physical
+  equipment: 'techequipment', facility: 'techfacility', distributionNetwork: 'technetwork', material: 'techmaterial',
+  // Motivation
+  stakeholder: 'stratstakeholder', driver: 'stratdriver', assessment: 'stratassessment', goal: 'stratgoal',
+  outcome: 'stratoutcome', principle: 'stratprincipe', requirement: 'stratreq', constraint: 'stratconstraint',
+  meaning: 'stratmeaning', archimateValue: 'stratvalue',
+  // Strategy
+  resource: 'stratresource', capability: 'stratcap', courseOfAction: 'stratcourseofaction', valueStream: 'busvaluestream',
+  // Implementation & migration
+  workPackage: 'implwk', deliverable: 'impldeliverable', implementationEvent: 'implprocess',
+  plateau: 'implplateau', gap: 'implgap',
+  // Other
+  location: 'stratlocation', grouping: 'group',
+}
+for (const el of ARCHIMATE_ELEMENTS) {
+  const file = ARCHIMATE_ICON_FILES[el.type]
+  if (file) el.iconSrc = `icons/archimate/${file}.png`
+}
 
 // ─── BPMN ────────────────────────────────────────────────────────────────────
 const BPMN_ELEMENTS: ElementTypeDefinition[] = [

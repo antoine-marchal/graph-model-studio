@@ -5,8 +5,12 @@ import { getStorageProvider } from '@/services/storage'
 import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
 import { ExportDialog } from '@/features/model-import-export/ExportDialog'
+import { isTauri, minimizeWindow, toggleMaximizeWindow, closeWindow } from '@/services/tauri'
 
 type ViewMode = 'split' | 'code' | 'graph'
+
+const APP_VERSION = __APP_VERSION__
+const TAURI = isTauri()
 
 export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolean; propsOpen: boolean } }) {
   const isDirty = useModelStore(s => s.isDirty)
@@ -67,16 +71,19 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
   }
 
   return (
-    <header className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[var(--border)] bg-[var(--surface-1)] px-3">
+    <header
+      data-tauri-drag-region
+      className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[var(--border)] bg-[var(--surface-1)] px-3"
+    >
       <Button
         size="icon" variant="ghost" title="Toggle explorer"
         onClick={() => window.dispatchEvent(new CustomEvent('gms:toggle-explorer'))}
         className={layoutFlags && !layoutFlags.explorerOpen ? 'text-[var(--fg-subtle)]' : 'text-[var(--accent)]'}
       >▥</Button>
 
-      <div className="flex min-w-0 items-center gap-2">
-        <span className="text-sm font-bold text-[var(--accent)]">GMS</span>
-        <span className="hidden text-xs text-[var(--fg-subtle)] lg:inline">Graph Model Studio</span>
+      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
+        <span className="text-sm font-bold text-[var(--accent)]">Graph Model Studio</span>
+        <span className="text-xs text-[var(--fg-subtle)]">v{APP_VERSION}</span>
       </div>
 
       <div className="mx-1.5 h-4 w-px bg-[var(--border)]" />
@@ -119,6 +126,29 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
           onClick={() => window.dispatchEvent(new CustomEvent('gms:toggle-props'))}
           className={layoutFlags && !layoutFlags.propsOpen ? 'text-[var(--fg-subtle)]' : 'text-[var(--accent)]'}
         >▤</Button>
+
+        {TAURI && (
+          <>
+            <div className="mx-1 h-4 w-px bg-[var(--border)]" />
+            <div className="flex items-center">
+              <button
+                onClick={() => minimizeWindow()}
+                title="Minimize"
+                className="flex h-7 w-9 items-center justify-center rounded text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)]"
+              >─</button>
+              <button
+                onClick={() => toggleMaximizeWindow()}
+                title="Maximize"
+                className="flex h-7 w-9 items-center justify-center rounded text-[var(--fg-muted)] transition-colors hover:bg-[var(--surface-2)]"
+              >▢</button>
+              <button
+                onClick={() => closeWindow()}
+                title="Close"
+                className="flex h-7 w-9 items-center justify-center rounded text-[var(--fg-muted)] transition-colors hover:bg-red-600 hover:text-white"
+              >✕</button>
+            </div>
+          </>
+        )}
       </div>
 
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}

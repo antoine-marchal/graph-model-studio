@@ -14,7 +14,9 @@ export function TypeSwatch({ t, size = 16 }: { t: ElementTypeDefinition; size?: 
       className="flex shrink-0 items-center justify-center rounded-sm"
       style={{ width: size, height: size, background: t.fill, border: `1.5px solid ${t.stroke}` }}
     >
-      {t.icon !== 'none' && <NodeIcon kind={t.icon} color={t.accent} size={size * 0.62} />}
+      {t.iconSrc
+        ? <img src={t.iconSrc} alt="" width={size * 0.72} height={size * 0.72} draggable={false} style={{ objectFit: 'contain' }} />
+        : t.icon !== 'none' && <NodeIcon kind={t.icon} color={t.accent} size={size * 0.62} />}
     </span>
   )
 }

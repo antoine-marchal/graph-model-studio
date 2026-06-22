@@ -7,6 +7,8 @@ import { GraphEditor } from '@/features/editor-graph/GraphEditor'
 import { PropertiesPanel } from '@/features/properties-panel/PropertiesPanel'
 import { ResizeHandle } from '@/ui/components/Resizable'
 import { useModelStore } from '@/store'
+import { getCliFile } from '@/services/tauri'
+import { parseDsl } from '@/core/dsl/parser'
 
 type ViewMode = 'split' | 'code' | 'graph'
 
@@ -41,6 +43,24 @@ export function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
   }, [theme])
+
+  // Open a file passed on launch (CLI arg or .gmc double-click) once at startup.
+  useEffect(() => {
+    let cancelled = false
+    getCliFile().then(file => {
+      if (cancelled || !file) return
+      const { loadModel, setFileName } = useModelStore.getState()
+      const name = file.path.split(/[/\\]/).pop() ?? file.path
+      setFileName(name)
+      if (name.endsWith('.json')) {
+        try { loadModel(JSON.parse(file.content)) } catch { /* ignore malformed */ }
+      } else {
+        const r = parseDsl(file.content)
+        if (r.model) loadModel(r.model, file.content)
+      }
+    })
+    return () => { cancelled = true }
+  }, [])
 
   // persist layout (debounced via rAF is overkill; localStorage write is cheap)
   useEffect(() => {

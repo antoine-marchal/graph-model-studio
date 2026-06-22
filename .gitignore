@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+
+# tauri build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# editor / tooling
+.claude/
+.vscode/
+.idea/
+*.local
+
+# logs
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db

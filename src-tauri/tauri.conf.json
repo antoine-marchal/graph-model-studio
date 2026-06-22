@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Graph Model Studio",
+  "version": "2.0.0",
+  "identifier": "com.antoinemarchal.graphmodelstudio",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Graph Model Studio",
+        "label": "main",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": false,
+        "theme": "Dark",
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "publisher": "Antoine Marchal",
+    "copyright": "Copyright © 2026 Antoine Marchal",
+    "category": "DeveloperTool",
+    "shortDescription": "Visual graph & model editor",
+    "longDescription": "Graph Model Studio - a visual graph and model editor with a dedicated DSL, live code/graph split view, and export tooling.",
+    "fileAssociations": [
+      {
+        "ext": ["gmc"],
+        "name": "Graph Model",
+        "description": "Graph Model Studio document",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

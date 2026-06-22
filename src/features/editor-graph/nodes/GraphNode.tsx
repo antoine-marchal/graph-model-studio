@@ -17,9 +17,19 @@ export interface GraphNodeData extends Record<string, unknown> {
   text: string
   accent: string
   icon: IconKind
+  iconSrc?: string
   width: number
   height: number
   isContainer?: boolean
+}
+
+/** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
+function Glyph({ iconSrc, icon, color, size }: { iconSrc?: string; icon: IconKind; color: string; size: number }) {
+  if (iconSrc) {
+    return <img src={iconSrc} alt="" width={size} height={size} draggable={false} style={{ objectFit: 'contain' }} />
+  }
+  if (icon !== 'none') return <NodeIcon kind={icon} color={color} size={size} />
+  return null
 }
 
 function Handles({ stroke }: { stroke: string }) {
@@ -96,7 +106,7 @@ function NameEditor({ id, initial, atTop }: { id: string; initial: string; atTop
 
 export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const d = data as GraphNodeData
-  const { shape, fill, stroke, text, accent, icon, width, height } = d
+  const { shape, fill, stroke, text, accent, icon, iconSrc, width, height } = d
   const editing = useModelStore(s => s.editingElementId === id)
   const dispatch = useModelStore(s => s.dispatch)
   const activeViewId = useModelStore(s => s.activeViewId)
@@ -116,7 +126,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
           style={{ background: accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
         >
-          {icon !== 'none' && <NodeIcon kind={icon} color={accent} size={13} />}
+          <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>
           {d.notation !== 'generic' && (
             <span className="ml-auto text-[9px] font-normal opacity-60">«{d.elementType}»</span>
@@ -181,8 +191,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative flex h-full w-full items-center justify-center', radius, ring)} style={{ background: fill, border: `2px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        {icon !== 'none' && (
-          <div className="absolute right-1.5 top-1.5 opacity-80"><NodeIcon kind={icon} color={accent} size={15} /></div>
+        {(iconSrc || icon !== 'none') && (
+          <div
+            className={cn('absolute top-1.5 opacity-90', d.notation === 'bpmn' ? 'left-1.5' : 'right-1.5')}
+          ><Glyph iconSrc={iconSrc} icon={icon} color={accent} size={17} /></div>
         )}
         <Label data={d} />
       </div>

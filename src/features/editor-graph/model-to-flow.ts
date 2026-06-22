@@ -221,6 +221,7 @@ export function modelToFlow(
         text: def.text,
         accent: def.accent,
         icon: def.icon,
+        iconSrc: def.iconSrc,
         width: size.width,
         height: size.height,
         isContainer: container,

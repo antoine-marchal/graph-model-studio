@@ -2,16 +2,7 @@ import { useState } from 'react'
 import { useModelStore } from '@/store'
 import { exporters } from '@/core/export'
 import { Button } from '@/ui/components/Button'
-
-function downloadBlob(content: string | Blob, filename: string, mimeType: string) {
-  const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
+import { saveTextFile, filtersForExt } from '@/services/file-save'
 
 export function ExportDialog({ onClose }: { onClose: () => void }) {
   const model = useModelStore(s => s.model)
@@ -25,8 +16,10 @@ export function ExportDialog({ onClose }: { onClose: () => void }) {
     setLoading(exporterId)
     try {
       const result = await exporter.export(model, activeView)
+      const text = result instanceof Blob ? await result.text() : result
       const baseName = model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'model'
-      downloadBlob(result, `${baseName}${exporter.extension}`, exporter.mimeType)
+      const ext = exporter.extension.replace(/^\./, '')
+      await saveTextFile(text, { defaultName: `${baseName}${exporter.extension}`, filters: filtersForExt(ext) })
     } finally {
       setLoading(null)
       onClose()

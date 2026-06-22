@@ -34,9 +34,19 @@ import { nanoid } from './nanoid'
 import { notationRegistry } from '@/core/notation'
 import { runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layout'
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
+import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 
 const nodeTypes = { graphNode: GraphNodeComponent }
 const edgeTypes = { floating: FloatingEdge }
+
+/** Decode a "data:image/png;base64,…" URL into raw bytes. */
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const bin = atob(base64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return bytes
+}
 
 function descendantIds(model: ReturnType<typeof useModelStore.getState>['model'], id: string): Set<string> {
   const out = new Set<string>()
@@ -250,11 +260,9 @@ function GraphEditorInner() {
       height: Math.round(rect.height),
       style: { transform: el.style.transform },
     })
-    const a = document.createElement('a')
     const base = model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'diagram'
-    a.href = dataUrl
-    a.download = `${base}.png`
-    a.click()
+    const bytes = dataUrlToBytes(dataUrl)
+    await saveBinaryFile(bytes, { defaultName: `${base}.png`, filters: filtersForExt('png') })
   }, [model])
 
   // keyboard: duplicate / rename / copy / paste (when canvas has focus, not editing text)

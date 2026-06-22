@@ -17,6 +17,7 @@
   --edge: #6b7685;
   --edge-label: #4a5568;
   --rf-bg-dots: #c5ccd6;
+  --rf-bg-lines: #e2e6ec;
 }
 
 /* ── Dark theme ── */
@@ -33,7 +34,8 @@
   --fg-subtle: #5f6c7e;
   --edge: #6b7685;
   --edge-label: #aab4c2;
-  --rf-bg-dots: #2a3343;
+  --rf-bg-dots: #1c232f;
+  --rf-bg-lines: #161c27;
 }
 
 * { box-sizing: border-box; }
@@ -60,6 +62,7 @@ body {
   --xy-attribution-background-color-default: transparent;
 }
 .react-flow__background-pattern.dots { color: var(--rf-bg-dots); }
+.react-flow__background-pattern.lines { color: var(--rf-bg-lines); }
 .react-flow__node { cursor: pointer; font-family: inherit; }
 .react-flow__edge-path { stroke-width: 1.6; }
 .react-flow__edge.selected .react-flow__edge-path,

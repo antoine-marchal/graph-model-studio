@@ -3,9 +3,14 @@ export * from './browser-storage-provider'
 export * from './tauri-storage-provider'
 
 import { browserStorageProvider } from './browser-storage-provider'
+import { TauriStorageProvider } from './tauri-storage-provider'
 import type { StorageProvider } from './storage-provider'
 
-let activeProvider: StorageProvider = browserStorageProvider
+const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+let activeProvider: StorageProvider = inTauri
+  ? new TauriStorageProvider()
+  : browserStorageProvider
 
 export function getStorageProvider(): StorageProvider {
   return activeProvider

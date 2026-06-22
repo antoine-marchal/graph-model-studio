@@ -1,23 +1,49 @@
 import type { StorageProvider } from './storage-provider'
 
-// Stub — to be implemented when Tauri is integrated
-// Replace the body with actual Tauri fs/dialog API calls
+const FILTERS = [
+  { name: 'Graph Model', extensions: ['gmc', 'json'] },
+  { name: 'All Files', extensions: ['*'] },
+]
+
+// Desktop storage backed by Tauri's dialog + fs plugins.
 export class TauriStorageProvider implements StorageProvider {
   readonly id = 'tauri'
   readonly label = 'Tauri (Desktop)'
 
-  canOpen(): boolean { return false }
-  canSave(): boolean { return false }
+  private lastPath: string | null = null
+
+  canOpen(): boolean { return true }
+  canSave(): boolean { return true }
 
   async open(): Promise<{ content: string; name: string } | null> {
-    throw new Error('Tauri storage not yet implemented')
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const { invoke } = await import('@tauri-apps/api/core')
+    const selected = await open({ multiple: false, directory: false, filters: FILTERS })
+    if (!selected || typeof selected !== 'string') return null
+    const content = await invoke<string>('read_text_file', { path: selected })
+    this.lastPath = selected
+    return { content, name: baseName(selected) }
   }
 
-  async save(_content: string, _suggestedName?: string): Promise<boolean> {
-    throw new Error('Tauri storage not yet implemented')
+  async save(content: string, suggestedName?: string): Promise<boolean> {
+    if (!this.lastPath) return this.saveAs(content, suggestedName)
+    const { invoke } = await import('@tauri-apps/api/core')
+    await invoke('write_text_file', { path: this.lastPath, content })
+    return true
   }
 
-  async saveAs(_content: string, _suggestedName?: string): Promise<boolean> {
-    throw new Error('Tauri storage not yet implemented')
+  async saveAs(content: string, suggestedName?: string): Promise<boolean> {
+    const { save } = await import('@tauri-apps/plugin-dialog')
+    const { invoke } = await import('@tauri-apps/api/core')
+    const path = await save({ defaultPath: suggestedName, filters: FILTERS })
+    if (!path) return false
+    await invoke('write_text_file', { path, content })
+    this.lastPath = path
+    return true
   }
+}
+
+function baseName(p: string): string {
+  const parts = p.split(/[/\\]/)
+  return parts[parts.length - 1] || p
 }
