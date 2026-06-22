@@ -36,11 +36,18 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
 
   const handleSave = useCallback(async () => {
     const provider = getStorageProvider()
-    const dsl = serializeModel(useModelStore.getState().model)
-    const name = useModelStore.getState().fileName
-      ?? `${useModelStore.getState().model.metadata.title.replace(/\s+/g, '-').toLowerCase()}.gmc`
-    const ok = await provider.save(dsl, name)
-    if (ok) setDirty(false)
+    const state = useModelStore.getState()
+    const dsl = serializeModel(state.model)
+    const current = state.fileName
+    const suggested = current ?? `${state.model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'model'}.gmc`
+    // untitled → always prompt with the native file browser (like exporting a .gmc)
+    const saved = current
+      ? await provider.save(dsl, suggested)
+      : await provider.saveAs(dsl, suggested)
+    if (saved) {
+      state.setFileName(saved)
+      setDirty(false)
+    }
   }, [setDirty])
 
   useEffect(() => {
@@ -114,9 +121,16 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
         ))}
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
-        <span className="truncate text-xs text-[var(--fg-subtle)]">
-          {fileName ?? 'unsaved'}{isDirty && <span className="text-amber-500"> ●</span>}
+      <div className="ml-auto flex min-w-0 items-center gap-2">
+        <span
+          className="flex min-w-0 items-center gap-1 text-xs text-[var(--fg-subtle)]"
+          title={isDirty ? 'Unsaved changes' : 'All changes saved'}
+        >
+          <span
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: isDirty ? 'var(--accent)' : 'transparent', border: isDirty ? 'none' : '1px solid var(--border)' }}
+          />
+          <span className="max-w-[160px] truncate">{fileName ?? 'Untitled'}</span>
         </span>
         <Button size="icon" variant="ghost" onClick={toggleTheme} title="Toggle theme">
           {theme === 'dark' ? '☀' : '☾'}

@@ -25,21 +25,21 @@ export class TauriStorageProvider implements StorageProvider {
     return { content, name: baseName(selected) }
   }
 
-  async save(content: string, suggestedName?: string): Promise<boolean> {
+  async save(content: string, suggestedName?: string): Promise<string | null> {
     if (!this.lastPath) return this.saveAs(content, suggestedName)
     const { invoke } = await import('@tauri-apps/api/core')
     await invoke('write_text_file', { path: this.lastPath, content })
-    return true
+    return baseName(this.lastPath)
   }
 
-  async saveAs(content: string, suggestedName?: string): Promise<boolean> {
+  async saveAs(content: string, suggestedName?: string): Promise<string | null> {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')
     const path = await save({ defaultPath: suggestedName, filters: FILTERS })
-    if (!path) return false
+    if (!path) return null
     await invoke('write_text_file', { path, content })
     this.lastPath = path
-    return true
+    return baseName(path)
   }
 }
 

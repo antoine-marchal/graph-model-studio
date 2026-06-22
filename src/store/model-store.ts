@@ -9,6 +9,7 @@ import { serializeModel } from '@/core/dsl/serializer'
 import type { LayoutEngine } from '@/core/layout'
 
 export type Theme = 'light' | 'dark'
+export type EdgeRouting = 'curved' | 'orthogonal'
 
 interface HistorySnapshot {
   model: GraphModel
@@ -45,6 +46,7 @@ export interface ModelStore {
   layoutEngine: LayoutEngine
   snapToGrid: boolean
   showMinimap: boolean
+  edgeRouting: EdgeRouting
   /** most-recently-used element types for the quick-add menu */
   recentTypes: string[]
   past: HistorySnapshot[]
@@ -57,6 +59,7 @@ export interface ModelStore {
   setLayoutEngine(engine: LayoutEngine): void
   toggleSnapToGrid(): void
   toggleMinimap(): void
+  toggleEdgeRouting(): void
   pushRecentType(type: string): void
   duplicateElements(ids: string[]): string[]
   setDslSource(source: string): void
@@ -133,10 +136,11 @@ interface Prefs {
   layoutEngine: LayoutEngine
   snapToGrid: boolean
   showMinimap: boolean
+  edgeRouting: EdgeRouting
   recentTypes: string[]
 }
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { layoutEngine: 'layered', snapToGrid: false, showMinimap: true, recentTypes: [] }
+  const fallback: Prefs = { layoutEngine: 'layered', snapToGrid: false, showMinimap: true, edgeRouting: 'curved', recentTypes: [] }
   try {
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -308,7 +312,7 @@ export const useModelStore = create<ModelStore>()(
 
     const persistPrefs = () => {
       const s = get()
-      savePrefs({ layoutEngine: s.layoutEngine, snapToGrid: s.snapToGrid, showMinimap: s.showMinimap, recentTypes: s.recentTypes })
+      savePrefs({ layoutEngine: s.layoutEngine, snapToGrid: s.snapToGrid, showMinimap: s.showMinimap, edgeRouting: s.edgeRouting, recentTypes: s.recentTypes })
     }
 
     return {
@@ -329,6 +333,7 @@ export const useModelStore = create<ModelStore>()(
       layoutEngine: prefs.layoutEngine,
       snapToGrid: prefs.snapToGrid,
       showMinimap: prefs.showMinimap,
+      edgeRouting: prefs.edgeRouting,
       recentTypes: prefs.recentTypes,
       past: [],
       future: [],
@@ -392,6 +397,7 @@ export const useModelStore = create<ModelStore>()(
       setLayoutEngine(engine) { set(state => { state.layoutEngine = engine }); persistPrefs() },
       toggleSnapToGrid() { set(state => { state.snapToGrid = !state.snapToGrid }); persistPrefs() },
       toggleMinimap() { set(state => { state.showMinimap = !state.showMinimap }); persistPrefs() },
+      toggleEdgeRouting() { set(state => { state.edgeRouting = state.edgeRouting === 'curved' ? 'orthogonal' : 'curved' }); persistPrefs() },
       pushRecentType(type) {
         set(state => { state.recentTypes = [type, ...state.recentTypes.filter(t => t !== type)].slice(0, 8) })
         persistPrefs()

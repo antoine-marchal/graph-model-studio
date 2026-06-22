@@ -4,6 +4,7 @@ export interface StorageProvider {
   canOpen(): boolean
   canSave(): boolean
   open(): Promise<{ content: string; name: string } | null>
-  save(content: string, suggestedName?: string): Promise<boolean>
-  saveAs(content: string, suggestedName?: string): Promise<boolean>
+  /** persist content; resolves to the saved file name, or null if cancelled/failed */
+  save(content: string, suggestedName?: string): Promise<string | null>
+  saveAs(content: string, suggestedName?: string): Promise<string | null>
 }

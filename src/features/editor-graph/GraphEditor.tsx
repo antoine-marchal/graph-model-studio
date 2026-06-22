@@ -81,6 +81,8 @@ function GraphEditorInner() {
   const toggleSnapToGrid = useModelStore(s => s.toggleSnapToGrid)
   const showMinimap = useModelStore(s => s.showMinimap)
   const toggleMinimap = useModelStore(s => s.toggleMinimap)
+  const edgeRouting = useModelStore(s => s.edgeRouting)
+  const toggleEdgeRouting = useModelStore(s => s.toggleEdgeRouting)
   const addElementsToView = useModelStore(s => s.addElementsToView)
 
   const { screenToFlowPosition, fitView, getIntersectingNodes } = useReactFlow()
@@ -342,6 +344,10 @@ function GraphEditorInner() {
         multiSelectionKeyCode={['Meta', 'Control']}
         selectionKeyCode="Shift"
         deleteKeyCode={['Delete', 'Backspace']}
+        // don't let the canvas swallow Space (pan) or grab focused-node keys —
+        // in the Tauri webview this otherwise blocks typing a space
+        panActivationKeyCode={null}
+        disableKeyboardA11y
         snapToGrid={snapToGrid}
         snapGrid={[16, 16]}
         elevateNodesOnSelect
@@ -381,6 +387,12 @@ function GraphEditorInner() {
 
         <Panel position="top-right" className="flex items-center gap-1">
           <Button size="sm" variant="outline" onClick={duplicateSelection} title="Duplicate selection (Ctrl/Cmd+D)">⧉ Duplicate</Button>
+          <Button
+            size="sm" variant="outline"
+            className={toggleBtn(edgeRouting === 'orthogonal')}
+            onClick={toggleEdgeRouting}
+            title="Smart routing: orthogonal edges that avoid nodes"
+          >↳ Route</Button>
           <Button size="sm" variant="outline" className={toggleBtn(snapToGrid)} onClick={toggleSnapToGrid} title="Snap to grid">⌗ Snap</Button>
           <Button size="sm" variant="outline" className={toggleBtn(showMinimap)} onClick={toggleMinimap} title="Toggle minimap">▭ Map</Button>
           <Button size="sm" variant="outline" onClick={exportPng} title="Export PNG of the current view">⤓ PNG</Button>

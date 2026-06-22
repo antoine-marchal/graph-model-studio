@@ -2,6 +2,7 @@ import { useCallback, useRef, useEffect } from 'react'
 import MonacoEditor, { type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { useModelStore } from '@/store'
+import { notationRegistry } from '@/core/notation'
 
 const DSL_LANGUAGE_ID = 'graphmodel'
 const PARSE_DEBOUNCE_MS = 500
@@ -33,6 +34,39 @@ function registerLanguage(monaco: Monaco) {
     brackets: [['{', '}']],
     autoClosingPairs: [{ open: '{', close: '}' }, { open: '"', close: '"' }],
     comments: { lineComment: '//' },
+  })
+
+  registerCompletion(monaco)
+}
+
+/** Node-type IntelliSense: every element type, with its notation, group, an
+ *  inline logo, and a one-line description in the suggestion details. */
+function registerCompletion(monaco: Monaco) {
+  const notationLabel = (k: string) => notationRegistry.getNotations().find(n => n.kind === k)?.label ?? k
+  monaco.languages.registerCompletionItemProvider(DSL_LANGUAGE_ID, {
+    triggerCharacters: ['=', ' '],
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position)
+      const range = {
+        startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+        startColumn: word.startColumn, endColumn: word.endColumn,
+      }
+      const suggestions = notationRegistry.getAllElementTypes().map(t => {
+        const notation = notationLabel(t.notation)
+        const grp = t.group ? ` · ${t.group}` : ''
+        const logo = t.iconSrc ? `![logo](${new URL(t.iconSrc, location.href).href})\n\n` : ''
+        const desc = t.description ?? `${t.label} element from the ${notation} notation${t.group ? `, ${t.group} layer` : ''}.`
+        return {
+          label: { label: t.type, description: `${t.label} — ${notation}` },
+          kind: monaco.languages.CompletionItemKind.Class,
+          insertText: t.type,
+          detail: `${t.label} (${notation}${grp})`,
+          documentation: { value: `${logo}**${t.label}**\n\n\`${t.type}\` — ${notation}${grp}\n\n${desc}`, supportHtml: true },
+          range,
+        }
+      })
+      return { suggestions }
+    },
   })
 
   monaco.editor.defineTheme('graphmodel-dark', {

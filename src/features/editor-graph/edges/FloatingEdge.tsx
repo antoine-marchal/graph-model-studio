@@ -4,11 +4,14 @@ import {
   EdgeLabelRenderer,
   getBezierPath,
   useInternalNode,
+  useStore,
   type EdgeProps,
   type InternalNode,
   type Node,
   Position,
 } from '@xyflow/react'
+import { useModelStore } from '@/store'
+import { routeOrthogonal, pointsToRoundedPath, type Rect, type Point } from './orthogonal-router'
 
 /** Point where the line from intersectionNode's center to targetNode's center crosses intersectionNode's border. */
 function getNodeIntersection(intersectionNode: InternalNode<Node>, targetNode: InternalNode<Node>) {
@@ -78,20 +81,66 @@ function getEdgeParams(
   }
 }
 
+/** Point at half the total length of a poly-line (for label placement). */
+function polylineMidpoint(pts: Point[]): Point {
+  let total = 0
+  for (let i = 0; i < pts.length - 1; i++) total += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y)
+  let half = total / 2
+  for (let i = 0; i < pts.length - 1; i++) {
+    const seg = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y)
+    if (half <= seg) {
+      const t = seg === 0 ? 0 : half / seg
+      return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t }
+    }
+    half -= seg
+  }
+  return pts[pts.length - 1]
+}
+
 export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, style, data, selected, sourceHandleId, targetHandleId }: EdgeProps) => {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
+  const routing = useModelStore(s => s.edgeRouting)
+  const nodeLookup = useStore(s => s.nodeLookup)
   if (!sourceNode || !targetNode) return null
 
   // self-loop fallback
   if (source === target) return null
 
   const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
-  const [path, labelX, labelY] = getBezierPath({
-    sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
-    targetPosition: targetPos, targetX: tx, targetY: ty,
-    curvature: 0.25,
-  })
+
+  let path: string
+  let labelX: number
+  let labelY: number
+  let routed: Point[] | null = null
+  if (routing === 'orthogonal') {
+    const obstacles: Rect[] = []
+    for (const [, n] of nodeLookup) {
+      if (n.id === source || n.id === target) continue
+      const x = n.internals.positionAbsolute.x
+      const y = n.internals.positionAbsolute.y
+      const w = n.measured.width ?? 0
+      const h = n.measured.height ?? 0
+      // skip nodes that enclose an endpoint (ancestor containers) — they would trap the route
+      const encloses = (px: number, py: number) => px >= x && px <= x + w && py >= y && py <= y + h
+      if (encloses(sx, sy) || encloses(tx, ty)) continue
+      obstacles.push({ x, y, width: w, height: h })
+    }
+    routed = routeOrthogonal({ x: sx, y: sy }, { x: tx, y: ty }, obstacles)
+  }
+
+  if (routed) {
+    path = pointsToRoundedPath(routed)
+    const mid = polylineMidpoint(routed)
+    labelX = mid.x
+    labelY = mid.y
+  } else {
+    [path, labelX, labelY] = getBezierPath({
+      sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
+      targetPosition: targetPos, targetX: tx, targetY: ty,
+      curvature: 0.25,
+    })
+  }
 
   const label = (data as { label?: string } | undefined)?.label
 

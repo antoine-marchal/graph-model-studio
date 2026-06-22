@@ -46,13 +46,13 @@ export class BrowserStorageProvider implements StorageProvider {
     })
   }
 
-  async save(content: string, suggestedName = 'model.gmc'): Promise<boolean> {
+  async save(content: string, suggestedName = 'model.gmc'): Promise<string | null> {
     if (this.fileHandle) {
       try {
         const writable = await this.fileHandle.createWritable()
         await writable.write(content)
         await writable.close()
-        return true
+        return this.fileHandle.name
       } catch {
         // fall through to saveAs
       }
@@ -60,7 +60,7 @@ export class BrowserStorageProvider implements StorageProvider {
     return this.saveAs(content, suggestedName)
   }
 
-  async saveAs(content: string, suggestedName = 'model.gmc'): Promise<boolean> {
+  async saveAs(content: string, suggestedName = 'model.gmc'): Promise<string | null> {
     if ('showSaveFilePicker' in window) {
       try {
         const handle = await (window as unknown as {
@@ -76,9 +76,9 @@ export class BrowserStorageProvider implements StorageProvider {
         const writable = await handle.createWritable()
         await writable.write(content)
         await writable.close()
-        return true
+        return handle.name
       } catch {
-        return false
+        return null
       }
     }
 
@@ -90,7 +90,7 @@ export class BrowserStorageProvider implements StorageProvider {
     a.download = suggestedName
     a.click()
     URL.revokeObjectURL(url)
-    return true
+    return suggestedName
   }
 }
 
