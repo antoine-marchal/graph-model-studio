@@ -34,8 +34,8 @@
   --fg-subtle: #5f6c7e;
   --edge: #6b7685;
   --edge-label: #aab4c2;
-  --rf-bg-dots: #1c232f;
-  --rf-bg-lines: #161c27;
+  --rf-bg-dots: #141a23;
+  --rf-bg-lines: #10151d;
 }
 
 * { box-sizing: border-box; }

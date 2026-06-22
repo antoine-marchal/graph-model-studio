@@ -23,7 +23,8 @@
         "decorations": false,
         "transparent": false,
         "theme": "Dark",
-        "center": true
+        "center": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

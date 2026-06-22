@@ -81,6 +81,7 @@ function GraphEditorInner() {
   const toggleSnapToGrid = useModelStore(s => s.toggleSnapToGrid)
   const showMinimap = useModelStore(s => s.showMinimap)
   const toggleMinimap = useModelStore(s => s.toggleMinimap)
+  const addElementsToView = useModelStore(s => s.addElementsToView)
 
   const { screenToFlowPosition, fitView, getIntersectingNodes } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -293,8 +294,33 @@ function GraphEditorInner() {
   const toggleBtn = (active: boolean) =>
     active ? 'bg-[var(--accent)] text-[var(--accent-fg)] border-[var(--accent)]' : ''
 
+  // ── drag elements from the Explorer onto the canvas to include them in the view ──
+  const ELEMENT_MIME = 'application/gms-element-ids'
+  const onCanvasDragOver = useCallback((e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(ELEMENT_MIME)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'copy'
+    }
+  }, [])
+  const onCanvasDrop = useCallback((e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(ELEMENT_MIME)
+    if (!raw || !activeView) return
+    e.preventDefault()
+    // "all" views already contain everything — dropping there would silently
+    // turn the view custom and hide the rest, so ignore it
+    if (activeView.includeAll) return
+    try {
+      const ids = JSON.parse(raw) as string[]
+      addElementsToView(activeView.id, ids)
+      const p = screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      const positions: Record<string, { x: number; y: number }> = {}
+      ids.forEach((id, i) => { positions[id] = { x: p.x + i * 28, y: p.y + i * 28 } })
+      setViewPositions(activeView.id, positions, true)
+    } catch { /* ignore malformed payload */ }
+  }, [activeView, addElementsToView, screenToFlowPosition, setViewPositions])
+
   return (
-    <div ref={wrapperRef} className="h-full w-full">
+    <div ref={wrapperRef} className="h-full w-full" onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
       <EdgeMarkers />
       <ReactFlow
         nodes={nodes}
@@ -324,7 +350,16 @@ function GraphEditorInner() {
         colorMode={theme}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={snapToGrid ? BackgroundVariant.Lines : BackgroundVariant.Dots} gap={snapToGrid ? 16 : 20} size={1} />
+        <Background
+          variant={snapToGrid ? BackgroundVariant.Lines : BackgroundVariant.Dots}
+          gap={snapToGrid ? 16 : 20}
+          size={1}
+          color={
+            theme === 'dark'
+              ? (snapToGrid ? '#171f2b' : '#273242')
+              : (snapToGrid ? '#e2e6ec' : '#abb1b9')
+          }
+        />
         <Controls />
         {showMinimap && <MiniMap pannable zoomable nodeColor={n => (n.data as { stroke?: string })?.stroke ?? '#888'} />}
 

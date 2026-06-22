@@ -230,33 +230,73 @@ export function modelToFlow(
     }
   })
 
+  // nearest visible ancestor-or-self (undefined if the whole chain is hidden)
+  function liftToVisible(id: string): string | undefined {
+    let cur: string | undefined = id
+    while (cur && !visible.has(cur)) cur = model.elements[cur]?.parentId
+    return cur && visible.has(cur) ? cur : undefined
+  }
+
   const edges: GraphEdge[] = []
+  const directKeys = new Set<string>()
+  // inherited (lifted) relations between visible ancestors, grouped per ordered pair
+  const inherited = new Map<string, { source: string; target: string; labels: string[] }>()
+
   for (const rel of Object.values(model.relations)) {
-    if (!visible.has(rel.sourceId) || !visible.has(rel.targetId)) continue
-    const rdef = notationRegistry.getRelationDef(rel.type)
-    const dashed = rdef?.lineStyle === 'dashed'
-    const dotted = rdef?.lineStyle === 'dotted'
-    // notation-correct markers come from the registry; direction adds/removes heads
-    let markerStart: string | undefined = rdef?.markerStart
-    let markerEnd: string | undefined = rdef?.markerEnd ?? 'gms-arrow-open'
-    if (rel.direction === 'undirected') { markerStart = undefined; markerEnd = undefined }
-    if (rel.direction === 'bidirectional') { markerStart = markerStart ?? 'gms-arrow-open' }
+    if (visible.has(rel.sourceId) && visible.has(rel.targetId)) {
+      // ── direct edge: both endpoints visible ──
+      directKeys.add(`${rel.sourceId}->${rel.targetId}`)
+      const rdef = notationRegistry.getRelationDef(rel.type)
+      const dashed = rdef?.lineStyle === 'dashed'
+      const dotted = rdef?.lineStyle === 'dotted'
+      // notation-correct markers come from the registry; direction adds/removes heads
+      let markerStart: string | undefined = rdef?.markerStart
+      let markerEnd: string | undefined = rdef?.markerEnd ?? 'gms-arrow-open'
+      if (rel.direction === 'undirected') { markerStart = undefined; markerEnd = undefined }
+      if (rel.direction === 'bidirectional') { markerStart = markerStart ?? 'gms-arrow-open' }
+      edges.push({
+        id: rel.id,
+        source: rel.sourceId,
+        target: rel.targetId,
+        type: 'floating',
+        sourceHandle: rel.sourceHandle,
+        targetHandle: rel.targetHandle,
+        data: { label: rel.label },
+        markerStart: markerStart || undefined,
+        markerEnd: markerEnd || undefined,
+        style: {
+          stroke: 'var(--edge)',
+          strokeWidth: 1.6,
+          strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
+        },
+        zIndex: 1000, // edges above containers
+      })
+      continue
+    }
+    // ── inherited edge: lift hidden endpoint(s) to their visible ancestor ──
+    const ls = liftToVisible(rel.sourceId)
+    const lt = liftToVisible(rel.targetId)
+    if (!ls || !lt || ls === lt) continue // nothing visible to connect, or self-loop
+    const key = `${ls}->${lt}`
+    const g = inherited.get(key) ?? { source: ls, target: lt, labels: [] }
+    if (rel.label) g.labels.push(rel.label)
+    inherited.set(key, g)
+  }
+
+  // emit one aggregated edge per visible pair; its label is the underlying
+  // relation labels concatenated with "/" (deduped, order-preserving)
+  for (const [key, g] of inherited) {
+    if (directKeys.has(key)) continue // a direct edge already conveys this link
+    const label = [...new Set(g.labels)].join('/')
     edges.push({
-      id: rel.id,
-      source: rel.sourceId,
-      target: rel.targetId,
+      id: `inherited:${key}`,
+      source: g.source,
+      target: g.target,
       type: 'floating',
-      sourceHandle: rel.sourceHandle,
-      targetHandle: rel.targetHandle,
-      data: { label: rel.label },
-      markerStart: markerStart || undefined,
-      markerEnd: markerEnd || undefined,
-      style: {
-        stroke: 'var(--edge)',
-        strokeWidth: 1.6,
-        strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
-      },
-      zIndex: 1000, // edges above containers
+      data: { label: label || undefined },
+      markerEnd: 'gms-arrow-open',
+      style: { stroke: 'var(--edge)', strokeWidth: 1.4, strokeDasharray: '5 4', opacity: 0.85 },
+      zIndex: 1000,
     })
   }
 
