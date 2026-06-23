@@ -53,6 +53,7 @@ export interface AstRelationDecl extends AstNode {
   targetId: string
   relationType?: string
   label?: string
+  direction?: string
   tags: string[]
   properties: AstProperty[]
   sourceHandle?: string
@@ -70,6 +71,14 @@ export interface AstModelBlock extends AstNode {
 export interface AstIncludeDirective extends AstNode {
   kind: 'IncludeDirective'
   pattern: string
+  /** 'element' (include) or 'relation' (include_relations) */
+  target?: 'element' | 'relation'
+}
+
+export interface AstNodeSize {
+  id: string
+  width: number
+  height: number
 }
 
 export interface AstAutolayoutDirective extends AstNode {
@@ -92,6 +101,7 @@ export interface AstViewDecl extends AstNode {
   autolayout?: AstAutolayoutDirective
   properties: AstProperty[]
   positions: AstNodePosition[]
+  sizes: AstNodeSize[]
 }
 
 export interface AstViewsBlock extends AstNode {

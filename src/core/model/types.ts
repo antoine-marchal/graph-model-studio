@@ -150,13 +150,18 @@ export const GraphViewSchema = z.object({
   notation: NotationKindSchema.optional(),
   description: z.string().optional(),
   includedElements: z.array(z.string()).default([]),
+  /** relation visibility keys "sourceId>targetId" (used when includeAllRelations is false) */
   includedRelations: z.array(z.string()).default([]),
   includeAll: z.boolean().default(false),
+  /** when true (default) every relation between visible elements is shown */
+  includeAllRelations: z.boolean().default(true),
   layoutMode: LayoutModeSchema.default('auto'),
   layoutDirection: LayoutDirectionSchema.default('tb'),
   filters: z.array(z.string()).default([]),
   styleOverrides: z.record(z.unknown()).default({}),
   layoutPositions: z.record(PositionSchema).default({}),
+  /** per-view manual node sizes (size belongs to a view, not the element) */
+  nodeSizes: z.record(SizeSchema).default({}),
 })
 export type GraphView = z.infer<typeof GraphViewSchema>
 
@@ -213,10 +218,12 @@ export function createDefaultView(): GraphView {
     includedElements: [],
     includedRelations: [],
     includeAll: true,
+    includeAllRelations: true,
     layoutMode: 'auto',
     layoutDirection: 'tb',
     filters: [],
     styleOverrides: {},
     layoutPositions: {},
+    nodeSizes: {},
   }
 }

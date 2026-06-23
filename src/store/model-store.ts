@@ -7,6 +7,7 @@ import type { Diagnostic } from '@/core/model'
 import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
 import type { LayoutEngine } from '@/core/layout'
+import { getVisibleElementIds, isRelationIncluded, relationKey } from '@/core/model/view-visibility'
 
 export type Theme = 'light' | 'dark'
 export type EdgeRouting = 'curved' | 'orthogonal'
@@ -83,6 +84,12 @@ export interface ModelStore {
   renameView(viewId: string, name: string): void
   addElementsToView(viewId: string, ids: string[]): void
   removeElementFromView(viewId: string, id: string): void
+  /** show/hide a single element in a view (materialises an "include all" view first) */
+  toggleElementInView(viewId: string, id: string): void
+  /** show/hide a single relation in a view */
+  toggleRelationInView(viewId: string, relationId: string): void
+  /** include the given relations in a view (drag-and-drop) */
+  addRelationsToView(viewId: string, relationIds: string[]): void
 }
 
 const EXAMPLE_DSL = `model {
@@ -140,7 +147,7 @@ interface Prefs {
   recentTypes: string[]
 }
 function loadPrefs(): Prefs {
-  const fallback: Prefs = { layoutEngine: 'layered', snapToGrid: false, showMinimap: true, edgeRouting: 'curved', recentTypes: [] }
+  const fallback: Prefs = { layoutEngine: 'layered', snapToGrid: false, showMinimap: true, edgeRouting: 'orthogonal', recentTypes: [] }
   try {
     const raw = localStorage.getItem(PREFS_KEY)
     if (!raw) return fallback
@@ -155,8 +162,8 @@ function ensureDefaultView(model: GraphModel) {
   if (Object.keys(model.views).length === 0) {
     model.views['default'] = {
       id: 'default', name: 'Default View', type: 'default',
-      includedElements: [], includedRelations: [], includeAll: true,
-      layoutMode: 'auto', layoutDirection: 'tb', filters: [], styleOverrides: {}, layoutPositions: {},
+      includedElements: [], includedRelations: [], includeAll: true, includeAllRelations: true,
+      layoutMode: 'auto', layoutDirection: 'tb', filters: [], styleOverrides: {}, layoutPositions: {}, nodeSizes: {},
     }
   }
 }
@@ -172,10 +179,12 @@ function carryOverPositions(oldModel: GraphModel, newModel: GraphModel) {
       if (newModel.elements[elId]) carried[elId] = pos
     }
     newView.layoutPositions = carried
-  }
-  // manual node sizes (stored on the element)
-  for (const [id, oldEl] of Object.entries(oldModel.elements)) {
-    if (oldEl.size && newModel.elements[id]) newModel.elements[id].size = oldEl.size
+    // per-view manual node sizes
+    const carriedSizes: Record<string, { width: number; height: number }> = {}
+    for (const [elId, sz] of Object.entries(oldView.nodeSizes ?? {})) {
+      if (newModel.elements[elId]) carriedSizes[elId] = sz
+    }
+    newView.nodeSizes = carriedSizes
   }
   // pinned edge anchors (matched by endpoints + type, since ids regenerate on parse)
   const keyOf = (r: { sourceId: string; targetId: string; type: string }) => `${r.sourceId}->${r.targetId}:${r.type}`
@@ -291,6 +300,14 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
         for (const [id, pos] of Object.entries(command.payload.positions)) {
           view.layoutPositions[id] = pos
         }
+      }
+      break
+    }
+    case 'SET_NODE_SIZE': {
+      const view = model.views[command.payload.viewId]
+      if (view) {
+        if (!view.nodeSizes) view.nodeSizes = {}
+        view.nodeSizes[command.payload.id] = command.payload.size
       }
       break
     }
@@ -593,8 +610,8 @@ export const useModelStore = create<ModelStore>()(
           // start empty: the user drags elements from the Explorer to populate it
           state.model.views[id] = {
             id, name: `View ${n}`, type: 'default',
-            includedElements: [], includedRelations: [], includeAll: false,
-            layoutMode: 'auto', layoutDirection: 'tb', filters: [], styleOverrides: {}, layoutPositions: {},
+            includedElements: [], includedRelations: [], includeAll: false, includeAllRelations: true,
+            layoutMode: 'auto', layoutDirection: 'tb', filters: [], styleOverrides: {}, layoutPositions: {}, nodeSizes: {},
           }
           state.activeViewId = id
           state.isDirty = true
@@ -624,6 +641,68 @@ export const useModelStore = create<ModelStore>()(
           if (!v) return
           v.includedElements = v.includedElements.filter(e => e !== id)
           delete v.layoutPositions[id]
+          state.isDirty = true
+          state.dslSource = serializeModel(state.model)
+          saveDraft(state.dslSource)
+        })
+      },
+
+      toggleElementInView(viewId, id) {
+        set(state => {
+          const v = state.model.views[viewId]
+          if (!v) return
+          const visible = getVisibleElementIds(state.model, v)
+          const willShow = !visible.has(id)
+          // materialise to an explicit element list so a single toggle is unambiguous
+          const base = new Set(visible)
+          if (willShow) base.add(id)
+          else { base.delete(id); delete v.layoutPositions[id]; delete v.nodeSizes[id] }
+          v.includeAll = false
+          v.includedElements = [...base]
+          state.isDirty = true
+          state.dslSource = serializeModel(state.model)
+          saveDraft(state.dslSource)
+        })
+      },
+
+      toggleRelationInView(viewId, relationId) {
+        set(state => {
+          const v = state.model.views[viewId]
+          const rel = state.model.relations[relationId]
+          if (!v || !rel) return
+          const showing = isRelationIncluded(v, rel.sourceId, rel.targetId)
+          // materialise the currently-visible relation keys, then flip this one
+          const base = new Set(
+            v.includeAllRelations !== false
+              ? Object.values(state.model.relations).map(r => relationKey(r.sourceId, r.targetId))
+              : (v.includedRelations ?? []),
+          )
+          const key = relationKey(rel.sourceId, rel.targetId)
+          if (showing) base.delete(key)
+          else base.add(key)
+          v.includeAllRelations = false
+          v.includedRelations = [...base]
+          state.isDirty = true
+          state.dslSource = serializeModel(state.model)
+          saveDraft(state.dslSource)
+        })
+      },
+
+      addRelationsToView(viewId, relationIds) {
+        set(state => {
+          const v = state.model.views[viewId]
+          if (!v) return
+          const base = new Set(
+            v.includeAllRelations !== false
+              ? Object.values(state.model.relations).map(r => relationKey(r.sourceId, r.targetId))
+              : (v.includedRelations ?? []),
+          )
+          for (const rid of relationIds) {
+            const rel = state.model.relations[rid]
+            if (rel) base.add(relationKey(rel.sourceId, rel.targetId))
+          }
+          v.includeAllRelations = false
+          v.includedRelations = [...base]
           state.isDirty = true
           state.dslSource = serializeModel(state.model)
           saveDraft(state.dslSource)

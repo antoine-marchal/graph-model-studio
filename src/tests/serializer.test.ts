@@ -103,15 +103,13 @@ views { view v { include * autolayout tb } }`
   })
 })
 
-describe('DSL round-trip: positions, sizes, anchors', () => {
-  it('preserves node positions, manual sizes and pinned edge anchors', () => {
+describe('DSL round-trip: positions, per-view sizes, anchors, direction', () => {
+  it('preserves positions, per-view node sizes, anchors and relation direction', () => {
     const dsl = `model {
-  a = container "A" {
-    size 300 180
-  }
+  a = container "A"
   b = node "B"
 
-  a -> b : flow "x" anchor r l
+  a -> b : flow "x" bidirectional anchor r l
 }
 
 views {
@@ -120,15 +118,17 @@ views {
     autolayout lr
     a at 120 40
     b at 500 60
+    a size 300 180
   }
 }`
     const r1 = parseDsl(dsl)
     expect(r1.success).toBe(true)
     const m = r1.model!
-    expect(m.elements['a'].size).toEqual({ width: 300, height: 180 })
+    expect(m.views['main'].nodeSizes['a']).toEqual({ width: 300, height: 180 })
     const rel = Object.values(m.relations)[0]
     expect(rel.sourceHandle).toBe('r')
     expect(rel.targetHandle).toBe('l')
+    expect(rel.direction).toBe('bidirectional')
     expect(m.views['main'].layoutPositions['a']).toEqual({ x: 120, y: 40 })
     expect(m.views['main'].layoutPositions['b']).toEqual({ x: 500, y: 60 })
 
@@ -137,10 +137,43 @@ views {
     const r2 = parseDsl(out)
     expect(r2.success).toBe(true)
     const m2 = r2.model!
-    expect(m2.elements['a'].size).toEqual({ width: 300, height: 180 })
+    expect(m2.views['main'].nodeSizes['a']).toEqual({ width: 300, height: 180 })
     const rel2 = Object.values(m2.relations)[0]
     expect(rel2.sourceHandle).toBe('r')
     expect(rel2.targetHandle).toBe('l')
+    expect(rel2.direction).toBe('bidirectional')
     expect(m2.views['main'].layoutPositions['b']).toEqual({ x: 500, y: 60 })
+  })
+
+  it('round-trips include patterns, include_relations and view filters', () => {
+    const dsl = `model {
+  sys = softwareSystem "Sys" {
+    web = container "Web"
+    api = container "API"
+  }
+  db = container "DB"
+
+  web -> api "calls"
+  api -> db "reads"
+}
+
+views {
+  view filtered {
+    include sys.*
+    include_relations web -> api
+    autolayout tb
+  }
+}`
+    const m = parseDsl(dsl).model!
+    const v = m.views['filtered']
+    expect(v.includeAll).toBe(false)
+    expect(v.includedElements).toContain('sys.*')
+    expect(v.includeAllRelations).toBe(false)
+    expect(v.includedRelations).toContain('web>api')
+
+    const m2 = parseDsl(serializeModel(m)).model!
+    const v2 = m2.views['filtered']
+    expect(v2.includeAllRelations).toBe(false)
+    expect(v2.includedRelations).toContain('web>api')
   })
 })

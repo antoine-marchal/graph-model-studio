@@ -1,8 +1,10 @@
 import { useCallback, useRef, useEffect } from 'react'
 import MonacoEditor, { type Monaco, type OnMount } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
+import './monaco-setup'
 import { useModelStore } from '@/store'
 import { notationRegistry } from '@/core/notation'
+import { getVisibleElementIds, isRelationIncluded } from '@/core/model/view-visibility'
 
 const DSL_LANGUAGE_ID = 'graphmodel'
 const PARSE_DEBOUNCE_MS = 500
@@ -22,7 +24,7 @@ function registerLanguage(monaco: Monaco) {
         [/"([^"\\]|\\.)*"/, 'string'],
         [/->/, 'operator'],
         [/[{}=*:]/, 'delimiter'],
-        [/\b(model|views|view|include|autolayout|of|description|technology|tags|properties|archimate|bpmn|flowchart)\b/, 'keyword'],
+        [/\b(model|views|view|include_relations|include|autolayout|of|description|technology|tags|properties|size|at|anchor|directed|undirected|bidirectional|archimate|bpmn|flowchart)\b/, 'keyword'],
         [/\b(person|softwareSystem|container|component|codeElement|businessActor|businessRole|businessProcess|applicationComponent|applicationService|dataObject|technologyNode|device|systemSoftware|artifact|startEvent|endEvent|task|userTask|serviceTask|gateway|exclusiveGateway|parallelGateway|pool|lane|start|end|process|decision|inputOutput|connector|node|group|external)\b/, 'type'],
         [/[a-zA-Z_][\w.]*/, 'identifier'],
         [/\s+/, 'white'],
@@ -118,6 +120,7 @@ export function CodeEditor() {
   const theme = useModelStore(s => s.theme)
   const highlightRequest = useModelStore(s => s.highlightRequest)
   const model = useModelStore(s => s.model)
+  const activeViewId = useModelStore(s => s.activeViewId)
 
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null)
   const monacoRef = useRef<Monaco | null>(null)
@@ -196,6 +199,41 @@ export function CodeEditor() {
     const t = setTimeout(() => { decoRef.current = ed.deltaDecorations(decoRef.current, []) }, 1500)
     return () => clearTimeout(t)
   }, [highlightRequest, model])
+
+  // grey out model lines that the active view does not display
+  const dimDecoRef = useRef<string[]>([])
+  useEffect(() => {
+    const ed = editorRef.current
+    const monaco = monacoRef.current
+    if (!ed || !monaco) return
+    const m = ed.getModel()
+    if (!m) return
+    const view = activeViewId ? model.views[activeViewId] : undefined
+    const filters = !!view && (!view.includeAll || view.includeAllRelations === false)
+    if (!view || !filters) {
+      dimDecoRef.current = ed.deltaDecorations(dimDecoRef.current, [])
+      return
+    }
+    const visible = getVisibleElementIds(model, view)
+    const text = m.getValue()
+    const decos: editor.IModelDeltaDecoration[] = []
+    const dim = (offset: number) => {
+      const line = m.getPositionAt(offset).lineNumber
+      decos.push({ range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: 'gms-line-dim' } })
+    }
+    for (const el of Object.values(model.elements)) {
+      if (visible.has(el.id)) continue
+      const match = new RegExp(`(^|\\n)\\s*${escapeRegExp(el.id)}\\s*=`, 'm').exec(text)
+      if (match) dim(match.index + (match[1] ? match[1].length : 0))
+    }
+    for (const rel of Object.values(model.relations)) {
+      const shown = visible.has(rel.sourceId) && visible.has(rel.targetId) && isRelationIncluded(view, rel.sourceId, rel.targetId)
+      if (shown) continue
+      const match = new RegExp(`(^|\\n)\\s*${escapeRegExp(rel.sourceId)}\\s*->\\s*${escapeRegExp(rel.targetId)}`, 'm').exec(text)
+      if (match) dim(match.index + (match[1] ? match[1].length : 0))
+    }
+    dimDecoRef.current = ed.deltaDecorations(dimDecoRef.current, decos)
+  }, [model, activeViewId, dslSource])
 
   const handleMount: OnMount = useCallback((ed, monaco) => {
     editorRef.current = ed

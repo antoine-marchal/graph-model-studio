@@ -11,6 +11,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   notation: string
   description?: string
   technology?: string
+  tags?: string[]
   shape: NodeShape
   fill: string
   stroke: string
@@ -45,20 +46,27 @@ function Handles({ stroke }: { stroke: string }) {
   )
 }
 
+/** Meta line shown under a node label: "description / technology #tags".
+ *  Falls back to the «type» badge when there is no description/technology/tags. */
+function metaText(data: GraphNodeData): string | null {
+  const main = [data.description, data.technology].filter(Boolean).join(' / ')
+  const tags = (data.tags ?? []).filter(Boolean).map(t => `#${t}`).join(' ')
+  const meta = [main, tags].filter(Boolean).join('  ')
+  if (meta) return meta
+  if (data.notation !== 'generic' && data.notation !== 'flowchart') return `«${data.elementType}»`
+  return null
+}
+
 function Label({ data, small }: { data: GraphNodeData; small?: boolean }) {
-  const { label, technology, elementType, text, notation } = data
-  const sub = technology
-    ? `[${technology}]`
-    : notation !== 'generic' && notation !== 'flowchart'
-      ? `«${elementType}»`
-      : null
+  const { label, text } = data
+  const sub = metaText(data)
   return (
     <div className="flex flex-col items-center justify-center px-2 text-center leading-tight">
       <span className={cn('font-semibold', small ? 'text-[10px]' : 'text-xs')} style={{ color: text }}>
         {label}
       </span>
       {sub && !small && (
-        <span className="mt-0.5 text-[9px] opacity-70" style={{ color: text }}>{sub}</span>
+        <span className="mt-0.5 line-clamp-2 text-[9px] opacity-70" style={{ color: text }}>{sub}</span>
       )}
     </div>
   )
@@ -128,8 +136,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         >
           <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>
-          {d.notation !== 'generic' && (
-            <span className="ml-auto text-[9px] font-normal opacity-60">«{d.elementType}»</span>
+          {metaText(d) && (
+            <span className="ml-auto truncate text-[9px] font-normal normal-case opacity-70" title={metaText(d) ?? undefined}>
+              {metaText(d)}
+            </span>
           )}
         </div>
       </div>
@@ -213,8 +223,9 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       lineClassName="!border-[var(--accent)]"
       handleClassName="!h-2 !w-2 !rounded-sm !border !border-[var(--accent)] !bg-[var(--surface-1)]"
       onResizeEnd={(_, p) => {
-        dispatch({ type: 'UPDATE_ELEMENT', payload: { id, size: { width: Math.round(p.width), height: Math.round(p.height) } } })
         if (activeViewId) {
+          // size belongs to the view, not the element
+          dispatch({ type: 'SET_NODE_SIZE', payload: { viewId: activeViewId, id, size: { width: Math.round(p.width), height: Math.round(p.height) } } })
           dispatch({ type: 'APPLY_LAYOUT', payload: { viewId: activeViewId, positions: { [id]: { x: p.x, y: p.y } } } })
         }
       }}

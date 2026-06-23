@@ -20,26 +20,8 @@ const CONTAINER_PAD = 16
 const CONTAINER_MIN_W = 240
 const CONTAINER_MIN_H = 130
 
-export function getVisibleElementIds(model: GraphModel, view: GraphView): Set<string> {
-  if (view.includeAll) return new Set(Object.keys(model.elements))
-  const ids = new Set<string>()
-  for (const pattern of view.includedElements) {
-    if (pattern.endsWith('.*')) {
-      const prefix = pattern.slice(0, -2)
-      for (const id of Object.keys(model.elements)) {
-        if (id === prefix || id.startsWith(prefix + '.') || model.elements[id].parentId === prefix) ids.add(id)
-      }
-    } else {
-      ids.add(pattern)
-    }
-  }
-  // pull in ancestors so containers always render around visible children
-  for (const id of [...ids]) {
-    let p = model.elements[id]?.parentId
-    while (p && model.elements[p]) { ids.add(p); p = model.elements[p].parentId }
-  }
-  return ids
-}
+export { getVisibleElementIds, isRelationIncluded, relationKey } from '@/core/model/view-visibility'
+import { getVisibleElementIds, isRelationIncluded } from '@/core/model/view-visibility'
 
 export function nodeSizeFor(elementType: string): { width: number; height: number } {
   const def = notationRegistry.getElementDef(elementType) ?? GENERIC_DEF
@@ -81,13 +63,15 @@ export function computeNestedLayout(
     const kids = childrenOf.get(parentKey) ?? []
     if (kids.length === 0) return { width: 0, height: 0 }
 
+    const viewSizes = view.nodeSizes ?? {}
     // resolve child sizes (recurse into nested containers first)
     for (const kid of kids) {
       if (isVisibleContainer(model, kid, visible)) {
         sizes[kid] = layoutLevel(kid)
       } else {
+        const manual = viewSizes[kid]
         const s = nodeSizeFor(model.elements[kid].type)
-        sizes[kid] = { width: s.width, height: s.height }
+        sizes[kid] = manual ?? { width: s.width, height: s.height }
       }
     }
 
@@ -124,8 +108,8 @@ export function computeNestedLayout(
     }
     const def = notationRegistry.getElementDef(model.elements[parentKey].type)
     const minW = def?.shape === 'container' ? 300 : CONTAINER_MIN_W
-    // a manual size can only grow a container, never shrink it below its children
-    const manual = model.elements[parentKey].size
+    // a manual (per-view) size can only grow a container, never shrink it below its children
+    const manual = (view.nodeSizes ?? {})[parentKey]
     return {
       width: Math.max(minW, maxX + CONTAINER_PAD, manual?.width ?? 0),
       height: Math.max(CONTAINER_MIN_H, maxY + CONTAINER_PAD, manual?.height ?? 0),
@@ -195,10 +179,10 @@ export function modelToFlow(
     const el = model.elements[id]
     const def = notationRegistry.getElementDef(el.type) ?? GENERIC_DEF
     const container = isVisibleContainer(model, id, visible)
-    // containers auto-size around children; leaves honour a manual size override
+    // containers auto-size around children; leaves honour a per-view manual size override
     const size = container && sizes[id]?.width
       ? sizes[id]
-      : el.size ?? { width: def.defaultWidth, height: def.defaultHeight }
+      : (view.nodeSizes ?? {})[id] ?? { width: def.defaultWidth, height: def.defaultHeight }
     const useParent = !!(el.parentId && visible.has(el.parentId))
     const d = depth(id)
     return {
@@ -215,6 +199,7 @@ export function modelToFlow(
         notation: el.notation,
         description: el.description,
         technology: el.technology,
+        tags: el.tags,
         shape: def.shape,
         fill: def.fill,
         stroke: def.stroke,
@@ -243,6 +228,7 @@ export function modelToFlow(
   const inherited = new Map<string, { source: string; target: string; labels: string[] }>()
 
   for (const rel of Object.values(model.relations)) {
+    if (!isRelationIncluded(view, rel.sourceId, rel.targetId)) continue
     if (visible.has(rel.sourceId) && visible.has(rel.targetId)) {
       // ── direct edge: both endpoints visible ──
       directKeys.add(`${rel.sourceId}->${rel.targetId}`)

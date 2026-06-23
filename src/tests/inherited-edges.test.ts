@@ -28,8 +28,8 @@ function buildModel(): GraphModel {
 function view(includedElements: string[]): GraphView {
   return {
     id: 'v', name: 'v', type: 'default', includedElements, includedRelations: [],
-    includeAll: false, layoutMode: 'auto', layoutDirection: 'tb',
-    filters: [], styleOverrides: {}, layoutPositions: {},
+    includeAll: false, includeAllRelations: true, layoutMode: 'auto', layoutDirection: 'tb',
+    filters: [], styleOverrides: {}, layoutPositions: {}, nodeSizes: {},
   }
 }
 

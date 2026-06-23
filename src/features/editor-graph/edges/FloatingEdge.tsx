@@ -126,7 +126,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       if (encloses(sx, sy) || encloses(tx, ty)) continue
       obstacles.push({ x, y, width: w, height: h })
     }
-    routed = routeOrthogonal({ x: sx, y: sy }, { x: tx, y: ty }, obstacles)
+    // push the route off each border by a short stub so it leaves/enters the
+    // node perpendicular to the side it touches, then route between the stubs
+    const stub = (p: Point, pos: Position): Point => {
+      const S = 20
+      switch (pos) {
+        case Position.Top: return { x: p.x, y: p.y - S }
+        case Position.Bottom: return { x: p.x, y: p.y + S }
+        case Position.Left: return { x: p.x - S, y: p.y }
+        default: return { x: p.x + S, y: p.y }
+      }
+    }
+    const s2 = stub({ x: sx, y: sy }, sourcePos)
+    const t2 = stub({ x: tx, y: ty }, targetPos)
+    const mid = routeOrthogonal(s2, t2, obstacles)
+    if (mid) routed = [{ x: sx, y: sy }, ...mid, { x: tx, y: ty }]
   }
 
   if (routed) {

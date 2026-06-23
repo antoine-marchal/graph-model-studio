@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client'
 import { App } from './app/App'
 import { ExportRunner } from './app/ExportRunner'
 import { getExportRequest, type ExportRequest } from './services/tauri'
+// Bundle the editor/UI monospace font so the app works fully offline.
+import '@fontsource/jetbrains-mono/400.css'
+import '@fontsource/jetbrains-mono/500.css'
 import './styles/global.css'
 
 function Root() {

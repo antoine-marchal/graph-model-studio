@@ -10,6 +10,7 @@ import type {
   AstAutolayoutDirective,
   AstProperty,
   AstNodePosition,
+  AstNodeSize,
 } from '../ast'
 
 export interface ParseError {
@@ -177,6 +178,12 @@ export class Parser {
       relationType = this.eatIdent()?.value
     }
 
+    // optional direction keyword (directed | undirected | bidirectional)
+    let direction: string | undefined
+    if (['directed', 'undirected', 'bidirectional'].includes(this.peek().value)) {
+      direction = this.advance().value
+    }
+
     // optional anchor <source> <target> — pinned edge endpoints ('t'|'b'|'l'|'r'|'_')
     let sourceHandle: string | undefined
     let targetHandle: string | undefined
@@ -202,7 +209,7 @@ export class Parser {
       this.eat('RBRACE')
     }
 
-    return { kind: 'RelationDecl', sourceId, targetId, relationType, label, tags, properties, sourceHandle, targetHandle }
+    return { kind: 'RelationDecl', sourceId, targetId, relationType, label, direction, tags, properties, sourceHandle, targetHandle }
   }
 
   private parseElementDecl(): AstElementDecl | null {
@@ -357,6 +364,7 @@ export class Parser {
     let autolayout: AstAutolayoutDirective | undefined
     const properties: AstProperty[] = []
     const positions: AstNodePosition[] = []
+    const sizes: AstNodeSize[] = []
 
     this.expect('LBRACE', '{')
 
@@ -370,20 +378,40 @@ export class Parser {
         if (x != null && y != null) positions.push({ id: pid, x, y })
         continue
       }
-      if (this.check('include')) {
+      // "<id> size <w> <h>" — per-view manual node size
+      if (this.isIdent() && this.peek(1).value === 'size' && this.peek(2).kind === 'NUMBER') {
+        const sid = this.parseQualifiedIdent()
+        this.advance() // 'size'
+        const w = this.eatNumber()
+        const h = this.eatNumber()
+        if (w != null && h != null) sizes.push({ id: sid, width: w, height: h })
+        continue
+      }
+      if (this.check('include') || this.peek().value === 'include_relations') {
+        const isRel = this.peek().value === 'include_relations'
         this.advance()
-        let pattern = '*'
+        const target = isRel ? 'relation' as const : 'element' as const
         if (this.check('STAR')) {
           this.advance()
-          pattern = '*'
+          includes.push({ kind: 'IncludeDirective', pattern: '*', target })
+        } else if (isRel && this.isRelationDecl()) {
+          // include_relations src -> tgt  → stored as the "src>tgt" visibility key
+          const src = this.parseQualifiedIdent()
+          this.eat('ARROW')
+          const tgt = this.parseQualifiedIdent()
+          includes.push({ kind: 'IncludeDirective', pattern: `${src}>${tgt}`, target })
         } else if (this.isIdent()) {
-          pattern = this.parseQualifiedIdent()
-          if (this.check('DOT') && this.check('STAR')) {
+          let pattern = this.parseQualifiedIdent()
+          // "<id>.*" — the trailing dot is lexed into the ident, followed by STAR
+          if (pattern.endsWith('.') && this.check('STAR')) {
             this.advance()
-            pattern += '.*'
+            pattern += '*'
+          } else if (this.check('DOT')) {
+            this.advance()
+            if (this.check('STAR')) { this.advance(); pattern += '.*' }
           }
+          includes.push({ kind: 'IncludeDirective', pattern, target })
         }
-        includes.push({ kind: 'IncludeDirective', pattern })
       } else if (this.check('autolayout')) {
         this.advance()
         const dir = this.isIdent() ? this.eatIdent()!.value : 'tb'
@@ -397,6 +425,6 @@ export class Parser {
     }
 
     this.expect('RBRACE', '}')
-    return { kind: 'ViewDecl', id, label, ofTarget, includes, autolayout, properties, positions }
+    return { kind: 'ViewDecl', id, label, ofTarget, includes, autolayout, properties, positions, sizes }
   }
 }

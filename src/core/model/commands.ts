@@ -1,4 +1,4 @@
-import type { GraphElement, GraphRelation, GraphView, Position } from './types'
+import type { GraphElement, GraphRelation, GraphView, Position, Size } from './types'
 
 export type AddElementPayload = Omit<GraphElement, 'children' | 'tags' | 'properties'> &
   Partial<Pick<GraphElement, 'children' | 'tags' | 'properties'>>
@@ -21,6 +21,12 @@ export type ApplyLayoutPayload = {
   positions: Record<string, Position>
 }
 
+export type SetNodeSizePayload = {
+  viewId: string
+  id: string
+  size: Size
+}
+
 export type ModelCommand =
   | { type: 'ADD_ELEMENT'; payload: AddElementPayload }
   | { type: 'UPDATE_ELEMENT'; payload: UpdateElementPayload }
@@ -32,4 +38,5 @@ export type ModelCommand =
   | { type: 'UPDATE_VIEW'; payload: UpdateViewPayload }
   | { type: 'DELETE_VIEW'; payload: { id: string } }
   | { type: 'APPLY_LAYOUT'; payload: ApplyLayoutPayload }
+  | { type: 'SET_NODE_SIZE'; payload: SetNodeSizePayload }
   | { type: 'REPLACE_MODEL'; payload: import('./types').GraphModel }

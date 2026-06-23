@@ -9,6 +9,10 @@ export class BrowserStorageProvider implements StorageProvider {
   canOpen(): boolean { return true }
   canSave(): boolean { return true }
 
+  // a browser cannot reconstruct a file handle from a path, so this is a no-op;
+  // CLI/file-association launches only happen under Tauri anyway.
+  setCurrentPath(_path: string): void { /* no-op */ }
+
   async open(): Promise<{ content: string; name: string } | null> {
     // Try File System Access API
     if ('showOpenFilePicker' in window) {

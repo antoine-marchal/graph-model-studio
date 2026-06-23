@@ -15,6 +15,8 @@ export class TauriStorageProvider implements StorageProvider {
   canOpen(): boolean { return true }
   canSave(): boolean { return true }
 
+  setCurrentPath(path: string): void { this.lastPath = path }
+
   async open(): Promise<{ content: string; name: string } | null> {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')

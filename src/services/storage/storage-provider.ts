@@ -7,4 +7,7 @@ export interface StorageProvider {
   /** persist content; resolves to the saved file name, or null if cancelled/failed */
   save(content: string, suggestedName?: string): Promise<string | null>
   saveAs(content: string, suggestedName?: string): Promise<string | null>
+  /** remember the path of a file opened outside the provider (CLI arg / file association)
+   *  so a subsequent plain Save writes back to it instead of prompting. */
+  setCurrentPath(path: string): void
 }

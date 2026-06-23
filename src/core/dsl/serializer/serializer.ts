@@ -12,11 +12,10 @@ function serializeElement(el: GraphElement, elements: Record<string, GraphElemen
   const lines: string[] = []
   const i = indent(level)
 
-  let line = `${i}${el.id} = ${el.type} ${quoteString(el.name)}`
+  const line = `${i}${el.id} = ${el.type} ${quoteString(el.name)}`
   const hasBody =
     el.description ||
     el.technology ||
-    el.size ||
     el.tags.length > 0 ||
     Object.keys(el.properties).length > 0 ||
     el.children.length > 0
@@ -33,9 +32,6 @@ function serializeElement(el: GraphElement, elements: Record<string, GraphElemen
   }
   if (el.technology) {
     lines.push(`${indent(level + 1)}technology ${quoteString(el.technology)}`)
-  }
-  if (el.size) {
-    lines.push(`${indent(level + 1)}size ${Math.round(el.size.width)} ${Math.round(el.size.height)}`)
   }
   if (el.tags.length > 0) {
     lines.push(`${indent(level + 1)}tags ${el.tags.map(quoteString).join(' ')}`)
@@ -64,6 +60,9 @@ function serializeRelation(rel: GraphRelation, level = 1): string {
   if (rel.label) {
     line += ` ${quoteString(rel.label)}`
   }
+  if (rel.direction && rel.direction !== 'directed') {
+    line += ` ${rel.direction}`
+  }
   if (rel.sourceHandle || rel.targetHandle) {
     line += ` anchor ${rel.sourceHandle ?? '_'} ${rel.targetHandle ?? '_'}`
   }
@@ -83,6 +82,20 @@ function serializeView(view: GraphView): string {
     }
   }
 
+  // relation visibility (default: all relations between visible elements)
+  if (view.includeAllRelations === false) {
+    const rels = (view.includedRelations ?? []).filter(k => k.includes('>'))
+    if (rels.length === 0) {
+      // explicit "hide all relations" — sentinel keeps the state on reparse
+      lines.push(`    include_relations none`)
+    } else {
+      for (const key of rels) {
+        const [s, t] = key.split('>')
+        lines.push(`    include_relations ${s} -> ${t}`)
+      }
+    }
+  }
+
   if (view.layoutMode === 'auto' || view.layoutDirection) {
     lines.push(`    autolayout ${view.layoutDirection}`)
   }
@@ -91,6 +104,12 @@ function serializeView(view: GraphView): string {
   const positions = Object.entries(view.layoutPositions ?? {})
   for (const [id, pos] of positions) {
     lines.push(`    ${id} at ${Math.round(pos.x)} ${Math.round(pos.y)}`)
+  }
+
+  // per-view manual node sizes
+  const sizes = Object.entries(view.nodeSizes ?? {})
+  for (const [id, sz] of sizes) {
+    lines.push(`    ${id} size ${Math.round(sz.width)} ${Math.round(sz.height)}`)
   }
 
   lines.push(`  }`)

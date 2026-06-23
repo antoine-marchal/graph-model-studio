@@ -27,10 +27,17 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
   const canRedo = useModelStore(s => s.future.length > 0)
 
   const [showExport, setShowExport] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('split')
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const v = localStorage.getItem('gms:viewmode')
+      if (v === 'split' || v === 'code' || v === 'graph') return v
+    } catch { /* ignore */ }
+    return 'split'
+  })
 
   const updateViewMode = (mode: ViewMode) => {
     setViewMode(mode)
+    try { localStorage.setItem('gms:viewmode', mode) } catch { /* ignore */ }
     window.dispatchEvent(new CustomEvent('gms:viewmode', { detail: mode }))
   }
 

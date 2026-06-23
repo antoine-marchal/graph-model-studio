@@ -69,7 +69,7 @@ function convertRelation(decl: AstRelationDecl, elements: Record<string, GraphEl
     type: decl.relationType ?? 'rel',
     label: decl.label,
     notation: 'generic',
-    direction: 'directed',
+    direction: (decl.direction as GraphRelation['direction']) ?? 'directed',
     tags: decl.tags ?? [],
     properties: Object.fromEntries((decl.properties ?? []).map(p => [p.key, p.value])),
     sourceHandle: decl.sourceHandle as GraphRelation['sourceHandle'],
@@ -78,28 +78,38 @@ function convertRelation(decl: AstRelationDecl, elements: Record<string, GraphEl
 }
 
 function convertView(decl: AstViewDecl): GraphView {
-  const includeAll = decl.includes.some(i => i.pattern === '*')
   const dir = (decl.autolayout?.direction ?? 'tb') as LayoutDirection
 
-  const includedElements = includeAll
-    ? []
-    : decl.includes.map(i => i.pattern).filter(p => !p.endsWith('.*'))
+  const elementIncludes = decl.includes.filter(i => (i.target ?? 'element') === 'element')
+  const relationIncludes = decl.includes.filter(i => i.target === 'relation')
+
+  const includeAll = elementIncludes.some(i => i.pattern === '*')
+  const includeAllRelations = relationIncludes.length === 0 || relationIncludes.some(i => i.pattern === '*')
+
+  // keep element-include patterns verbatim (incl. "nodeId.*"); resolution happens in model-to-flow
+  const includedElements = includeAll ? [] : elementIncludes.map(i => i.pattern).filter(p => p !== '*')
+  const includedRelations = includeAllRelations ? [] : relationIncludes.map(i => i.pattern).filter(p => p !== '*')
 
   const layoutPositions: Record<string, { x: number; y: number }> = {}
   for (const p of decl.positions ?? []) layoutPositions[p.id] = { x: p.x, y: p.y }
+
+  const nodeSizes: Record<string, { width: number; height: number }> = {}
+  for (const s of decl.sizes ?? []) nodeSizes[s.id] = { width: s.width, height: s.height }
 
   return {
     id: decl.id,
     name: decl.label ?? decl.id,
     type: 'default',
     includedElements,
-    includedRelations: [],
+    includedRelations,
     includeAll,
+    includeAllRelations,
     layoutMode: Object.keys(layoutPositions).length ? 'manual' : 'auto',
     layoutDirection: dir,
     filters: [],
     styleOverrides: {},
     layoutPositions,
+    nodeSizes,
   }
 }
 
@@ -130,11 +140,13 @@ export function astToModel(ast: AstRoot): GraphModel {
       includedElements: [],
       includedRelations: [],
       includeAll: true,
+      includeAllRelations: true,
       layoutMode: 'auto',
       layoutDirection: 'tb',
       filters: [],
       styleOverrides: {},
       layoutPositions: {},
+      nodeSizes: {},
     }
   }
 

@@ -8,9 +8,19 @@ import { PropertiesPanel } from '@/features/properties-panel/PropertiesPanel'
 import { ResizeHandle } from '@/ui/components/Resizable'
 import { useModelStore } from '@/store'
 import { getCliFile } from '@/services/tauri'
+import { getStorageProvider } from '@/services/storage'
 import { parseDsl } from '@/core/dsl/parser'
 
 type ViewMode = 'split' | 'code' | 'graph'
+
+const VIEWMODE_KEY = 'gms:viewmode'
+function loadViewMode(): ViewMode {
+  try {
+    const v = localStorage.getItem(VIEWMODE_KEY)
+    if (v === 'split' || v === 'code' || v === 'graph') return v
+  } catch { /* ignore */ }
+  return 'split'
+}
 
 interface LayoutState {
   explorerW: number
@@ -33,7 +43,7 @@ function loadLayout(): LayoutState {
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v))
 
 export function App() {
-  const [viewMode, setViewMode] = useState<ViewMode>('split')
+  const [viewMode, setViewMode] = useState<ViewMode>(loadViewMode)
   const [layout, setLayout] = useState<LayoutState>(loadLayout)
   const centerRef = useRef<HTMLDivElement>(null)
   const theme = useModelStore(s => s.theme)
@@ -52,6 +62,8 @@ export function App() {
       const { loadModel, setFileName } = useModelStore.getState()
       const name = file.path.split(/[/\\]/).pop() ?? file.path
       setFileName(name)
+      // remember the real path so Ctrl+S writes back here instead of prompting
+      getStorageProvider().setCurrentPath(file.path)
       if (name.endsWith('.json')) {
         try { loadModel(JSON.parse(file.content)) } catch { /* ignore malformed */ }
       } else {
@@ -68,7 +80,11 @@ export function App() {
   }, [layout])
 
   useEffect(() => {
-    const onViewMode = (e: Event) => setViewMode((e as CustomEvent<ViewMode>).detail)
+    const onViewMode = (e: Event) => {
+      const mode = (e as CustomEvent<ViewMode>).detail
+      setViewMode(mode)
+      try { localStorage.setItem(VIEWMODE_KEY, mode) } catch { /* ignore */ }
+    }
     const onToggleExplorer = () => setLayout(l => ({ ...l, explorerOpen: !l.explorerOpen }))
     const onToggleProps = () => setLayout(l => ({ ...l, propsOpen: !l.propsOpen }))
     const onKey = (e: KeyboardEvent) => {
