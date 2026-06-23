@@ -1,11 +1,27 @@
+import { useEffect, useState } from 'react'
+import { useModelStore } from '@/store'
+
 /**
  * Global SVG marker definitions referenced by edges via `url(#id)`.
- * Rendered once inside the graph editor. Colours follow the --edge CSS var so
- * they track the theme. Markers are notation-aware (UML/ArchiMate/BPMN heads).
+ * Rendered once inside the graph editor.
+ *
+ * Colours are resolved to concrete values (not `var(--…)`) because CSS custom
+ * properties used in SVG presentation attributes do not survive the DOM→SVG
+ * serialisation that html-to-image performs for PNG export — they would render
+ * as invisible arrowheads in the exported image. We read the computed theme
+ * colours instead and refresh them when the theme changes.
  */
 export function EdgeMarkers() {
-  const stroke = 'var(--edge)'
-  const bg = 'var(--surface-0)'
+  const theme = useModelStore(s => s.theme)
+  const [{ stroke, bg }, setColors] = useState({ stroke: '#94a3b8', bg: '#0f1623' })
+
+  useEffect(() => {
+    const cs = getComputedStyle(document.documentElement)
+    const edge = cs.getPropertyValue('--edge').trim() || '#94a3b8'
+    const surface = cs.getPropertyValue('--surface-0').trim() || '#0f1623'
+    setColors({ stroke: edge, bg: surface })
+  }, [theme])
+
   return (
     <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
       <defs>

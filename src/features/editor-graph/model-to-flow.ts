@@ -81,9 +81,30 @@ export function computeNestedLayout(
 
     const kidSet = new Set(kids)
     const lnodes: LayoutNodeInput[] = kids.map(id => ({ id, width: sizes[id].width, height: sizes[id].height }))
+    // Lift each relation endpoint to whichever kid (at this level) contains it.
+    // This lets the layout "see" cross-container relations (e.g. a child of one
+    // container linked to a child of another) and place the containers sensibly,
+    // instead of only counting edges whose both endpoints sit directly here.
+    const liftToKid = (id: string): string | undefined => {
+      let cur: string | undefined = id
+      while (cur && model.elements[cur]) {
+        if (kidSet.has(cur)) return cur
+        const par: string | undefined = model.elements[cur].parentId
+        cur = par && visible.has(par) ? par : undefined
+      }
+      return undefined
+    }
     const ledges: LayoutEdgeInput[] = []
+    const seenEdge = new Set<string>()
     for (const rel of Object.values(model.relations)) {
-      if (kidSet.has(rel.sourceId) && kidSet.has(rel.targetId)) ledges.push({ source: rel.sourceId, target: rel.targetId })
+      if (!isRelationIncluded(view, rel.sourceId, rel.targetId)) continue
+      const a = liftToKid(rel.sourceId)
+      const b = liftToKid(rel.targetId)
+      if (!a || !b || a === b) continue
+      const k = `${a}->${b}`
+      if (seenEdge.has(k)) continue
+      seenEdge.add(k)
+      ledges.push({ source: a, target: b })
     }
     const laid = runLayout(engine, lnodes, ledges, {
       direction: view.layoutDirection,

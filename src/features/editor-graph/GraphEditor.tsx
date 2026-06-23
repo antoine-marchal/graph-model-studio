@@ -225,13 +225,20 @@ function GraphEditorInner() {
   }, [screenToFlowPosition])
 
   // ── auto layout ──
+  // A node with an explicit `at` in the DSL is "pinned": stored in the view's
+  // layoutPositions. Auto-layout never moves pinned nodes — it only arranges the
+  // rest around them. (Remove the `at` line, or drag the node, to re-pin/un-pin.)
   const runAutoLayout = useCallback((scope: 'all' | 'selected') => {
     if (!activeView) return
-    const selectedIds = nodes.filter(n => n.selected).map(n => n.id)
-    if (scope === 'selected' && selectedIds.length < 2) scope = 'all'
+    const pinned = new Set(Object.keys(activeView.layoutPositions ?? {}))
     if (scope === 'all') {
-      setViewPositions(viewId, computeAutoLayout(model, activeView, { engine: layoutEngine, ignoreStored: true }), false)
+      // ignoreStored:false keeps every pinned node at its stored position and
+      // only computes positions for the unpinned ones
+      setViewPositions(viewId, computeAutoLayout(model, activeView, { engine: layoutEngine, ignoreStored: false }), false)
     } else {
+      // lay out the selected nodes even that are pinned, keeping everything else put
+      const selectedIds = nodes.filter(n => n.selected).map(n => n.id)
+      if (selectedIds.length === 0) return
       const { nodes: lin, edges: led } = buildLayoutInputs(model, activeView)
       const current: Record<string, { x: number; y: number }> = {}
       for (const n of nodes) current[n.id] = n.position
@@ -251,20 +258,60 @@ function GraphEditorInner() {
     setTimeout(() => selectElements(created), 0)
   }, [nodes, duplicateElements, selectElements])
 
-  // ── export PNG ──
+  // ── export PNG: transparent background, auto-cropped to content, with arrows ──
   const exportPng = useCallback(async () => {
-    const el = wrapperRef.current?.querySelector('.react-flow__viewport') as HTMLElement | null
-    if (!el) return
-    const bg = getComputedStyle(document.documentElement).getPropertyValue('--surface-0').trim() || '#0a0e16'
-    const rect = (wrapperRef.current as HTMLElement).getBoundingClientRect()
-    const dataUrl = await toPng(el, {
-      backgroundColor: bg,
-      width: Math.round(rect.width),
-      height: Math.round(rect.height),
-      style: { transform: el.style.transform },
-    })
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    const wrect = wrapper.getBoundingClientRect()
+
+    // content pixel bbox (nodes + edge paths + edge labels), relative to wrapper
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    const expand = (r: DOMRect) => {
+      if (r.width === 0 && r.height === 0) return
+      minX = Math.min(minX, r.left); minY = Math.min(minY, r.top)
+      maxX = Math.max(maxX, r.right); maxY = Math.max(maxY, r.bottom)
+    }
+    wrapper.querySelectorAll('.react-flow__node').forEach(n => expand(n.getBoundingClientRect()))
+    wrapper.querySelectorAll('.react-flow__edge-path').forEach(p => expand((p as SVGGraphicsElement).getBoundingClientRect()))
+    wrapper.querySelectorAll('.react-flow__edgelabel-renderer > *').forEach(l => expand(l.getBoundingClientRect()))
+    if (!isFinite(minX)) return
+
+    const PAD = 24
+    const ratio = 2
+    const cropX = (minX - wrect.left - PAD) * ratio
+    const cropY = (minY - wrect.top - PAD) * ratio
+    const cropW = (maxX - minX + 2 * PAD) * ratio
+    const cropH = (maxY - minY + 2 * PAD) * ratio
+
+    // capture the whole wrapper (so the global <EdgeMarkers> defs are in scope),
+    // transparent, minus the editor chrome (grid, controls, minimap, toolbars)
+    const skip = ['react-flow__background', 'react-flow__controls', 'react-flow__minimap', 'react-flow__panel', 'react-flow__attribution']
+    // .react-flow paints an opaque pane background; null it out for a transparent PNG
+    const rf = wrapper.querySelector('.react-flow') as HTMLElement | null
+    const prevBg = rf?.style.backgroundColor
+    if (rf) rf.style.backgroundColor = 'transparent'
+    let fullUrl: string
+    try {
+      fullUrl = await toPng(wrapper, {
+        pixelRatio: ratio,
+        backgroundColor: undefined, // transparent
+        filter: (node) => !(node instanceof Element) || !skip.some(c => node.classList?.contains(c)),
+      })
+    } finally {
+      if (rf) rf.style.backgroundColor = prevBg ?? ''
+    }
+
+    // crop to the content bbox on a transparent canvas
+    const img = new Image()
+    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = fullUrl })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(cropW))
+    canvas.height = Math.max(1, Math.round(cropH))
+    const ctx = canvas.getContext('2d')!
+    ctx.drawImage(img, cropX, cropY, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height)
+
     const base = model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'diagram'
-    const bytes = dataUrlToBytes(dataUrl)
+    const bytes = dataUrlToBytes(canvas.toDataURL('image/png'))
     await saveBinaryFile(bytes, { defaultName: `${base}.png`, filters: filtersForExt('png') })
   }, [model])
 

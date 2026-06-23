@@ -168,38 +168,41 @@ function ensureDefaultView(model: GraphModel) {
   }
 }
 
-/** Preserve visual-only state across a re-parse (the DSL stores none of it):
- *  view positions, manual node sizes, and pinned edge anchors. */
+/** Positions, sizes, anchors and direction all round-trip through the DSL now,
+ *  so a re-parse must let the DSL win — that's how editing `at`/`size`/anchors
+ *  in the code refreshes the view. We only *fill gaps*: any visual state the
+ *  re-parsed model doesn't mention is carried over from the previous model. */
 function carryOverPositions(oldModel: GraphModel, newModel: GraphModel) {
   for (const [viewId, oldView] of Object.entries(oldModel.views)) {
     const newView = newModel.views[viewId]
     if (!newView) continue
-    const carried: Record<string, Position> = {}
+    // parsed positions/sizes win; old values only fill ids the DSL didn't specify
     for (const [elId, pos] of Object.entries(oldView.layoutPositions ?? {})) {
-      if (newModel.elements[elId]) carried[elId] = pos
+      if (newModel.elements[elId] && newView.layoutPositions[elId] === undefined) newView.layoutPositions[elId] = pos
     }
-    newView.layoutPositions = carried
-    // per-view manual node sizes
-    const carriedSizes: Record<string, { width: number; height: number }> = {}
     for (const [elId, sz] of Object.entries(oldView.nodeSizes ?? {})) {
-      if (newModel.elements[elId]) carriedSizes[elId] = sz
+      if (newModel.elements[elId] && newView.nodeSizes[elId] === undefined) newView.nodeSizes[elId] = sz
     }
-    newView.nodeSizes = carriedSizes
   }
-  // pinned edge anchors (matched by endpoints + type, since ids regenerate on parse)
+  // pinned edge anchors / direction (ids regenerate on parse, so match by endpoints + type).
+  // Only fill relations the DSL left at defaults — an explicit anchor/direction in code wins.
   const keyOf = (r: { sourceId: string; targetId: string; type: string }) => `${r.sourceId}->${r.targetId}:${r.type}`
   const oldByKey = new Map<string, GraphRelation>()
   for (const r of Object.values(oldModel.relations)) {
     if (r.sourceHandle || r.targetHandle || r.direction !== 'directed') oldByKey.set(keyOf(r), r)
   }
   for (const r of Object.values(newModel.relations)) {
+    const isDefault = !r.sourceHandle && !r.targetHandle && r.direction === 'directed'
+    if (!isDefault) continue
     const prev = oldByKey.get(keyOf(r))
     if (prev) { r.sourceHandle = prev.sourceHandle; r.targetHandle = prev.targetHandle; r.direction = prev.direction }
   }
 }
 
-function isDslAffecting(cmd: ModelCommand): boolean {
-  return cmd.type !== 'APPLY_LAYOUT'
+function isDslAffecting(_cmd: ModelCommand): boolean {
+  // Every command (including APPLY_LAYOUT from drag/resize) changes the rendered
+  // diagram, so keep the DSL `at`/`size` lines in sync with the live positions.
+  return true
 }
 
 function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: string | null): GraphModel {

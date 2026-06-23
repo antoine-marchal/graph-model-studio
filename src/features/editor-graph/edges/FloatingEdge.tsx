@@ -81,6 +81,23 @@ function getEdgeParams(
   }
 }
 
+/** Drop duplicate and collinear joints from a poly-line. */
+function dedupeColinear(pts: Point[]): Point[] {
+  const out: Point[] = []
+  for (const p of pts) {
+    const n = out.length
+    if (n && Math.abs(out[n - 1].x - p.x) < 0.5 && Math.abs(out[n - 1].y - p.y) < 0.5) continue
+    if (n >= 2) {
+      const a = out[n - 2], b = out[n - 1]
+      const collinear = (Math.abs(a.x - b.x) < 0.5 && Math.abs(b.x - p.x) < 0.5)
+        || (Math.abs(a.y - b.y) < 0.5 && Math.abs(b.y - p.y) < 0.5)
+      if (collinear) { out[n - 1] = p; continue }
+    }
+    out.push(p)
+  }
+  return out
+}
+
 /** Point at half the total length of a poly-line (for label placement). */
 function polylineMidpoint(pts: Point[]): Point {
   let total = 0
@@ -126,10 +143,13 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       if (encloses(sx, sy) || encloses(tx, ty)) continue
       obstacles.push({ x, y, width: w, height: h })
     }
-    // push the route off each border by a short stub so it leaves/enters the
-    // node perpendicular to the side it touches, then route between the stubs
-    const stub = (p: Point, pos: Position): Point => {
-      const S = 20
+    // Push the route off each border by a sizeable stub so the line leaves and
+    // enters the node with a long perpendicular segment, then route between the
+    // stubs (the A* router keeps that middle portion clear of other nodes).
+    // The stub grows with endpoint distance but is capped so close nodes don't
+    // overshoot one another.
+    const dist = Math.hypot(tx - sx, ty - sy)
+    const stubFor = (S: number) => (p: Point, pos: Position): Point => {
       switch (pos) {
         case Position.Top: return { x: p.x, y: p.y - S }
         case Position.Bottom: return { x: p.x, y: p.y + S }
@@ -137,10 +157,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
         default: return { x: p.x + S, y: p.y }
       }
     }
-    const s2 = stub({ x: sx, y: sy }, sourcePos)
-    const t2 = stub({ x: tx, y: ty }, targetPos)
-    const mid = routeOrthogonal(s2, t2, obstacles)
-    if (mid) routed = [{ x: sx, y: sy }, ...mid, { x: tx, y: ty }]
+    // try a large perpendicular stub first, then a small one, then no stub —
+    // a big stub can land inside a neighbour's margin and make A* fail, so we
+    // degrade gracefully instead of dropping straight to a node-crossing bezier
+    const src = { x: sx, y: sy }
+    const tgt = { x: tx, y: ty }
+    for (const S of [Math.min(dist * 0.33, 40), 20, 0]) {
+      const stub = stubFor(S)
+      const a = S > 0 ? stub(src, sourcePos) : src
+      const b = S > 0 ? stub(tgt, targetPos) : tgt
+      const mid = routeOrthogonal(a, b, obstacles)
+      if (mid) {
+        routed = dedupeColinear(S > 0 ? [src, ...mid, tgt] : mid)
+        break
+      }
+    }
   }
 
   if (routed) {
