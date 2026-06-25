@@ -230,7 +230,7 @@ function GraphEditorInner() {
   // rest around them. (Remove the `at` line, or drag the node, to re-pin/un-pin.)
   const runAutoLayout = useCallback((scope: 'all' | 'selected') => {
     if (!activeView) return
-    const pinned = new Set(Object.keys(activeView.layoutPositions ?? {}))
+    //const pinned = new Set(Object.keys(activeView.layoutPositions ?? {}))
     if (scope === 'all') {
       // ignoreStored:false keeps every pinned node at its stored position and
       // only computes positions for the unpinned ones

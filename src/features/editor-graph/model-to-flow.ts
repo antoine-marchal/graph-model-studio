@@ -243,6 +243,16 @@ export function modelToFlow(
     return cur && visible.has(cur) ? cur : undefined
   }
 
+  // is `ancestor` a (transitive) parent of `descendant`?
+  function isAncestorOf(ancestor: string, descendant: string): boolean {
+    let p = model.elements[descendant]?.parentId
+    while (p) {
+      if (p === ancestor) return true
+      p = model.elements[p]?.parentId
+    }
+    return false
+  }
+
   const edges: GraphEdge[] = []
   const directKeys = new Set<string>()
   // inherited (lifted) relations between visible ancestors, grouped per ordered pair
@@ -284,6 +294,9 @@ export function modelToFlow(
     const ls = liftToVisible(rel.sourceId)
     const lt = liftToVisible(rel.targetId)
     if (!ls || !lt || ls === lt) continue // nothing visible to connect, or self-loop
+    // drop deduced ascending/descending edges: a relation that, after lifting,
+    // links a node to one of its own ancestors (e.g. b->c collapsing to b->A)
+    if (isAncestorOf(ls, lt) || isAncestorOf(lt, ls)) continue
     const key = `${ls}->${lt}`
     const g = inherited.get(key) ?? { source: ls, target: lt, labels: [] }
     if (rel.label) g.labels.push(rel.label)

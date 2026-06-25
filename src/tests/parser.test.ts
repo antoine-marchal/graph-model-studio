@@ -149,4 +149,34 @@ views { view main { include * autolayout tb } }
     expect(els['c'].notation).toBe('bpmn')
     expect(els['d'].notation).toBe('flowchart')
   })
+
+  it('treats "include a, b" as "include a" + "include b"', () => {
+    const dsl = `model {
+  a = container "A"
+  b = container "B"
+  c = container "C"
+}
+views { view main { include a, b autolayout tb } }
+`
+    const v = parseDsl(dsl).model!.views['main']
+    expect(v.includeAll).toBe(false)
+    expect(v.includedElements).toEqual(['a', 'b'])
+  })
+
+  it('parses comma-separated include_relations', () => {
+    const dsl = `model {
+  a = container "A"
+  b = container "B"
+  c = container "C"
+  a -> b
+  b -> c
+}
+views { view main { include *
+  include_relations a -> b, b -> c
+  autolayout tb } }
+`
+    const v = parseDsl(dsl).model!.views['main']
+    expect(v.includeAllRelations).toBe(false)
+    expect(v.includedRelations).toEqual(['a>b', 'b>c'])
+  })
 })

@@ -15,27 +15,30 @@ function addWithDescendants(model: GraphModel, id: string, ids: Set<string>) {
   for (const c of model.elements[id].children) addWithDescendants(model, c, ids)
 }
 
+/** Add only the descendants of an element (not the element itself). */
+function addDescendantsOnly(model: GraphModel, id: string, ids: Set<string>) {
+  const el = model.elements[id]
+  if (!el) return
+  for (const c of el.children) addWithDescendants(model, c, ids)
+}
+
 /** The set of element ids rendered for a view, honouring include patterns
- *  ("*", "nodeId", "nodeId.*") and always pulling in visible ancestors. */
+ *  ("*", "nodeId", "nodeId.*"). Only explicitly-included elements are shown:
+ *  a container is rendered around its children only when it too is included. */
 export function getVisibleElementIds(model: GraphModel, view: GraphView): Set<string> {
   if (view.includeAll) return new Set(Object.keys(model.elements))
   const ids = new Set<string>()
   for (const pattern of view.includedElements) {
     if (pattern === '*') { for (const id of Object.keys(model.elements)) ids.add(id); continue }
     if (pattern.endsWith('.*')) {
-      // "nodeId.*" → the node and every descendant
+      // "nodeId.*" → every descendant, but NOT the node itself
       const prefix = resolvePatternId(pattern.slice(0, -2), model)
-      if (prefix) addWithDescendants(model, prefix, ids)
+      if (prefix) addDescendantsOnly(model, prefix, ids)
     } else {
-      // "nodeId" → just that node
+      // "nodeId" → just that node (no ancestors pulled in)
       const rid = resolvePatternId(pattern, model)
       if (rid) ids.add(rid)
     }
-  }
-  // pull in ancestors so containers always render around visible children
-  for (const id of [...ids]) {
-    let p = model.elements[id]?.parentId
-    while (p && model.elements[p]) { ids.add(p); p = model.elements[p].parentId }
   }
   return ids
 }

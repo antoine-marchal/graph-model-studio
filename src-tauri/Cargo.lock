@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "graph-model-studio"
-version = "2.0.0"
+version = "2.0.2"
 dependencies = [
  "serde",
  "serde_json",

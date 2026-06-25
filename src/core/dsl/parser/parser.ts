@@ -391,26 +391,11 @@ export class Parser {
         const isRel = this.peek().value === 'include_relations'
         this.advance()
         const target = isRel ? 'relation' as const : 'element' as const
-        if (this.check('STAR')) {
+        // comma-separated list: "include a, b" === "include a" + "include b"
+        this.parseIncludeItem(isRel, target, includes)
+        while (this.check('COMMA')) {
           this.advance()
-          includes.push({ kind: 'IncludeDirective', pattern: '*', target })
-        } else if (isRel && this.isRelationDecl()) {
-          // include_relations src -> tgt  → stored as the "src>tgt" visibility key
-          const src = this.parseQualifiedIdent()
-          this.eat('ARROW')
-          const tgt = this.parseQualifiedIdent()
-          includes.push({ kind: 'IncludeDirective', pattern: `${src}>${tgt}`, target })
-        } else if (this.isIdent()) {
-          let pattern = this.parseQualifiedIdent()
-          // "<id>.*" — the trailing dot is lexed into the ident, followed by STAR
-          if (pattern.endsWith('.') && this.check('STAR')) {
-            this.advance()
-            pattern += '*'
-          } else if (this.check('DOT')) {
-            this.advance()
-            if (this.check('STAR')) { this.advance(); pattern += '.*' }
-          }
-          includes.push({ kind: 'IncludeDirective', pattern, target })
+          this.parseIncludeItem(isRel, target, includes)
         }
       } else if (this.check('autolayout')) {
         this.advance()
@@ -426,5 +411,34 @@ export class Parser {
 
     this.expect('RBRACE', '}')
     return { kind: 'ViewDecl', id, label, ofTarget, includes, autolayout, properties, positions, sizes }
+  }
+
+  /** Parse one include pattern (the part after `include` / a comma). */
+  private parseIncludeItem(
+    isRel: boolean,
+    target: 'relation' | 'element',
+    includes: AstIncludeDirective[],
+  ): void {
+    if (this.check('STAR')) {
+      this.advance()
+      includes.push({ kind: 'IncludeDirective', pattern: '*', target })
+    } else if (isRel && this.isRelationDecl()) {
+      // include_relations src -> tgt  → stored as the "src>tgt" visibility key
+      const src = this.parseQualifiedIdent()
+      this.eat('ARROW')
+      const tgt = this.parseQualifiedIdent()
+      includes.push({ kind: 'IncludeDirective', pattern: `${src}>${tgt}`, target })
+    } else if (this.isIdent()) {
+      let pattern = this.parseQualifiedIdent()
+      // "<id>.*" — the trailing dot is lexed into the ident, followed by STAR
+      if (pattern.endsWith('.') && this.check('STAR')) {
+        this.advance()
+        pattern += '*'
+      } else if (this.check('DOT')) {
+        this.advance()
+        if (this.check('STAR')) { this.advance(); pattern += '.*' }
+      }
+      includes.push({ kind: 'IncludeDirective', pattern, target })
+    }
   }
 }

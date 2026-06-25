@@ -4,6 +4,7 @@ export type TokenKind =
   | 'ARROW'
   | 'COLON'
   | 'DOT'
+  | 'COMMA'
   | 'EQ'
   | 'STAR'
   | 'STRING'
@@ -92,6 +93,9 @@ export function tokenize(source: string): Token[] {
     } else if (ch === '.') {
       advance()
       tokens.push({ kind: 'DOT', value: '.', line: startLine, column: startCol, offset: startOffset })
+    } else if (ch === ',') {
+      advance()
+      tokens.push({ kind: 'COMMA', value: ',', line: startLine, column: startCol, offset: startOffset })
     } else if (ch === '=') {
       advance()
       tokens.push({ kind: 'EQ', value: '=', line: startLine, column: startCol, offset: startOffset })

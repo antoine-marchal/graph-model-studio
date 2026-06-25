@@ -76,10 +76,9 @@ function serializeView(view: GraphView): string {
 
   if (view.includeAll) {
     lines.push(`    include *`)
-  } else {
-    for (const el of view.includedElements) {
-      lines.push(`    include ${el}`)
-    }
+  } else if (view.includedElements.length > 0) {
+    // grouped comma notation: "include a, b, c"
+    lines.push(`    include ${view.includedElements.join(', ')}`)
   }
 
   // relation visibility (default: all relations between visible elements)
@@ -89,10 +88,9 @@ function serializeView(view: GraphView): string {
       // explicit "hide all relations" — sentinel keeps the state on reparse
       lines.push(`    include_relations none`)
     } else {
-      for (const key of rels) {
-        const [s, t] = key.split('>')
-        lines.push(`    include_relations ${s} -> ${t}`)
-      }
+      // grouped comma notation: "include_relations a -> b, c -> d"
+      const pairs = rels.map(key => { const [s, t] = key.split('>'); return `${s} -> ${t}` })
+      lines.push(`    include_relations ${pairs.join(', ')}`)
     }
   }
 

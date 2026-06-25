@@ -199,6 +199,26 @@ function carryOverPositions(oldModel: GraphModel, newModel: GraphModel) {
   }
 }
 
+/** When an element is hidden from a view, hide every relation that touches it
+ *  too, and materialise the relation list so the change round-trips to the DSL. */
+function pruneRelationsTouching(model: GraphModel, view: GraphModel['views'][string], id: string) {
+  const touches = (r: GraphRelation) => r.sourceId === id || r.targetId === id
+  if (!Object.values(model.relations).some(touches)) return
+  const base = new Set(
+    view.includeAllRelations !== false
+      ? Object.values(model.relations).map(r => relationKey(r.sourceId, r.targetId))
+      : (view.includedRelations ?? []),
+  )
+  let changed = false
+  for (const r of Object.values(model.relations)) {
+    if (touches(r) && base.delete(relationKey(r.sourceId, r.targetId))) changed = true
+  }
+  if (changed) {
+    view.includeAllRelations = false
+    view.includedRelations = [...base]
+  }
+}
+
 function isDslAffecting(_cmd: ModelCommand): boolean {
   // Every command (including APPLY_LAYOUT from drag/resize) changes the rendered
   // diagram, so keep the DSL `at`/`size` lines in sync with the live positions.
@@ -644,6 +664,7 @@ export const useModelStore = create<ModelStore>()(
           if (!v) return
           v.includedElements = v.includedElements.filter(e => e !== id)
           delete v.layoutPositions[id]
+          pruneRelationsTouching(state.model, v, id)
           state.isDirty = true
           state.dslSource = serializeModel(state.model)
           saveDraft(state.dslSource)
@@ -659,7 +680,10 @@ export const useModelStore = create<ModelStore>()(
           // materialise to an explicit element list so a single toggle is unambiguous
           const base = new Set(visible)
           if (willShow) base.add(id)
-          else { base.delete(id); delete v.layoutPositions[id]; delete v.nodeSizes[id] }
+          else {
+            base.delete(id); delete v.layoutPositions[id]; delete v.nodeSizes[id]
+            pruneRelationsTouching(state.model, v, id)
+          }
           v.includeAll = false
           v.includedElements = [...base]
           state.isDirty = true

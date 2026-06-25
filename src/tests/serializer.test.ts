@@ -145,6 +145,25 @@ views {
     expect(m2.views['main'].layoutPositions['b']).toEqual({ x: 500, y: 60 })
   })
 
+  it('emits grouped comma notation for multiple includes', () => {
+    const dsl = `model {
+  a = container "A"
+  b = container "B"
+  c = container "C"
+}
+views { view main { include a
+  include b
+  include c
+  autolayout tb } }
+`
+    const m = parseDsl(dsl).model!
+    const out = serializeModel(m)
+    expect(out).toContain('include a, b, c')
+    // round-trips back to the same element set
+    const v2 = parseDsl(out).model!.views['main']
+    expect(v2.includedElements).toEqual(['a', 'b', 'c'])
+  })
+
   it('round-trips include patterns, include_relations and view filters', () => {
     const dsl = `model {
   sys = softwareSystem "Sys" {
