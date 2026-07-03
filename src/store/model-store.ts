@@ -762,3 +762,8 @@ export const useModelStore = create<ModelStore>()(
     }
   }),
 )
+
+// dev-only handle so the store can be driven from the browser console / e2e scripts
+if (import.meta.env.DEV) {
+  ;(window as unknown as Record<string, unknown>).__modelStore = useModelStore
+}

@@ -1,0 +1,374 @@
+# Graph Model Studio DSL — LLM Authoring Guide
+
+You are generating source code for Graph Model Studio (GMS), a local-first
+architecture diagram tool. The DSL (file extension `.gmc`) is a small,
+brace-delimited language. Text on the left becomes a live diagram on the
+right, and everything round-trips: what you write is parsed into a graph
+model, and canvas edits are serialized back into this exact syntax.
+
+Follow this guide exactly. Prefer the canonical forms shown here — they are
+what the app's own serializer emits, so they round-trip without churn.
+
+## 1. Document skeleton
+
+A document has two top-level blocks. `model` holds elements and
+relationships; `views` holds diagram definitions. Both are optional, but you
+should always emit both. Comments start with `//` and run to end of line.
+
+```text
+model {
+  // elements first, then relationships
+}
+
+views {
+  view main {
+    include *
+    autolayout lr
+  }
+}
+```
+
+## 2. Elements
+
+Canonical form:
+
+```text
+id = type "Label"
+
+id = type "Label" {
+  description "Free text"
+  technology  "React"
+  tags "domain" "core"
+  size 300 180
+  childId = type "Child Label"
+}
+```
+
+Rules:
+
+- `id` — identifier `[a-zA-Z_][a-zA-Z0-9_]*`. **Ids are globally unique
+  across the whole model**, even for nested elements: the model is stored
+  flat, keyed by id. Never reuse an id at different nesting levels.
+- `type` — one of the element types in §6. Case-sensitive camelCase.
+- `"Label"` — display name, double-quoted. Escape `"` as `\"` and `\` as
+  `\\`. If omitted, the id is used as the label — always provide one.
+- ALWAYS use the `id = type "Label"` form. A shorthand `type "Label"` without
+  `id =` exists but generates a random timestamp id — never use it, since you
+  need stable ids to write relationships and views.
+- Body directives (all optional, order shown is canonical):
+  - `description "…"` — free text.
+  - `technology "…"` — rendered as `[tech]` under the label (C4 style).
+  - `tags "a" "b"` — space-separated quoted strings, one `tags` line.
+  - `size <w> <h>` — manual node size in px (numbers, no quotes). For
+    containers this is a minimum; they still grow to fit children.
+  - Any other `key "value"` pair is kept as a custom property.
+  - Nested element declarations — nesting makes the parent a **container**
+    (auto-sizes around children on the canvas). Any element type can contain
+    children, but prefer the natural containers (§6 marks them).
+
+## 3. Relationships
+
+Declared **only at the top level of `model { … }`**, conventionally after all
+elements. Relationships written inside an element body are silently skipped
+by the parser — never put them there.
+
+Canonical form (order matters; every part after the arrow is optional):
+
+```text
+source -> target
+source -> target "Label"
+source -> target : relationType
+source -> target : relationType "Label"
+source -> target : relationType "Label" bidirectional anchor r l
+```
+
+- `source` / `target` — element ids. Dotted paths (`banking.web`) are
+  accepted and resolve to the last segment, so `banking.web` and plain `web`
+  are equivalent. Prefer plain ids; use dotted paths only for readability.
+  A reference to a non-existent id does not error — the edge is silently
+  dropped from the canvas. Double-check every id.
+- `: relationType` — one of the relation types in §7. Omit for a plain
+  directed arrow (`rel`). Canonical position is before the label (the parser
+  also tolerates it after, but the serializer writes it before).
+- `"Label"` — edge label.
+- Direction keyword — `directed` (default, omit it), `bidirectional`, or
+  `undirected`. Controls which arrow heads are drawn.
+- `anchor <src> <tgt>` — pin endpoints to node sides: `t`, `b`, `l`, `r`, or
+  `_` to leave that end floating. E.g. `a -> b anchor r l` leaves a on its
+  right side, enters b on its left. Useful for decision/gateway branches.
+- An optional `{ key "value" }` block holds custom properties.
+
+## 4. Views
+
+```text
+views {
+  view main "System Context" {
+    include *
+    autolayout lr
+  }
+
+  view detail "Containers" {
+    include api, db, web
+    include banking.*
+    include_relations api -> db, web -> api
+    autolayout tb
+    web at 120 40
+    web size 200 90
+  }
+}
+```
+
+- `view <id> ["Title"] { … }` — id follows element id rules; title optional
+  (defaults to the id).
+- `include *` — include every element. Use this as the default.
+- `include a, b, c` — include exactly these elements. **Selection is exact**:
+  including a child does NOT automatically show its parent container, and
+  including a container does NOT automatically show its children.
+- `include A.*` — include all descendants of `A`, but not `A` itself.
+  Combine: `include A, A.*` shows the container with its contents.
+- Relations: by default, all relationships between visible elements are
+  drawn. Edges whose endpoints are hidden are not drawn and are not lifted
+  to visible ancestors. To restrict further:
+  - `include_relations a -> b, c -> d` — draw only these.
+  - `include_relations none` — draw no relationships.
+- `autolayout <dir>` — auto-layout direction: `tb` (top→bottom), `bt`, `lr`
+  (left→right), `rl`. Use `lr` for C4/ArchiMate landscapes, `tb` for
+  BPMN/flowcharts (or `lr` for wide processes).
+- `<id> at <x> <y>` — pinned node position (px, integers). Child positions
+  are relative to their container. The app writes these automatically when
+  the user drags nodes — when generating fresh models, omit them and rely on
+  `autolayout`.
+- `<id> size <w> <h>` — per-view node size override. Also usually omitted.
+
+Multiple views over the same model are encouraged — each stores its own
+positions and inclusion set (e.g. an overview with `include *` plus focused
+views per subsystem).
+
+If no `views` block is written, a default view with `include *` is created —
+but always write one explicitly.
+
+## 5. Notations
+
+Five notations coexist in one model; the notation of each element is inferred
+from its type. Mixing is allowed (e.g. a C4 `person` next to BPMN tasks), but
+a coherent diagram usually sticks to one notation family. Pick by intent:
+
+- **C4** — software architecture: systems, containers, components.
+- **ArchiMate** — enterprise architecture across layers.
+- **BPMN** — business processes: events, tasks, gateways, swimlanes.
+- **Flowchart** — simple algorithm/decision flows.
+- **Generic** — anything else: `node`, `group`, `external`.
+
+## 6. Element types (exact, case-sensitive)
+
+Types marked (container) render as containers; they are the natural parents
+for nesting, though any element may hold children.
+
+### C4
+`person`, `softwareSystem`, `container`, `component`, `codeElement`
+(`softwareSystem` and `container` are the usual nesting parents.)
+
+### ArchiMate
+- Strategy: `resource`, `capability`, `courseOfAction`, `valueStream`
+- Business: `businessActor`, `businessRole`, `businessCollaboration`,
+  `businessInterface`, `businessProcess`, `businessFunction`,
+  `businessInteraction`, `businessEvent`, `businessService`,
+  `businessObject`, `contract`, `representation`, `product`
+- Application: `applicationComponent`, `applicationCollaboration`,
+  `applicationInterface`, `applicationFunction`, `applicationInteraction`,
+  `applicationProcess`, `applicationEvent`, `applicationService`,
+  `dataObject`
+- Technology: `technologyNode`, `device`, `systemSoftware`,
+  `technologyCollaboration`, `technologyInterface`, `path`,
+  `communicationNetwork`, `technologyFunction`, `technologyProcess`,
+  `technologyInteraction`, `technologyEvent`, `technologyService`,
+  `artifact`
+- Physical: `equipment`, `facility`, `distributionNetwork`, `material`
+- Motivation: `stakeholder`, `driver`, `assessment`, `goal`, `outcome`,
+  `principle`, `requirement`, `constraint`, `meaning`, `archimateValue`
+- Implementation: `workPackage`, `deliverable`, `implementationEvent`,
+  `plateau`, `gap`
+- Other: `location`, `grouping` (container), `junctionAnd`, `junctionOr`
+
+### BPMN
+- Events: `startEvent`, `endEvent`, `intermediateEvent`
+- Activities: `task`, `userTask`, `serviceTask`, `subProcess` (container)
+- Gateways: `gateway`, `exclusiveGateway`, `parallelGateway`
+- Swimlanes: `pool` (container), `lane` (container — nest lanes inside a pool)
+- Data: `dataObjectBpmn`
+
+### Flowchart
+`start`, `end`, `process`, `decision`, `inputOutput`, `connector`
+
+### Generic
+`node`, `group` (container), `external`
+
+Unknown types do not error but render as generic nodes — stick to this list.
+
+## 7. Relation types (exact, case-sensitive)
+
+| Type | Notation | Rendering |
+|------|----------|-----------|
+| `rel` (default — omit `: rel`) | generic | solid, open arrow |
+| `association` | generic | plain line, no arrow |
+| `composition` | ArchiMate | filled diamond at source |
+| `aggregation` | ArchiMate | hollow diamond at source |
+| `assignment` | ArchiMate | ball at source + filled arrow |
+| `realization` | ArchiMate | dashed + hollow triangle |
+| `serving` | ArchiMate | solid + open arrow |
+| `access` | ArchiMate | dotted + open arrow |
+| `influence` | ArchiMate | dashed + open arrow |
+| `triggering` | ArchiMate | solid + filled arrow |
+| `flow` | ArchiMate | dashed + filled arrow |
+| `specialization` | ArchiMate | solid + hollow triangle |
+| `sequenceFlow` | BPMN | solid + filled arrow |
+| `messageFlow` | BPMN | dashed, open circle at source + open arrow |
+| `flowArrow` | Flowchart | solid + filled arrow |
+
+Use `sequenceFlow` between BPMN nodes, `flowArrow` between flowchart nodes,
+the ArchiMate types between ArchiMate elements, and no type (plain `->`) for
+C4 and generic diagrams.
+
+Note for ArchiMate `composition`/`aggregation`: the diamond sits at the
+**source**, so write `whole -> part : composition`.
+
+## 8. Complete examples
+
+### C4 (containers + context)
+
+```text
+model {
+  customer = person "Customer" {
+    description "A retail banking customer"
+  }
+
+  banking = softwareSystem "Banking Platform" {
+    web = container "Web Application" { technology "React" }
+    api = container "API Gateway"     { technology "Node.js" }
+    db  = container "Database"        { technology "PostgreSQL" }
+  }
+
+  email = softwareSystem "E-mail System" {
+    description "External provider"
+    tags "external"
+  }
+
+  customer -> web "Uses"
+  web -> api "Calls"
+  api -> db "Reads / writes"
+  api -> email "Sends e-mail via"
+}
+
+views {
+  view context "System Context" {
+    include customer, banking, email
+    autolayout lr
+  }
+  view containers "Banking — Containers" {
+    include customer, banking, banking.*, email
+    autolayout lr
+  }
+}
+```
+
+### BPMN (order process)
+
+```text
+model {
+  orderPool = pool "Order Handling" {
+    salesLane = lane "Sales" {
+      start    = startEvent "Order received"
+      validate = userTask "Validate order"
+      check    = exclusiveGateway "Valid?"
+      reject   = endEvent "Rejected"
+    }
+    fulfilLane = lane "Fulfilment" {
+      pick = serviceTask "Pick items"
+      ship = task "Ship order"
+      done = endEvent "Shipped"
+    }
+  }
+
+  start -> validate : sequenceFlow
+  validate -> check : sequenceFlow
+  check -> reject : sequenceFlow "no" anchor b t
+  check -> pick : sequenceFlow "yes" anchor r l
+  pick -> ship : sequenceFlow
+  ship -> done : sequenceFlow
+}
+
+views {
+  view process "Order Process" {
+    include *
+    autolayout lr
+  }
+}
+```
+
+### ArchiMate (layered)
+
+```text
+model {
+  claimant = businessActor "Claimant"
+  handleClaim = businessProcess "Handle Claim"
+  claimSvc = applicationService "Claim Registration Service"
+  claimApp = applicationComponent "Claim Management App"
+  server = technologyNode "Application Server"
+
+  claimant -> handleClaim : assignment
+  claimSvc -> handleClaim : serving
+  claimApp -> claimSvc : realization
+  server -> claimApp : serving
+}
+
+views {
+  view layered "Claim Handling — Layered" {
+    include *
+    autolayout bt
+  }
+}
+```
+
+### Flowchart
+
+```text
+model {
+  begin  = start "Start"
+  input  = inputOutput "Read value"
+  test   = decision "Value > 0?"
+  posOut = process "Handle positive"
+  negOut = process "Handle non-positive"
+  finish = end "End"
+
+  begin -> input : flowArrow
+  input -> test : flowArrow
+  test -> posOut : flowArrow "yes" anchor r l
+  test -> negOut : flowArrow "no" anchor b t
+  posOut -> finish : flowArrow
+  negOut -> finish : flowArrow
+}
+
+views {
+  view flow "Value Check" {
+    include *
+    autolayout tb
+  }
+}
+```
+
+## 9. Checklist before emitting
+
+1. Both `model { }` and `views { }` present; at least one view with
+   `include *` (or an explicit include list) and an `autolayout` direction.
+2. Every element uses `id = type "Label"`; every id globally unique.
+3. Every element type and relation type spelled exactly as in §6/§7
+   (camelCase matters: `softwareSystem`, not `softwaresystem`).
+4. All relationships at the top level of `model`, after the elements; none
+   inside element bodies.
+5. Every id referenced in relationships and `include` lines actually exists
+   (dangling references are dropped silently, not reported).
+6. Relation type before label: `a -> b : sequenceFlow "yes"`.
+7. If a view should show a container and its contents, include both:
+   `include A, A.*`.
+8. Strings double-quoted with `\"` / `\\` escapes; numbers bare; no
+   trailing commas anywhere; no semicolons.

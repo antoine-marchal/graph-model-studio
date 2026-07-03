@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routeOrthogonal, pointsToRoundedPath, type Rect, type Point } from '@/features/editor-graph/edges/orthogonal-router'
+import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
 
 function hitsAny(pts: Point[], obstacles: Rect[]): boolean {
   for (let i = 0; i < pts.length - 1; i++) {
@@ -47,5 +47,69 @@ describe('routeOrthogonal', () => {
     const d = pointsToRoundedPath([{ x: 0, y: 0 }, { x: 50, y: 0 }, { x: 50, y: 50 }])
     expect(d.startsWith('M 0,0')).toBe(true)
     expect(d).toContain('Q') // corner rounded
+  })
+
+  it('staggers away from an occupied parallel line by at least 5px', () => {
+    // another relation already runs along y = 0 from x 0..100
+    const occupied = polylineSegments([{ x: 0, y: 0 }, { x: 100, y: 0 }])
+    const pts = routeOrthogonal({ x: 0, y: 2 }, { x: 100, y: 2 }, [], occupied)
+    expect(pts).not.toBeNull()
+    // every horizontal run of the new route stays ≥ 5px from the occupied line
+    for (let i = 0; i < pts!.length - 1; i++) {
+      const p = pts![i], q = pts![i + 1]
+      if (p.y === q.y && p.x !== q.x) expect(Math.abs(p.y - 0)).toBeGreaterThanOrEqual(5)
+    }
+  })
+
+  it('does not penalise perpendicular crossings', () => {
+    // a vertical relation crosses the straight route — crossing is fine, so the
+    // route should stay a straight 2-point line
+    const occupied = polylineSegments([{ x: 50, y: -50 }, { x: 50, y: 50 }])
+    const pts = routeOrthogonal({ x: 0, y: 0 }, { x: 100, y: 0 }, [], occupied)
+    expect(pts).not.toBeNull()
+    expect(pts!.length).toBe(2)
+  })
+
+  it('ignores diagonal (non-orthogonal) segments in polylineSegments', () => {
+    const segs = polylineSegments([{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 10, y: 20 }])
+    expect(segs.length).toBe(1)
+    expect(segs[0]).toEqual({ a: { x: 10, y: 10 }, b: { x: 10, y: 20 } })
+  })
+})
+
+describe('clipRouteInputs', () => {
+  it('drops obstacles and segments far from the endpoints', () => {
+    const near: Rect = { x: 50, y: 50, width: 20, height: 20 }
+    const far: Rect = { x: 5000, y: 5000, width: 20, height: 20 }
+    const nearSeg: Segment = { a: { x: 0, y: 30 }, b: { x: 100, y: 30 } }
+    const farSeg: Segment = { a: { x: 5000, y: 0 }, b: { x: 5000, y: 100 } }
+    const clipped = clipRouteInputs({ x: 0, y: 0 }, { x: 100, y: 100 }, [near, far], [nearSeg, farSeg])
+    expect(clipped.obstacles).toEqual([near])
+    expect(clipped.occupied).toEqual([nearSeg])
+  })
+})
+
+describe('routing performance', () => {
+  it('routes a dense scene (45 obstacles, 90 edges, growing occupied set) quickly', () => {
+    // grid of 45 node-sized obstacles, like the ArchiMate layered view
+    const obstacles: Rect[] = []
+    for (let r = 0; r < 5; r++) {
+      for (let c = 0; c < 9; c++) obstacles.push({ x: c * 220, y: r * 160, width: 160, height: 74 })
+    }
+    const occupied: Segment[] = []
+    const t0 = performance.now()
+    for (let i = 0; i < 90; i++) {
+      const from = obstacles[i % 45], to = obstacles[(i * 7 + 3) % 45]
+      if (from === to) continue
+      const src = { x: from.x + from.width, y: from.y + 37 }
+      const tgt = { x: to.x, y: to.y + 37 }
+      const obs = obstacles.filter(o => o !== from && o !== to)
+      const clipped = clipRouteInputs(src, tgt, obs, occupied)
+      const pts = routeOrthogonal(src, tgt, clipped.obstacles, clipped.occupied)
+      if (pts) occupied.push(...polylineSegments(pts))
+    }
+    const elapsed = performance.now() - t0
+    // was multiple seconds before corridor clipping + lane capping + heap
+    expect(elapsed).toBeLessThan(1500)
   })
 })
