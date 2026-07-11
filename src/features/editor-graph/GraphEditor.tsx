@@ -27,6 +27,8 @@ import {
   type GraphEdge,
 } from './model-to-flow'
 import { GraphNodeComponent } from './nodes/GraphNode'
+import { GanttAxisNode } from './nodes/GanttAxisNode'
+import { SeqPointNode } from './nodes/DecorNode'
 import { FloatingEdge } from './edges/FloatingEdge'
 import { EdgeMarkers } from './edges/EdgeMarkers'
 import { Button } from '@/ui/components/Button'
@@ -36,7 +38,7 @@ import { runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layou
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 
-const nodeTypes = { graphNode: GraphNodeComponent }
+const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode }
 const edgeTypes = { floating: FloatingEdge }
 
 /** Decode a "data:image/png;base64,…" URL into raw bytes. */
@@ -170,8 +172,9 @@ function GraphEditorInner() {
       if (dragged.length === 1) {
         const el = model.elements[node.id]
         const desc = descendantIds(model, node.id)
-        // any overlapping node (not self / not a descendant) can become the new parent
-        const inter = (getIntersectingNodes(node) as Node[]).filter(n => n.id !== node.id && !desc.has(n.id))
+        // any overlapping model node (not self / not a descendant / not synthetic) can become the new parent
+        const inter = (getIntersectingNodes(node) as Node[])
+          .filter(n => n.id !== node.id && !desc.has(n.id) && !!model.elements[n.id])
         let target: Node | null = null
         for (const n of inter) {
           const a = (n.width ?? 1) * (n.height ?? 1)

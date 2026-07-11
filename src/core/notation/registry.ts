@@ -13,6 +13,17 @@ export type NodeShape =
   | 'parallelogram'
   | 'folder'
   | 'container'
+  | 'ellipse'
+  | 'stickFigure'
+  | 'pertBox'
+  | 'ganttBar'
+  | 'ganttMilestone'
+  | 'ganttSection'
+  | 'dot'
+  | 'quadrantChart'
+  | 'ganttGraph'
+  | 'chartFrame'
+  | 'treeGraph'
 
 export type IconKind =
   // ArchiMate generic-by-category
@@ -259,6 +270,74 @@ const FLOWCHART_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'connector', label: 'Connector', notation: 'flowchart', shape: 'circle', fill: '#455A64', stroke: '#263238', text: '#FFFFFF', accent: '#607D8B', icon: 'none', defaultWidth: 44, defaultHeight: 44 },
 ]
 
+// ─── Use case (UML) ──────────────────────────────────────────────────────────
+const USECASE_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'actor', label: 'Actor', notation: 'usecase', shape: 'stickFigure', fill: '#FDF6E3', stroke: '#8D6E63', text: '#3E2723', accent: '#8D6E63', icon: 'none', defaultWidth: 90, defaultHeight: 110 },
+  { type: 'useCase', label: 'Use Case', notation: 'usecase', shape: 'ellipse', fill: '#E8F0FE', stroke: '#3B6FB5', text: '#123055', accent: '#3B6FB5', icon: 'none', defaultWidth: 180, defaultHeight: 80 },
+  { type: 'systemBoundary', label: 'System Boundary', notation: 'usecase', shape: 'container', fill: 'rgba(59,111,181,0.05)', stroke: '#3B6FB5', text: '#123055', accent: '#3B6FB5', icon: 'none', defaultWidth: 420, defaultHeight: 320 },
+]
+
+// ─── Tree ────────────────────────────────────────────────────────────────────
+const TREE_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'treeGraph', label: 'Tree Graph', notation: 'tree', shape: 'treeGraph', fill: 'rgba(76,58,140,0.06)', stroke: '#4C3A8C', text: '#2C2153', accent: '#6C55C4', icon: 'none', defaultWidth: 280, defaultHeight: 240 },
+  { type: 'treeRoot', label: 'Tree Root', notation: 'tree', shape: 'roundedRectangle', fill: '#4C3A8C', stroke: '#372A66', text: '#FFFFFF', accent: '#6C55C4', icon: 'none', defaultWidth: 160, defaultHeight: 56 },
+  { type: 'treeNode', label: 'Tree Node', notation: 'tree', shape: 'roundedRectangle', fill: '#6C55C4', stroke: '#4C3A8C', text: '#FFFFFF', accent: '#8B76DB', icon: 'none', defaultWidth: 140, defaultHeight: 48 },
+  { type: 'treeLeaf', label: 'Tree Leaf', notation: 'tree', shape: 'stadium', fill: '#EDE9FB', stroke: '#8B76DB', text: '#2C2153', accent: '#8B76DB', icon: 'none', defaultWidth: 130, defaultHeight: 42 },
+]
+
+// ─── PERT ────────────────────────────────────────────────────────────────────
+const PERT_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'pertTask', label: 'PERT Task', notation: 'pert', shape: 'pertBox', fill: '#FFFFFF', stroke: '#00695C', text: '#00332C', accent: '#00897B', icon: 'none', defaultWidth: 168, defaultHeight: 84 },
+  { type: 'pertMilestone', label: 'PERT Milestone', notation: 'pert', shape: 'circle', fill: '#E0F2F1', stroke: '#00695C', text: '#00332C', accent: '#00897B', icon: 'none', defaultWidth: 64, defaultHeight: 64 },
+]
+
+// ─── Gantt ───────────────────────────────────────────────────────────────────
+const GANTT_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'ganttGraph', label: 'Gantt Graph', notation: 'gantt', shape: 'ganttGraph', fill: 'rgba(59,130,196,0.05)', stroke: '#2A619A', text: '#1C3A5E', accent: '#3B82C4', icon: 'none', defaultWidth: 520, defaultHeight: 260 },
+  { type: 'ganttTask', label: 'Gantt Task', notation: 'gantt', shape: 'ganttBar', fill: '#3B82C4', stroke: '#2A619A', text: '#FFFFFF', accent: '#5CA0DC', icon: 'none', defaultWidth: 120, defaultHeight: 30 },
+  { type: 'ganttMilestone', label: 'Gantt Milestone', notation: 'gantt', shape: 'ganttMilestone', fill: '#C6538C', stroke: '#93365F', text: '#FFFFFF', accent: '#DD74A8', icon: 'none', defaultWidth: 26, defaultHeight: 26 },
+  { type: 'ganttSection', label: 'Gantt Section', notation: 'gantt', shape: 'ganttSection', fill: 'rgba(120,130,150,0.14)', stroke: '#64748B', text: '#334155', accent: '#64748B', icon: 'none', defaultWidth: 240, defaultHeight: 26 },
+]
+
+// ─── Sequence (UML) ──────────────────────────────────────────────────────────
+const SEQUENCE_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'seqGraph', label: 'Sequence Graph', notation: 'sequence', shape: 'chartFrame', fill: 'rgba(45,74,102,0.05)', stroke: '#2D4A66', text: '#12283a', accent: '#4A7196', icon: 'none', defaultWidth: 480, defaultHeight: 300 },
+  { type: 'participant', label: 'Participant', notation: 'sequence', shape: 'roundedRectangle', fill: '#2D4A66', stroke: '#1D3344', text: '#FFFFFF', accent: '#4A7196', icon: 'none', defaultWidth: 140, defaultHeight: 52 },
+  { type: 'seqActor', label: 'Actor (Sequence)', notation: 'sequence', shape: 'stickFigure', fill: '#FDF6E3', stroke: '#8D6E63', text: '#3E2723', accent: '#8D6E63', icon: 'none', defaultWidth: 90, defaultHeight: 96 },
+]
+
+// ─── Mindmap ─────────────────────────────────────────────────────────────────
+const MINDMAP_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'mindmapRoot', label: 'Mindmap Root', notation: 'mindmap', shape: 'stadium', fill: '#AD1457', stroke: '#7B0E3C', text: '#FFFFFF', accent: '#D81B60', icon: 'none', defaultWidth: 170, defaultHeight: 62 },
+  { type: 'mindmapNode', label: 'Mindmap Node', notation: 'mindmap', shape: 'roundedRectangle', fill: '#F8BBD0', stroke: '#C2185B', text: '#4A0E27', accent: '#D81B60', icon: 'none', defaultWidth: 130, defaultHeight: 44 },
+]
+
+// ─── Git graph ───────────────────────────────────────────────────────────────
+const GITGRAPH_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'gitGraph', label: 'Git Graph', notation: 'gitgraph', shape: 'chartFrame', fill: 'rgba(0,121,107,0.05)', stroke: '#00796B', text: '#00332C', accent: '#26A69A', icon: 'none', defaultWidth: 460, defaultHeight: 220 },
+  { type: 'commit', label: 'Commit', notation: 'gitgraph', shape: 'dot', fill: '#26A69A', stroke: '#00796B', text: '#00332C', accent: '#4DB6AC', icon: 'none', defaultWidth: 26, defaultHeight: 26 },
+  { type: 'mergeCommit', label: 'Merge Commit', notation: 'gitgraph', shape: 'doubleCircle', fill: '#FFB74D', stroke: '#EF6C00', text: '#3A2000', accent: '#FFA726', icon: 'none', defaultWidth: 30, defaultHeight: 30 },
+]
+
+// ─── Ishikawa (fishbone) ─────────────────────────────────────────────────────
+const ISHIKAWA_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'problem', label: 'Problem', notation: 'ishikawa', shape: 'rectangle', fill: '#C62828', stroke: '#8E1B1B', text: '#FFFFFF', accent: '#E53935', icon: 'none', defaultWidth: 150, defaultHeight: 60 },
+  { type: 'cause', label: 'Cause Category', notation: 'ishikawa', shape: 'roundedRectangle', fill: '#EF6C00', stroke: '#BF5500', text: '#FFFFFF', accent: '#FB8C00', icon: 'none', defaultWidth: 140, defaultHeight: 44 },
+  { type: 'subCause', label: 'Sub-cause', notation: 'ishikawa', shape: 'stadium', fill: '#FFE0B2', stroke: '#FB8C00', text: '#4A2800', accent: '#FB8C00', icon: 'none', defaultWidth: 120, defaultHeight: 34 },
+]
+
+// ─── Quadrant chart ──────────────────────────────────────────────────────────
+const QUADRANT_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'quadrantChart', label: 'Quadrant Chart', notation: 'quadrant', shape: 'quadrantChart', fill: '#FFFFFF', stroke: '#5C6BC0', text: '#1A237E', accent: '#5C6BC0', icon: 'none', defaultWidth: 480, defaultHeight: 380 },
+  { type: 'quadrantItem', label: 'Quadrant Item', notation: 'quadrant', shape: 'dot', fill: '#5C6BC0', stroke: '#3949AB', text: '#1A237E', accent: '#7986CB', icon: 'none', defaultWidth: 16, defaultHeight: 16 },
+]
+
+// ─── Timeline ────────────────────────────────────────────────────────────────
+const TIMELINE_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'timelineGraph', label: 'Timeline Graph', notation: 'timeline', shape: 'chartFrame', fill: 'rgba(0,131,143,0.05)', stroke: '#00838F', text: '#013b41', accent: '#26C6DA', icon: 'none', defaultWidth: 520, defaultHeight: 320 },
+  { type: 'timelineEvent', label: 'Timeline Event', notation: 'timeline', shape: 'roundedRectangle', fill: '#00838F', stroke: '#005662', text: '#FFFFFF', accent: '#26C6DA', icon: 'none', defaultWidth: 150, defaultHeight: 64 },
+]
+
 // ─── Generic ─────────────────────────────────────────────────────────────────
 const GENERIC_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'node', label: 'Node', notation: 'generic', shape: 'roundedRectangle', fill: '#374151', stroke: '#1F2937', text: '#F3F4F6', accent: '#6B7280', icon: 'none', ...RECT },
@@ -267,12 +346,19 @@ const GENERIC_ELEMENTS: ElementTypeDefinition[] = [
 ]
 
 const ALL_ELEMENTS = [
-  ...C4_ELEMENTS, ...ARCHIMATE_ELEMENTS, ...BPMN_ELEMENTS, ...FLOWCHART_ELEMENTS, ...GENERIC_ELEMENTS,
+  ...C4_ELEMENTS, ...ARCHIMATE_ELEMENTS, ...BPMN_ELEMENTS, ...FLOWCHART_ELEMENTS,
+  ...USECASE_ELEMENTS, ...TREE_ELEMENTS, ...PERT_ELEMENTS, ...GANTT_ELEMENTS,
+  ...SEQUENCE_ELEMENTS, ...MINDMAP_ELEMENTS, ...GITGRAPH_ELEMENTS,
+  ...ISHIKAWA_ELEMENTS, ...QUADRANT_ELEMENTS, ...TIMELINE_ELEMENTS, ...GENERIC_ELEMENTS,
 ]
 const elementByType = new Map(ALL_ELEMENTS.map(e => [e.type, e]))
 const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
   ['c4', C4_ELEMENTS], ['archimate', ARCHIMATE_ELEMENTS], ['bpmn', BPMN_ELEMENTS],
-  ['flowchart', FLOWCHART_ELEMENTS], ['generic', GENERIC_ELEMENTS],
+  ['flowchart', FLOWCHART_ELEMENTS], ['usecase', USECASE_ELEMENTS], ['tree', TREE_ELEMENTS],
+  ['pert', PERT_ELEMENTS], ['gantt', GANTT_ELEMENTS],
+  ['sequence', SEQUENCE_ELEMENTS], ['mindmap', MINDMAP_ELEMENTS], ['gitgraph', GITGRAPH_ELEMENTS],
+  ['ishikawa', ISHIKAWA_ELEMENTS], ['quadrant', QUADRANT_ELEMENTS], ['timeline', TIMELINE_ELEMENTS],
+  ['generic', GENERIC_ELEMENTS],
 ])
 
 // ─── Relations ───────────────────────────────────────────────────────────────
@@ -295,6 +381,18 @@ const RELATIONS: RelationTypeDefinition[] = [
   { type: 'messageFlow', label: 'Message Flow', notation: 'bpmn', lineStyle: 'dashed', markerStart: 'gms-circle-open', markerEnd: 'gms-arrow-open' },
   // Flowchart
   { type: 'flowArrow', label: 'Flow', notation: 'flowchart', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
+  // Use case (UML)
+  { type: 'include', label: 'Include', notation: 'usecase', lineStyle: 'dashed', markerEnd: 'gms-arrow-open' },
+  { type: 'extend', label: 'Extend', notation: 'usecase', lineStyle: 'dashed', markerEnd: 'gms-arrow-open' },
+  { type: 'generalization', label: 'Generalization', notation: 'usecase', lineStyle: 'solid', markerEnd: 'gms-triangle-hollow' },
+  // Tree
+  { type: 'branch', label: 'Branch', notation: 'tree', lineStyle: 'solid' },
+  // PERT / Gantt dependency
+  { type: 'dependsOn', label: 'Depends on', notation: 'pert', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
+  // Sequence (UML)
+  { type: 'message', label: 'Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
+  { type: 'asyncMessage', label: 'Async Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-open' },
+  { type: 'replyMessage', label: 'Reply', notation: 'sequence', lineStyle: 'dashed', markerEnd: 'gms-arrow-open' },
 ]
 const relationByType = new Map(RELATIONS.map(r => [r.type, r]))
 
@@ -320,6 +418,16 @@ export const notationRegistry: NotationRegistry = {
     { kind: 'archimate', label: 'ArchiMate' },
     { kind: 'bpmn', label: 'BPMN' },
     { kind: 'flowchart', label: 'Flowchart' },
+    { kind: 'usecase', label: 'Use Case' },
+    { kind: 'sequence', label: 'Sequence' },
+    { kind: 'tree', label: 'Tree' },
+    { kind: 'mindmap', label: 'Mindmap' },
+    { kind: 'pert', label: 'PERT' },
+    { kind: 'gantt', label: 'Gantt' },
+    { kind: 'gitgraph', label: 'Git Graph' },
+    { kind: 'ishikawa', label: 'Ishikawa' },
+    { kind: 'quadrant', label: 'Quadrant' },
+    { kind: 'timeline', label: 'Timeline' },
     { kind: 'generic', label: 'Generic' },
   ],
   getGroups: n => uniqueGroups(byNotation.get(n) ?? []),

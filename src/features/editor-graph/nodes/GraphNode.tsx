@@ -1,6 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
+import type { PertNodeValues, ChartFrame, TreeRow } from '@/core/layout'
+import { GANTT_AXIS_H } from '@/core/layout'
+import type { IshikawaFrame, GanttFrame } from '../model-to-flow'
+import { TreeGraphView } from './TreeGraphView'
 import { NodeIcon } from './NodeIcons'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
@@ -22,6 +26,22 @@ export interface GraphNodeData extends Record<string, unknown> {
   width: number
   height: number
   isContainer?: boolean
+  /** CPM values when this node belongs to a PERT chart */
+  pert?: PertNodeValues
+  /** 0..100 completion for Gantt bars */
+  progress?: number
+  /** small badge above a dot node (e.g. a commit's `tag "v1.0"` property) */
+  badge?: string
+  /** element properties passed through for shapes that read them (quadrantChart labels) */
+  chartProps?: Record<string, string>
+  /** fishbone frame when this node is an ishikawa `problem` container */
+  ishikawa?: IshikawaFrame
+  /** timeline-axis frame when this node is a `ganttGraph` container */
+  ganttGraph?: GanttFrame
+  /** decor (lifelines/spine/lanes) when this node is a seq/git/timeline container */
+  chartFrame?: ChartFrame
+  /** file-tree forest when this node is a `treeGraph` container */
+  tree?: TreeRow[]
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -53,7 +73,7 @@ function metaText(data: GraphNodeData): string | null {
   const tags = (data.tags ?? []).filter(Boolean).map(t => `#${t}`).join(' ')
   const meta = [main, tags].filter(Boolean).join('  ')
   if (meta) return meta
-  if (data.notation !== 'generic' && data.notation !== 'flowchart') return `«${data.elementType}»`
+  if (data.notation === 'c4' || data.notation === 'archimate' || data.notation === 'bpmn') return `«${data.elementType}»`
   return null
 }
 
@@ -122,8 +142,121 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
 
   let body: JSX.Element
 
-  // ── Container / group / swimlane ──
-  if (d.isContainer || shape === 'container') {
+  // ── Tree graph: movable file-explorer widget (collapsible rows) ──
+  if (shape === 'treeGraph') {
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <div
+          className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
+          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+        >
+          <span className="truncate">{d.label}</span>
+        </div>
+        <div className="min-h-0 flex-1 px-1">
+          <TreeGraphView roots={d.tree ?? []} accent={accent} text={text} />
+        </div>
+      </div>
+    )
+  } else if (d.chartFrame) {
+    const cf = d.chartFrame
+    body = (
+      <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <div
+          className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
+          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+        >
+          <span className="truncate">{d.label}</span>
+        </div>
+        <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
+          {cf.lines.map((l, i) => (
+            <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
+          ))}
+          {cf.texts.map((t, i) => (
+            <text key={i} x={t.x} y={t.y} fontSize={t.size ?? 10} fill={t.color ?? 'var(--fg-subtle)'} textAnchor={t.anchor ?? 'start'} fontWeight={t.bold ? 700 : 400} fontFamily="inherit">{t.text}</text>
+          ))}
+        </svg>
+      </div>
+    )
+  } else if (d.ganttGraph) {
+    const fr = d.ganttGraph
+    const axisTop = fr.top
+    const axisBase = axisTop + GANTT_AXIS_H
+    body = (
+      <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <div
+          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
+          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+        >
+          <span className="truncate">{d.label}</span>
+        </div>
+        <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
+          <line x1={8} y1={axisBase} x2={width - 8} y2={axisBase} stroke={stroke} strokeWidth={1} strokeOpacity={0.6} />
+          {fr.ticks.map((t, i) => (
+            <g key={i}>
+              <line x1={16 + t.x} y1={axisBase} x2={16 + t.x} y2={height - 8} stroke={stroke} strokeWidth={1} strokeOpacity={0.22} strokeDasharray="2 4" />
+              <text x={16 + t.x + 3} y={axisBase - 5} fontSize={9} fill={text} fillOpacity={0.7} fontFamily="inherit">{t.label}</text>
+            </g>
+          ))}
+        </svg>
+      </div>
+    )
+  } else if (d.ishikawa) {
+    const fb = d.ishikawa
+    body = (
+      <div className={cn('relative h-full w-full', ring && 'rounded-lg ' + ring)}>
+        <Handles stroke={stroke} />
+        <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
+          {/* spine into the head */}
+          <line x1={8} y1={fb.spineY} x2={width - fb.headW} y2={fb.spineY} stroke={accent} strokeWidth={2.4} />
+          <line x1={width - fb.headW - 11} y1={fb.spineY - 7} x2={width - fb.headW} y2={fb.spineY} stroke={accent} strokeWidth={2.4} />
+          <line x1={width - fb.headW - 11} y1={fb.spineY + 7} x2={width - fb.headW} y2={fb.spineY} stroke={accent} strokeWidth={2.4} />
+          {fb.bones.map((b, i) => (
+            <line key={i} x1={b.x1} y1={b.y1} x2={b.x2} y2={b.y2} stroke={accent} strokeWidth={1.6} strokeOpacity={0.75} />
+          ))}
+        </svg>
+        {/* head box at the right, vertically centred on the spine */}
+        <div
+          className="absolute flex items-center justify-center rounded-md px-2 text-center text-xs font-bold"
+          style={{
+            right: 6, top: fb.spineY - 30, width: fb.headW - 14, height: 60,
+            background: fill, border: `2px solid ${stroke}`, color: text,
+          }}
+        >
+          {d.label}
+        </div>
+      </div>
+    )
+  } else if (shape === 'quadrantChart') {
+    const p = d.chartProps ?? {}
+    const qLabel = (key: string, cls: string) =>
+      p[key] ? <span className={cn('absolute z-0 text-[10px] font-bold uppercase tracking-wide opacity-60', cls)} style={{ color: text }}>{p[key]}</span> : null
+    body = (
+      <div className={cn('relative h-full w-full overflow-hidden rounded-md', ring)} style={{ background: 'var(--surface-1)', border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <svg className="absolute inset-0" width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+          <rect x={width / 2} y={0} width={width / 2} height={height / 2} fill={accent} opacity="0.16" />
+          <rect x={0} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity="0.16" />
+          <rect x={0} y={0} width={width / 2} height={height / 2} fill={accent} opacity="0.07" />
+          <rect x={width / 2} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity="0.07" />
+          <line x1={width / 2} y1={0} x2={width / 2} y2={height} stroke={stroke} strokeWidth="1" opacity="0.5" />
+          <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke={stroke} strokeWidth="1" opacity="0.5" />
+        </svg>
+        {/* mermaid order: q1 top-right, q2 top-left, q3 bottom-left, q4 bottom-right */}
+        {qLabel('q1', 'right-2 top-1')}
+        {qLabel('q2', 'left-2 top-1')}
+        {qLabel('q3', 'left-2 bottom-1')}
+        {qLabel('q4', 'right-2 bottom-1')}
+        {p.xLabel && <span className="absolute bottom-1 left-1/2 z-0 -translate-x-1/2 text-[10px] font-semibold opacity-70" style={{ color: text }}>{p.xLabel}</span>}
+        {p.yLabel && (
+          <span className="absolute left-1 top-1/2 z-0 origin-center -translate-y-1/2 -rotate-90 text-[10px] font-semibold opacity-70" style={{ color: text }}>{p.yLabel}</span>
+        )}
+        <span className="absolute left-1/2 top-1 z-0 -translate-x-1/2 text-[11px] font-bold" style={{ color: text }}>{d.label}</span>
+      </div>
+    )
+  } else if (d.isContainer || shape === 'container') {
     body = (
       <div
         className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)}
@@ -195,6 +328,109 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <div className="relative z-10"><Label data={d} /></div>
       </div>
     )
+  } else if (shape === 'ellipse') {
+    body = (
+      <div className={cn('relative flex h-full w-full items-center justify-center', ring && 'rounded-full ' + ring)}>
+        <Handles stroke={stroke} />
+        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
+          <ellipse cx={width / 2} cy={height / 2} rx={width / 2 - 2} ry={height / 2 - 2} fill={fill} stroke={stroke} strokeWidth="2" />
+        </svg>
+        <div className="relative z-10"><Label data={d} /></div>
+      </div>
+    )
+  } else if (shape === 'stickFigure') {
+    // UML actor: stick figure with the name underneath
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col items-center justify-end', ring && 'rounded-lg ' + ring)}>
+        <Handles stroke={stroke} />
+        <svg width="46" height="64" viewBox="0 0 46 64" className="shrink-0">
+          <circle cx="23" cy="10" r="8" fill={fill} stroke={stroke} strokeWidth="2.5" />
+          <line x1="23" y1="18" x2="23" y2="40" stroke={stroke} strokeWidth="2.5" />
+          <line x1="5" y1="26" x2="41" y2="26" stroke={stroke} strokeWidth="2.5" />
+          <line x1="23" y1="40" x2="8" y2="60" stroke={stroke} strokeWidth="2.5" />
+          <line x1="23" y1="40" x2="38" y2="60" stroke={stroke} strokeWidth="2.5" />
+        </svg>
+        <span className="mt-1 max-w-full truncate px-1 text-center text-xs font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+      </div>
+    )
+  } else if (shape === 'pertBox') {
+    // CPM box: ES | duration | EF / label / LS | slack | LF
+    const p = d.pert
+    const border = p?.critical ? '#D32F2F' : stroke
+    const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-md', ring)} style={{ background: fill, border: `2px solid ${border}` }}>
+        <Handles stroke={border} />
+        {p ? (
+          <>
+            <div className="grid flex-1 grid-cols-3 text-center text-[9px] font-medium" style={{ color: text, borderBottom: `1px solid ${border}55` }}>
+              <span className="flex items-center justify-center" title="Earliest start">{fmt(p.es)}</span>
+              <span className="flex items-center justify-center border-x" style={{ borderColor: border + '55' }} title="Duration">{fmt(p.duration)}</span>
+              <span className="flex items-center justify-center" title="Earliest finish">{fmt(p.ef)}</span>
+            </div>
+            <div className="flex flex-[1.4] items-center justify-center px-1 text-center text-[11px] font-semibold" style={{ color: text }}>{d.label}</div>
+            <div className="grid flex-1 grid-cols-3 text-center text-[9px] font-medium" style={{ color: text, borderTop: `1px solid ${border}55` }}>
+              <span className="flex items-center justify-center" title="Latest start">{fmt(p.ls)}</span>
+              <span className="flex items-center justify-center border-x" style={{ borderColor: border + '55' }} title="Slack">{fmt(p.slack)}</span>
+              <span className="flex items-center justify-center" title="Latest finish">{fmt(p.lf)}</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center"><Label data={d} /></div>
+        )}
+      </div>
+    )
+  } else if (shape === 'ganttBar') {
+    const prog = d.progress
+    const labelOutside = width < d.label.length * 6.5 + 16
+    body = (
+      <div className={cn('relative h-full w-full rounded', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        {prog !== undefined && (
+          <div className="absolute inset-y-0 left-0 rounded-l" style={{ width: `${prog}%`, background: stroke, opacity: 0.55 }} />
+        )}
+        <div
+          className={cn('absolute inset-y-0 z-10 flex items-center whitespace-nowrap text-[10px] font-semibold', labelOutside ? 'left-full pl-1.5' : 'left-2')}
+          style={{ color: labelOutside ? 'var(--fg)' : text }}
+        >
+          {d.label}
+        </div>
+      </div>
+    )
+  } else if (shape === 'ganttMilestone') {
+    body = (
+      <div className={cn('relative h-full w-full', ring && 'rounded ' + ring)}>
+        <Handles stroke={stroke} />
+        <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
+          <polygon points={`${width / 2},1 ${width - 1},${height / 2} ${width / 2},${height - 1} 1,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="1.5" />
+        </svg>
+        <span className="absolute left-full top-1/2 z-10 ml-1.5 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+      </div>
+    )
+  } else if (shape === 'dot') {
+    // small disc with the label below (commits, quadrant items)
+    body = (
+      <div className={cn('relative h-full w-full', ring && 'rounded-full ' + ring)}>
+        <Handles stroke={stroke} />
+        <div className="h-full w-full rounded-full" style={{ background: fill, border: `2.5px solid ${stroke}` }} />
+        {d.badge && (
+          <span className="absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-1)] px-1 text-[9px] font-semibold" style={{ color: 'var(--fg)' }}>
+            {d.badge}
+          </span>
+        )}
+        <span className="absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>
+          {d.label}
+        </span>
+      </div>
+    )
+  } else if (shape === 'ganttSection') {
+    // a band wrapping its task rows (task bars paint on top via z-index)
+    body = (
+      <div className={cn('relative h-full w-full overflow-hidden rounded-sm', ring)} style={{ background: fill, borderLeft: `3px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <span className="absolute left-2 top-1 truncate text-[10px] font-bold uppercase tracking-wider" style={{ color: 'var(--fg-muted)' }}>{d.label}</span>
+      </div>
+    )
   } else {
     // ── Rectangle family ──
     const radius = shape === 'stadium' ? 'rounded-full' : shape === 'roundedRectangle' ? 'rounded-xl' : 'rounded-sm'
@@ -214,7 +450,9 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const isContainer = d.isContainer || shape === 'container'
   // resize works on leaves and containers; a container can only grow past its
   // auto-fit size, never shrink below its children (clamped in model-to-flow)
-  const resizable = shape !== 'person'
+  // gantt geometry derives from dates/durations — resizing it would be undone on the next layout
+  const resizable = shape !== 'person' && shape !== 'stickFigure'
+    && shape !== 'ganttBar' && shape !== 'ganttMilestone' && shape !== 'ganttSection'
   const resizer = resizable && (
     <NodeResizer
       isVisible={selected}

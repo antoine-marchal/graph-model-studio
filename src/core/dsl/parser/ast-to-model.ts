@@ -14,11 +14,31 @@ function inferNotation(elementType: string): NotationKind {
     'gateway', 'exclusiveGateway', 'parallelGateway', 'pool', 'lane',
   ])
   const flowTypes = new Set(['start', 'end', 'process', 'decision', 'inputOutput', 'connector'])
+  const useCaseTypes = new Set(['actor', 'useCase', 'systemBoundary'])
+  const treeTypes = new Set(['treeGraph', 'treeRoot', 'treeNode', 'treeLeaf'])
+  const pertTypes = new Set(['pertTask', 'pertMilestone'])
+  const ganttTypes = new Set(['ganttGraph', 'ganttTask', 'ganttMilestone', 'ganttSection'])
+  const sequenceTypes = new Set(['seqGraph', 'participant', 'seqActor'])
+  const mindmapTypes = new Set(['mindmapRoot', 'mindmapNode'])
+  const gitTypes = new Set(['gitGraph', 'commit', 'mergeCommit'])
+  const ishikawaTypes = new Set(['problem', 'cause', 'subCause'])
+  const quadrantTypes = new Set(['quadrantChart', 'quadrantItem'])
+  const timelineTypes = new Set(['timelineGraph', 'timelineEvent'])
 
   if (c4Types.has(elementType)) return 'c4'
   if (archiTypes.has(elementType)) return 'archimate'
   if (bpmnTypes.has(elementType)) return 'bpmn'
   if (flowTypes.has(elementType)) return 'flowchart'
+  if (useCaseTypes.has(elementType)) return 'usecase'
+  if (treeTypes.has(elementType)) return 'tree'
+  if (pertTypes.has(elementType)) return 'pert'
+  if (ganttTypes.has(elementType)) return 'gantt'
+  if (sequenceTypes.has(elementType)) return 'sequence'
+  if (mindmapTypes.has(elementType)) return 'mindmap'
+  if (gitTypes.has(elementType)) return 'gitgraph'
+  if (ishikawaTypes.has(elementType)) return 'ishikawa'
+  if (quadrantTypes.has(elementType)) return 'quadrant'
+  if (timelineTypes.has(elementType)) return 'timeline'
   return 'generic'
 }
 

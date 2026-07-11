@@ -1,3 +1,4 @@
+import { notationRegistry } from '../../notation'
 import type { Token } from './lexer'
 import type {
   AstRoot,
@@ -269,14 +270,29 @@ export class Parser {
             tags.push(this.advance().value)
           }
         } else if (this.isIdent()) {
-          // nested element or property
-          const saved = this.pos
-          const child = this.parseElementDecl()
-          if (child) {
-            children.push(child)
+          // nested element or custom property. A bare `word "text"` is only a
+          // shorthand child when the word is a known element type; anything
+          // else (duration "5d", progress "60", …) is a property. Inside a
+          // gantt element, `start`/`end` collide with the flowchart types and
+          // always mean the date properties.
+          const word = this.peek().value
+          const ganttDateProp = (word === 'start' || word === 'end')
+            && notationRegistry.getElementDef(elementType)?.notation === 'gantt'
+          const isChild = this.peek(1).kind === 'EQ'
+            || (notationRegistry.getElementDef(word) !== undefined && !ganttDateProp)
+          if (isChild) {
+            const saved = this.pos
+            const child = this.parseElementDecl()
+            if (child) {
+              children.push(child)
+            } else {
+              this.pos = saved
+              this.advance()
+            }
           } else {
-            this.pos = saved
-            this.advance()
+            const prop = this.parseBodyDirective()
+            if (prop) properties.push(prop)
+            else this.advance()
           }
         } else {
           this.advance()

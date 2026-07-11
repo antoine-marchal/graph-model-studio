@@ -10,6 +10,9 @@ import { dagreLayout } from './dagre-layout'
 
 export * from './auto-layout'
 export { dagreLayout } from './dagre-layout'
+export * from './gantt-layout'
+export * from './pert'
+export * from './special-layouts'
 
 export type LayoutEngine = 'layered' | 'dagre'
 

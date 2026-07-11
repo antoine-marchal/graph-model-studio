@@ -52,6 +52,55 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
   )
 }
 
+/** Custom-property fields shown per element type, grouped under a labelled box. */
+interface PropFieldSpec { key: string; label: string; placeholder: string }
+const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[] }> = {
+  ganttTask: { group: 'Schedule', fields: [
+    { key: 'start', label: 'Start (YYYY-MM-DD)', placeholder: 'e.g. 2026-08-03' },
+    { key: 'duration', label: 'Duration (5d, 2w)', placeholder: 'e.g. 5d' },
+    { key: 'progress', label: 'Progress (0–100)', placeholder: 'e.g. 60' },
+  ] },
+  ganttMilestone: { group: 'Schedule', fields: [
+    { key: 'start', label: 'Start (YYYY-MM-DD)', placeholder: 'e.g. 2026-08-03' },
+  ] },
+  pertTask: { group: 'PERT', fields: [
+    { key: 'duration', label: 'Duration (time units)', placeholder: 'e.g. 5' },
+  ] },
+  timelineEvent: { group: 'Timeline', fields: [
+    { key: 'date', label: 'Date', placeholder: 'e.g. 2026 or 2026-03' },
+  ] },
+  commit: { group: 'Git', fields: [
+    { key: 'branch', label: 'Branch', placeholder: 'e.g. main, feature/x' },
+    { key: 'tag', label: 'Tag', placeholder: 'e.g. v1.0' },
+  ] },
+  mergeCommit: { group: 'Git', fields: [
+    { key: 'branch', label: 'Branch', placeholder: 'e.g. main' },
+    { key: 'tag', label: 'Tag', placeholder: 'e.g. v1.0' },
+  ] },
+  quadrantChart: { group: 'Quadrant', fields: [
+    { key: 'xLabel', label: 'X axis label', placeholder: 'e.g. Effort' },
+    { key: 'yLabel', label: 'Y axis label', placeholder: 'e.g. Impact' },
+    { key: 'q1', label: 'Q1 (top-right)', placeholder: 'e.g. Do first' },
+    { key: 'q2', label: 'Q2 (top-left)', placeholder: 'e.g. Plan' },
+    { key: 'q3', label: 'Q3 (bottom-left)', placeholder: 'e.g. Reconsider' },
+    { key: 'q4', label: 'Q4 (bottom-right)', placeholder: 'e.g. Quick wins' },
+  ] },
+  quadrantItem: { group: 'Position (0–1)', fields: [
+    { key: 'x', label: 'X (0 left → 1 right)', placeholder: 'e.g. 0.8' },
+    { key: 'y', label: 'Y (0 bottom → 1 top)', placeholder: 'e.g. 0.6' },
+  ] },
+}
+
+/** One live-committed custom-property input (own hooks so the field list can vary). */
+function PropField({ value, placeholder, label, onCommit }: { value: string; placeholder: string; label: string; onCommit: (v: string) => void }) {
+  const [v, onChange, flush] = useLiveField(value, onCommit)
+  return (
+    <FieldRow label={label}>
+      <Input value={v} onChange={e => onChange(e.target.value)} onBlur={flush} placeholder={placeholder} />
+    </FieldRow>
+  )
+}
+
 /** Debounced live commit. */
 function useLiveField<T>(value: T, commit: (v: T) => void, delay = 250) {
   const [local, setLocal] = useState(value)
@@ -87,6 +136,15 @@ function ElementProperties({ elementId }: { elementId: string }) {
   const commitTech = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, technology: v || undefined } }), [dispatch, elementId])
   const commitTags = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, tags: v.split(',').map(t => t.trim()).filter(Boolean) } }), [dispatch, elementId])
 
+  // merge one custom property (empty value removes it)
+  const properties = element?.properties
+  const setProp = useCallback((key: string, v: string) => {
+    const props = { ...(properties ?? {}) }
+    const t = v.trim()
+    if (t) props[key] = t; else delete props[key]
+    dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, properties: props } })
+  }, [dispatch, elementId, properties])
+
   const [name, onName, flushName] = useLiveField(element?.name ?? '', commitName)
   const [desc, onDesc, flushDesc] = useLiveField(element?.description ?? '', commitDesc)
   const [tech, onTech, flushTech] = useLiveField(element?.technology ?? '', commitTech)
@@ -103,6 +161,8 @@ function ElementProperties({ elementId }: { elementId: string }) {
   }, [focusNonce])
 
   if (!element) return null
+
+  const custom = CUSTOM_PROP_FIELDS[element.type]
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -143,6 +203,21 @@ function ElementProperties({ elementId }: { elementId: string }) {
       <FieldRow label="Tags (comma-separated)">
         <Input value={tagsStr} onChange={e => onTags(e.target.value)} onBlur={flushTags} placeholder="domain, core" />
       </FieldRow>
+
+      {custom && (
+        <div className="flex flex-col gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 p-2.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">{custom.group}</span>
+          {custom.fields.map(f => (
+            <PropField
+              key={f.key}
+              label={f.label}
+              placeholder={f.placeholder}
+              value={properties?.[f.key] ?? ''}
+              onCommit={v => setProp(f.key, v)}
+            />
+          ))}
+        </div>
+      )}
 
       <Button size="sm" variant="danger" className="mt-1 w-full" onClick={() => dispatch({ type: 'DELETE_ELEMENT', payload: { id: elementId } })}>
         Delete Element

@@ -2,7 +2,7 @@
 
 A local-first, browser-based **architecture model builder**. Write a concise
 text DSL on the left, get a live, fully-editable diagram on the right — and edit
-either side; they stay in sync. One model, many views, five notations.
+either side; they stay in sync. One model, many views, fifteen notations.
 
 > Code ⇄ Diagram. Everything you type becomes a graph; everything you drag,
 > rename, connect, or lay out is written back to the DSL.
@@ -23,9 +23,28 @@ either side; they stay in sync. One model, many views, five notations.
 
 - **Bidirectional editing** — Monaco DSL editor and a React Flow canvas backed by
   one shared model. Type in the DSL or manipulate the canvas; both reconcile.
-- **Five notations out of the box** — C4, ArchiMate (full element set across all
-  layers), BPMN, Flowchart, and a Generic palette. Notation-correct node shapes
-  and edge markers (filled/hollow arrows, diamonds, balls, open circles).
+- **Fifteen notations out of the box** — C4, ArchiMate (full element set across
+  all layers), BPMN, Flowchart, UML Use Case, UML Sequence, Tree, Mindmap,
+  PERT, Gantt, Git Graph, Ishikawa (fishbone), Quadrant, Timeline, and a
+  Generic palette. Notation-correct node shapes and edge markers (filled/hollow
+  arrows, diamonds, balls, open circles).
+- **Chart notations lay themselves out inside movable frames** — sequence
+  (`seqGraph`), git (`gitGraph`), gantt (`ganttGraph`) and timeline
+  (`timelineGraph`) are container frames that embed their nodes and draw their
+  own decor (lifelines, lanes, axis, spine); drag the frame and the whole chart
+  moves. Ishikawa nests `problem → cause → subCause`, quadrant charts plot items
+  from `x`/`y`, and a `treeGraph` renders a collapsible Windows-Explorer file
+  tree. Chart-specific fields (start/duration/progress, date, branch/tag, PERT
+  duration, quadrant axis labels & item x/y) are editable from the properties
+  panel.
+- **PERT charts with critical path** — give tasks a `duration "5"` property and
+  connect them with `: dependsOn`; ES/EF, LS/LF and slack are computed per node
+  and the critical path is highlighted in red.
+- **Gantt charts on a real date scale** — a movable `ganttGraph` frame holds
+  the tasks, sections and milestones and draws the timeline axis; tasks use
+  `start "2026-08-03" duration "4d"` (or `end`, `"2w"`, `progress "60"`),
+  undated tasks chain after their dependencies, and sections group phases into
+  bands. Edit start/duration/progress from the properties panel.
 - **Nested containers** — drop a node onto a container to reparent it; containers
   auto-size around their children at every depth.
 - **Two auto-layout engines** — the built-in layered (Sugiyama-lite) layout and

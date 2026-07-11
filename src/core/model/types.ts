@@ -7,6 +7,16 @@ export const NotationKindSchema = z.enum([
   'archimate',
   'bpmn',
   'flowchart',
+  'usecase',
+  'tree',
+  'pert',
+  'gantt',
+  'sequence',
+  'mindmap',
+  'gitgraph',
+  'ishikawa',
+  'quadrant',
+  'timeline',
   'generic',
 ])
 export type NotationKind = z.infer<typeof NotationKindSchema>
@@ -56,12 +66,42 @@ export const FlowchartElementTypes = [
   'connector',
 ] as const
 
+export const UseCaseElementTypes = ['actor', 'useCase', 'systemBoundary'] as const
+
+export const TreeElementTypes = ['treeGraph', 'treeRoot', 'treeNode', 'treeLeaf'] as const
+
+export const PertElementTypes = ['pertTask', 'pertMilestone'] as const
+
+export const GanttElementTypes = ['ganttGraph', 'ganttTask', 'ganttMilestone', 'ganttSection'] as const
+
+export const SequenceElementTypes = ['seqGraph', 'participant', 'seqActor'] as const
+
+export const MindmapElementTypes = ['mindmapRoot', 'mindmapNode'] as const
+
+export const GitGraphElementTypes = ['gitGraph', 'commit', 'mergeCommit'] as const
+
+export const IshikawaElementTypes = ['problem', 'cause', 'subCause'] as const
+
+export const QuadrantElementTypes = ['quadrantChart', 'quadrantItem'] as const
+
+export const TimelineElementTypes = ['timelineGraph', 'timelineEvent'] as const
+
 export const GenericElementTypes = ['node', 'group', 'external'] as const
 
 export type C4ElementType = (typeof C4ElementTypes)[number]
 export type ArchiMateElementType = (typeof ArchiMateElementTypes)[number]
 export type BpmnElementType = (typeof BpmnElementTypes)[number]
 export type FlowchartElementType = (typeof FlowchartElementTypes)[number]
+export type UseCaseElementType = (typeof UseCaseElementTypes)[number]
+export type TreeElementType = (typeof TreeElementTypes)[number]
+export type PertElementType = (typeof PertElementTypes)[number]
+export type GanttElementType = (typeof GanttElementTypes)[number]
+export type SequenceElementType = (typeof SequenceElementTypes)[number]
+export type MindmapElementType = (typeof MindmapElementTypes)[number]
+export type GitGraphElementType = (typeof GitGraphElementTypes)[number]
+export type IshikawaElementType = (typeof IshikawaElementTypes)[number]
+export type QuadrantElementType = (typeof QuadrantElementTypes)[number]
+export type TimelineElementType = (typeof TimelineElementTypes)[number]
 export type GenericElementType = (typeof GenericElementTypes)[number]
 
 export type ElementType =
@@ -69,6 +109,16 @@ export type ElementType =
   | ArchiMateElementType
   | BpmnElementType
   | FlowchartElementType
+  | UseCaseElementType
+  | TreeElementType
+  | PertElementType
+  | GanttElementType
+  | SequenceElementType
+  | MindmapElementType
+  | GitGraphElementType
+  | IshikawaElementType
+  | QuadrantElementType
+  | TimelineElementType
   | GenericElementType
 
 // ─── Relation types ──────────────────────────────────────────────────────────
@@ -88,6 +138,14 @@ export type RelationType =
   | 'association'
   | 'sequenceFlow'
   | 'messageFlow'
+  | 'include'
+  | 'extend'
+  | 'generalization'
+  | 'branch'
+  | 'dependsOn'
+  | 'message'
+  | 'asyncMessage'
+  | 'replyMessage'
 
 // ─── Layout ──────────────────────────────────────────────────────────────────
 

@@ -149,15 +149,31 @@ but always write one explicitly.
 
 ## 5. Notations
 
-Five notations coexist in one model; the notation of each element is inferred
-from its type. Mixing is allowed (e.g. a C4 `person` next to BPMN tasks), but
-a coherent diagram usually sticks to one notation family. Pick by intent:
+Fifteen notations coexist in one model; the notation of each element is
+inferred from its type. Mixing is allowed (e.g. a C4 `person` next to BPMN
+tasks), but a coherent diagram usually sticks to one notation family. Pick by
+intent:
 
 - **C4** — software architecture: systems, containers, components.
 - **ArchiMate** — enterprise architecture across layers.
 - **BPMN** — business processes: events, tasks, gateways, swimlanes.
 - **Flowchart** — simple algorithm/decision flows.
+- **Use case** — UML use case diagrams: actors, use cases, system boundaries.
+- **Sequence** — UML sequence diagrams: lifelines and ordered messages.
+- **Tree** — hierarchies: org charts, taxonomies, decision trees.
+- **Mindmap** — a central idea with radiating topics.
+- **PERT** — project networks with automatic critical-path computation.
+- **Gantt** — project schedules laid out on a date scale.
+- **Git graph** — commit history across branch lanes.
+- **Ishikawa** — fishbone / cause-and-effect diagrams.
+- **Quadrant** — 2×2 priority matrices with items plotted by x/y.
+- **Timeline** — milestones on a horizontal time spine.
 - **Generic** — anything else: `node`, `group`, `external`.
+
+Sequence, git graph, ishikawa, quadrant and timeline are **chart notations**
+(like Gantt): node positions derive from declaration order and properties, not
+from `autolayout` or drags. Keep one chart per view (several chart notations
+in the same view stack vertically).
 
 ## 6. Element types (exact, case-sensitive)
 
@@ -200,6 +216,105 @@ for nesting, though any element may hold children.
 ### Flowchart
 `start`, `end`, `process`, `decision`, `inputOutput`, `connector`
 
+### Use case (UML)
+`actor` (stick figure), `useCase` (ellipse), `systemBoundary` (container —
+nest use cases inside it, keep actors outside)
+
+### Tree
+Two ways to draw a hierarchy:
+- **Graph tree** — `treeRoot`, `treeNode`, `treeLeaf` linked with `: branch`,
+  `autolayout tb` for a top-down box-and-line tree.
+- **File tree** — wrap the tree elements in a `treeGraph` container and **nest**
+  them by body (no relations). The container renders a movable Windows-Explorer
+  style widget with folder/file icons and click-to-collapse/expand rows. Nodes
+  with children are folders; `treeLeaf` (or any childless node) is a file.
+
+```text
+treeGraph "Project" {
+  treeRoot "my-app" {
+    src = treeNode "src" { treeLeaf "App.tsx" }
+    treeLeaf "package.json"
+  }
+}
+```
+
+### PERT
+`pertTask`, `pertMilestone`. Give every task a `duration "5"` property (plain
+number, abstract time units; milestones are always 0). Link with
+`a -> b : dependsOn` ("b starts after a finishes"). The app computes ES/EF,
+LS/LF and slack per node automatically and draws the critical path in red —
+never write those values yourself.
+
+### Gantt
+`ganttGraph` (the chart frame), `ganttTask`, `ganttMilestone`, `ganttSection`.
+Every task/section/milestone **must be nested inside a `ganttGraph`** — a gantt
+node never lays out on its own; the `ganttGraph` is the movable frame that draws
+the timeline axis and holds the rows. Use one `ganttGraph` per chart (several
+frames can coexist in a view). Bars are laid out on a date scale — positions and
+sizes come from these properties, not from `autolayout` or `at`:
+
+- `start "YYYY-MM-DD"` — explicit start date. Inside gantt elements `start` /
+  `end` are always these date properties (no clash with the flowchart types).
+- `duration "5d"` — length in days (`"2w"` = weeks, plain `"5"` = days), or
+  `end "YYYY-MM-DD"` (inclusive) instead.
+- A task with no `start` begins when its dependencies end (`a -> b` means b
+  starts after a finishes); give at least one task an explicit `start`.
+- `progress "60"` — optional 0–100 completion overlay.
+- `ganttSection "Phase 1"` — groups the task rows that follow it into a
+  labelled band. Either nest the tasks inside the section body, or just declare
+  them after it (rows follow declaration order); both render the same band.
+  Tasks stay on the date scale — a section only groups, it does not move them.
+
+### Sequence (UML)
+`seqGraph` (the movable frame), `participant` (box), `seqActor` (stick figure).
+Every participant/actor **must be nested inside a `seqGraph`** — they never lay
+out on their own. Columns follow declaration order. Messages are relations
+between participants, drawn top-to-bottom in declaration order:
+`a -> b : message "label"` (solid, filled arrow), `: asyncMessage` (solid, open
+arrow), `: replyMessage` (dashed). The frame draws lifelines and ordered arrows
+automatically. Use one `seqGraph` per diagram.
+
+### Mindmap
+`mindmapRoot` (the central idea — exactly one), `mindmapNode`. Link with
+`: branch` and use `autolayout lr`.
+
+### Git graph
+`gitGraph` (the movable frame), `commit`, `mergeCommit`. Every commit **must be
+nested inside a `gitGraph`**. Columns follow declaration order; the
+`branch "name"` property picks the lane (default `"main"`, lanes appear in
+first-use order). A `tag "v1.0"` property renders as a badge above the dot.
+Link parent to child: `c1 -> c2`. Use one `gitGraph` per chart.
+
+### Ishikawa (fishbone)
+`problem` (the fish head), `cause` (bone categories, alternate above/below the
+spine), `subCause`. Built by **nesting**, not relations: put `cause` elements
+inside a `problem` body, and `subCause` elements inside a `cause` body. The
+problem draws the spine + diagonal bones automatically; causes are its child
+boxes; sub-causes stack inside each cause box. Several `problem`s in one view
+give several independent fishbones. Dragging a cause/problem moves its whole
+subtree; drag a sub-cause onto another cause box to re-file it.
+
+```text
+problem "Too many defects" {
+  cause "People"  { subCause "No training" }
+  cause "Process" { subCause "No code review" }
+}
+```
+
+### Quadrant chart
+`quadrantChart` (the 2×2 grid) with `quadrantItem` children nested inside it.
+Items are placed by `x "0.7" y "0.3"` properties (0..1, origin bottom-left).
+Chart labels come from its properties: `q1`..`q4` (top-right, top-left,
+bottom-left, bottom-right), `xLabel`, `yLabel`. Include both in the view:
+`include chart, chart.*`.
+
+### Timeline
+`timelineGraph` (the movable frame) with `timelineEvent` children nested inside
+it — events never lay out on their own. One event per milestone, left-to-right
+in declaration order, alternating above/below the spine. An optional
+`date "2023-06"` property is printed on the spine. No relations needed. Use one
+`timelineGraph` per timeline.
+
 ### Generic
 `node`, `group` (container), `external`
 
@@ -224,10 +339,20 @@ Unknown types do not error but render as generic nodes — stick to this list.
 | `sequenceFlow` | BPMN | solid + filled arrow |
 | `messageFlow` | BPMN | dashed, open circle at source + open arrow |
 | `flowArrow` | Flowchart | solid + filled arrow |
+| `include` | Use case | dashed + open arrow, auto-labelled «include» |
+| `extend` | Use case | dashed + open arrow, auto-labelled «extend» |
+| `generalization` | Use case | solid + hollow triangle |
+| `branch` | Tree/Mindmap | plain line, no arrow |
+| `dependsOn` | PERT/Gantt | solid + filled arrow |
+| `message` | Sequence | solid + filled arrow |
+| `asyncMessage` | Sequence | solid + open arrow |
+| `replyMessage` | Sequence | dashed + open arrow |
 
 Use `sequenceFlow` between BPMN nodes, `flowArrow` between flowchart nodes,
-the ArchiMate types between ArchiMate elements, and no type (plain `->`) for
-C4 and generic diagrams.
+the ArchiMate types between ArchiMate elements, `include`/`extend`/
+`generalization` between use cases (plain `->` for actor→useCase
+associations), `branch` between tree nodes, `dependsOn` between PERT or
+Gantt tasks, and no type (plain `->`) for C4 and generic diagrams.
 
 Note for ArchiMate `composition`/`aggregation`: the diamond sits at the
 **source**, so write `whole -> part : composition`.
@@ -353,6 +478,240 @@ views {
     include *
     autolayout tb
   }
+}
+```
+
+### Use case diagram
+
+```text
+model {
+  customer = actor "Customer"
+  admin    = actor "Administrator"
+
+  shop = systemBoundary "Web Shop" {
+    browse   = useCase "Browse catalogue"
+    checkout = useCase "Check out"
+    pay      = useCase "Pay by card"
+    refund   = useCase "Issue refund"
+  }
+
+  customer -> browse
+  customer -> checkout
+  checkout -> pay : include
+  admin -> refund
+}
+
+views {
+  view uc "Web Shop — Use Cases" {
+    include customer, admin, shop, shop.*
+    autolayout lr
+  }
+}
+```
+
+### Tree structure
+
+```text
+model {
+  ceo  = treeRoot "CEO"
+  cto  = treeNode "CTO"
+  cfo  = treeNode "CFO"
+  dev1 = treeLeaf "Platform Team"
+  dev2 = treeLeaf "Product Team"
+
+  ceo -> cto : branch
+  ceo -> cfo : branch
+  cto -> dev1 : branch
+  cto -> dev2 : branch
+}
+
+views {
+  view org "Org Chart" {
+    include *
+    autolayout tb
+  }
+}
+```
+
+### PERT chart (critical path computed automatically)
+
+```text
+model {
+  kickoff = pertMilestone "Kickoff"
+  design  = pertTask "Design"  { duration "3" }
+  build   = pertTask "Build"   { duration "5" }
+  docs    = pertTask "Docs"    { duration "2" }
+  test    = pertTask "Test"    { duration "4" }
+  release = pertMilestone "Release"
+
+  kickoff -> design : dependsOn
+  design -> build : dependsOn
+  design -> docs : dependsOn
+  build -> test : dependsOn
+  docs -> test : dependsOn
+  test -> release : dependsOn
+}
+
+views {
+  view network "Project Network" {
+    include *
+    autolayout lr
+  }
+}
+```
+
+### Gantt chart (bars follow the dates, not autolayout)
+
+```text
+model {
+  plan = ganttGraph "Release Plan" {
+    phase1 = ganttSection "Phase 1 — Prepare" {
+      spec   = ganttTask "Write spec" { start "2026-08-03" duration "4d" progress "100" }
+      review = ganttTask "Review"     { duration "2d" }
+    }
+    phase2 = ganttSection "Phase 2 — Build" {
+      build  = ganttTask "Build" { duration "2w" progress "30" }
+      qa     = ganttTask "QA"    { duration "5d" }
+      launch = ganttMilestone "Launch"
+    }
+  }
+
+  spec -> review
+  review -> build
+  build -> qa
+  qa -> launch
+}
+
+views {
+  view plan "Release Plan" {
+    include *
+    autolayout lr
+  }
+}
+```
+
+### Sequence diagram
+
+```text
+model {
+  flow = seqGraph "Login Flow" {
+    user = seqActor "User"
+    web  = participant "Web App"
+    api  = participant "API"
+  }
+
+  user -> web : message "click login"
+  web -> api : asyncMessage "POST /auth"
+  api -> web : replyMessage "200 OK"
+  web -> user : replyMessage "dashboard"
+}
+
+views {
+  view seq "Login Flow" {
+    include *
+    autolayout lr
+  }
+}
+```
+
+### Mindmap
+
+```text
+model {
+  root = mindmapRoot "Product Vision"
+  ux   = mindmapNode "Better UX"
+  perf = mindmapNode "Performance"
+  onb  = mindmapNode "Onboarding"
+
+  root -> ux : branch
+  root -> perf : branch
+  ux -> onb : branch
+}
+
+views {
+  view mm "Vision Map" { include * autolayout lr }
+}
+```
+
+### Git graph
+
+```text
+model {
+  hist = gitGraph "History" {
+    c1 = commit "init"
+    c2 = commit "auth wip"  { branch "feature/auth" }
+    c3 = commit "auth done" { branch "feature/auth" }
+    c4 = mergeCommit "merge auth" { tag "v1.0" }
+  }
+
+  c1 -> c2
+  c2 -> c3
+  c1 -> c4
+  c3 -> c4
+}
+
+views {
+  view hist "History" { include * autolayout lr }
+}
+```
+
+### Ishikawa (fishbone)
+
+```text
+model {
+  defects = problem "Too many defects" {
+    people = cause "People" {
+      training = subCause "No training"
+      fatigue  = subCause "Fatigue"
+    }
+    process = cause "Process" {
+      norev = subCause "No code review"
+    }
+    tools = cause "Tools" {
+      ci = subCause "Outdated CI"
+    }
+  }
+}
+
+views {
+  view fish "Root Causes" { include * autolayout lr }
+}
+```
+
+### Quadrant chart
+
+```text
+model {
+  chart = quadrantChart "Feature Prioritisation" {
+    q1 "Do first"
+    q2 "Plan"
+    q3 "Reconsider"
+    q4 "Quick wins"
+    xLabel "Effort"
+    yLabel "Impact"
+    sso  = quadrantItem "SSO"       { x "0.8" y "0.9" }
+    dark = quadrantItem "Dark mode" { x "0.2" y "0.4" }
+  }
+}
+
+views {
+  view q "Priorities" { include chart, chart.* autolayout lr }
+}
+```
+
+### Timeline
+
+```text
+model {
+  tl = timelineGraph "Company History" {
+    e1 = timelineEvent "Founded"        { date "2019" }
+    e2 = timelineEvent "Seed round"     { date "2021-03" }
+    e3 = timelineEvent "Product launch" { date "2022-06" }
+  }
+}
+
+views {
+  view tl "Company History" { include * autolayout lr }
 }
 ```
 
