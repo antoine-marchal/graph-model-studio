@@ -24,6 +24,10 @@ export type NodeShape =
   | 'ganttGraph'
   | 'chartFrame'
   | 'treeGraph'
+  | 'umlClass'
+  | 'erdEntity'
+  | 'gridGraph'
+  | 'note'
 
 export type IconKind =
   // ArchiMate generic-by-category
@@ -65,6 +69,7 @@ export interface ElementTypeDefinition {
 export type MarkerId =
   | 'gms-arrow-open' | 'gms-arrow-filled' | 'gms-triangle-hollow'
   | 'gms-diamond-filled' | 'gms-diamond-hollow' | 'gms-ball' | 'gms-circle-open'
+  | 'gms-crow-many' | 'gms-crow-one' | 'gms-crow-zero-many'
 
 export interface RelationTypeDefinition {
   type: string
@@ -280,9 +285,7 @@ const USECASE_ELEMENTS: ElementTypeDefinition[] = [
 // ─── Tree ────────────────────────────────────────────────────────────────────
 const TREE_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'treeGraph', label: 'Tree Graph', notation: 'tree', shape: 'treeGraph', fill: 'rgba(76,58,140,0.06)', stroke: '#4C3A8C', text: '#2C2153', accent: '#6C55C4', icon: 'none', defaultWidth: 280, defaultHeight: 240 },
-  { type: 'treeRoot', label: 'Tree Root', notation: 'tree', shape: 'roundedRectangle', fill: '#4C3A8C', stroke: '#372A66', text: '#FFFFFF', accent: '#6C55C4', icon: 'none', defaultWidth: 160, defaultHeight: 56 },
   { type: 'treeNode', label: 'Tree Node', notation: 'tree', shape: 'roundedRectangle', fill: '#6C55C4', stroke: '#4C3A8C', text: '#FFFFFF', accent: '#8B76DB', icon: 'none', defaultWidth: 140, defaultHeight: 48 },
-  { type: 'treeLeaf', label: 'Tree Leaf', notation: 'tree', shape: 'stadium', fill: '#EDE9FB', stroke: '#8B76DB', text: '#2C2153', accent: '#8B76DB', icon: 'none', defaultWidth: 130, defaultHeight: 42 },
 ]
 
 // ─── PERT ────────────────────────────────────────────────────────────────────
@@ -308,8 +311,28 @@ const SEQUENCE_ELEMENTS: ElementTypeDefinition[] = [
 
 // ─── Mindmap ─────────────────────────────────────────────────────────────────
 const MINDMAP_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'mindmapGraph', label: 'Mindmap Graph', notation: 'mindmap', shape: 'chartFrame', fill: 'rgba(173,20,87,0.05)', stroke: '#AD1457', text: '#4A0E27', accent: '#D81B60', icon: 'none', defaultWidth: 520, defaultHeight: 400 },
   { type: 'mindmapRoot', label: 'Mindmap Root', notation: 'mindmap', shape: 'stadium', fill: '#AD1457', stroke: '#7B0E3C', text: '#FFFFFF', accent: '#D81B60', icon: 'none', defaultWidth: 170, defaultHeight: 62 },
   { type: 'mindmapNode', label: 'Mindmap Node', notation: 'mindmap', shape: 'roundedRectangle', fill: '#F8BBD0', stroke: '#C2185B', text: '#4A0E27', accent: '#D81B60', icon: 'none', defaultWidth: 130, defaultHeight: 44 },
+]
+
+// ─── UML class ───────────────────────────────────────────────────────────────
+const UML_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'umlClass', label: 'UML Class', notation: 'uml', shape: 'umlClass', fill: '#FFFDF5', stroke: '#3A3A3A', text: '#1F2933', accent: '#5B7C99', icon: 'none', defaultWidth: 200, defaultHeight: 120 },
+  { type: 'umlInterface', label: 'UML Interface', notation: 'uml', shape: 'umlClass', fill: '#F3F8FF', stroke: '#3A3A3A', text: '#1F2933', accent: '#3B6FB5', icon: 'none', defaultWidth: 200, defaultHeight: 110 },
+  { type: 'umlEnum', label: 'UML Enum', notation: 'uml', shape: 'umlClass', fill: '#F6FFF3', stroke: '#3A3A3A', text: '#1F2933', accent: '#4F9A3F', icon: 'none', defaultWidth: 180, defaultHeight: 110 },
+  { type: 'umlNote', label: 'UML Note', notation: 'uml', shape: 'note', fill: '#FFF9C4', stroke: '#C9A100', text: '#3A2F00', accent: '#C9A100', icon: 'none', defaultWidth: 180, defaultHeight: 80 },
+]
+
+// ─── ERD ─────────────────────────────────────────────────────────────────────
+const ERD_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'erdEntity', label: 'ERD Entity', notation: 'erd', shape: 'erdEntity', fill: '#FFFFFF', stroke: '#37474F', text: '#1F2933', accent: '#00838F', icon: 'none', defaultWidth: 200, defaultHeight: 120 },
+]
+
+// ─── Grid / AMDEC matrix ─────────────────────────────────────────────────────
+const GRID_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'gridGraph', label: 'Grid / Matrix', notation: 'grid', shape: 'gridGraph', fill: 'rgba(92,107,192,0.04)', stroke: '#5C6BC0', text: '#1A237E', accent: '#5C6BC0', icon: 'none', defaultWidth: 520, defaultHeight: 420 },
+  { type: 'gridItem', label: 'Grid Item', notation: 'grid', shape: 'roundedRectangle', fill: '#5C6BC0', stroke: '#3949AB', text: '#FFFFFF', accent: '#7986CB', icon: 'none', defaultWidth: 120, defaultHeight: 34 },
 ]
 
 // ─── Git graph ───────────────────────────────────────────────────────────────
@@ -349,7 +372,8 @@ const ALL_ELEMENTS = [
   ...C4_ELEMENTS, ...ARCHIMATE_ELEMENTS, ...BPMN_ELEMENTS, ...FLOWCHART_ELEMENTS,
   ...USECASE_ELEMENTS, ...TREE_ELEMENTS, ...PERT_ELEMENTS, ...GANTT_ELEMENTS,
   ...SEQUENCE_ELEMENTS, ...MINDMAP_ELEMENTS, ...GITGRAPH_ELEMENTS,
-  ...ISHIKAWA_ELEMENTS, ...QUADRANT_ELEMENTS, ...TIMELINE_ELEMENTS, ...GENERIC_ELEMENTS,
+  ...ISHIKAWA_ELEMENTS, ...QUADRANT_ELEMENTS, ...TIMELINE_ELEMENTS,
+  ...UML_ELEMENTS, ...ERD_ELEMENTS, ...GRID_ELEMENTS, ...GENERIC_ELEMENTS,
 ]
 const elementByType = new Map(ALL_ELEMENTS.map(e => [e.type, e]))
 const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
@@ -358,6 +382,7 @@ const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
   ['pert', PERT_ELEMENTS], ['gantt', GANTT_ELEMENTS],
   ['sequence', SEQUENCE_ELEMENTS], ['mindmap', MINDMAP_ELEMENTS], ['gitgraph', GITGRAPH_ELEMENTS],
   ['ishikawa', ISHIKAWA_ELEMENTS], ['quadrant', QUADRANT_ELEMENTS], ['timeline', TIMELINE_ELEMENTS],
+  ['uml', UML_ELEMENTS], ['erd', ERD_ELEMENTS], ['grid', GRID_ELEMENTS],
   ['generic', GENERIC_ELEMENTS],
 ])
 
@@ -393,6 +418,13 @@ const RELATIONS: RelationTypeDefinition[] = [
   { type: 'message', label: 'Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
   { type: 'asyncMessage', label: 'Async Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-open' },
   { type: 'replyMessage', label: 'Reply', notation: 'sequence', lineStyle: 'dashed', markerEnd: 'gms-arrow-open' },
+  // UML class relations
+  { type: 'dependency', label: 'Dependency', notation: 'uml', lineStyle: 'dashed', markerEnd: 'gms-arrow-open' },
+  // ERD (crow's foot)
+  { type: 'erdOneToOne', label: 'One-to-One', notation: 'erd', lineStyle: 'solid', markerStart: 'gms-crow-one', markerEnd: 'gms-crow-one' },
+  { type: 'erdOneToMany', label: 'One-to-Many', notation: 'erd', lineStyle: 'solid', markerStart: 'gms-crow-one', markerEnd: 'gms-crow-many' },
+  { type: 'erdManyToMany', label: 'Many-to-Many', notation: 'erd', lineStyle: 'solid', markerStart: 'gms-crow-many', markerEnd: 'gms-crow-many' },
+  { type: 'erdZeroToMany', label: 'Zero-to-Many', notation: 'erd', lineStyle: 'solid', markerStart: 'gms-crow-one', markerEnd: 'gms-crow-zero-many' },
 ]
 const relationByType = new Map(RELATIONS.map(r => [r.type, r]))
 
@@ -428,6 +460,9 @@ export const notationRegistry: NotationRegistry = {
     { kind: 'ishikawa', label: 'Ishikawa' },
     { kind: 'quadrant', label: 'Quadrant' },
     { kind: 'timeline', label: 'Timeline' },
+    { kind: 'uml', label: 'UML Class' },
+    { kind: 'erd', label: 'ERD' },
+    { kind: 'grid', label: 'Grid / Matrix' },
     { kind: 'generic', label: 'Generic' },
   ],
   getGroups: n => uniqueGroups(byNotation.get(n) ?? []),

@@ -3,7 +3,7 @@ export interface StorageProvider {
   readonly label: string
   canOpen(): boolean
   canSave(): boolean
-  open(): Promise<{ content: string; name: string } | null>
+  open(): Promise<{ content: string; name: string; path?: string } | null>
   /** persist content; resolves to the saved file name, or null if cancelled/failed */
   save(content: string, suggestedName?: string): Promise<string | null>
   saveAs(content: string, suggestedName?: string): Promise<string | null>

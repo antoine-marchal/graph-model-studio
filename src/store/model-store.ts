@@ -37,6 +37,8 @@ export interface ModelStore {
   selectedRelationId: string | null
   isDirty: boolean
   fileName: string | null
+  /** absolute path of the open .gmc file (Tauri only) — used to resolve relative asset paths */
+  filePath: string | null
   diagnostics: Diagnostic[]
   parseError: boolean
   theme: Theme
@@ -72,6 +74,9 @@ export interface ModelStore {
   loadModel(model: GraphModel, dsl?: string): void
   newModel(): void
   setFileName(name: string | null): void
+  setFilePath(path: string | null): void
+  /** reorder an element's siblings to the given child-id order (drag-to-sort) */
+  reorderSiblings(parentId: string, orderedChildIds: string[]): void
   setDirty(dirty: boolean): void
   regenerateDsl(): void
   setTheme(theme: Theme): void
@@ -364,6 +369,7 @@ export const useModelStore = create<ModelStore>()(
       selectedRelationId: null,
       isDirty: false,
       fileName: null,
+      filePath: null,
       diagnostics: initialParse.diagnostics,
       parseError: !initialParse.success,
       theme: loadTheme(),
@@ -590,6 +596,30 @@ export const useModelStore = create<ModelStore>()(
       },
 
       setFileName(name) { set(state => { state.fileName = name }) },
+      setFilePath(path) { set(state => { state.filePath = path }) },
+      reorderSiblings(parentId, orderedChildIds) {
+        set(state => {
+          const parent = state.model.elements[parentId]
+          if (!parent) return
+          const current = parent.children
+          // keep only real children, in the requested order, then any leftovers
+          const wanted = orderedChildIds.filter(id => current.includes(id))
+          const rest = current.filter(id => !wanted.includes(id))
+          parent.children = [...wanted, ...rest]
+          // rebuild the flat element order (DFS by children) so serialization and
+          // the chart layouts (which read insertion order) reflect the new sort
+          const rebuilt: Record<string, GraphElement> = {}
+          const visit = (el: GraphElement) => {
+            rebuilt[el.id] = el
+            for (const cid of el.children) { const c = state.model.elements[cid]; if (c) visit(c) }
+          }
+          for (const el of Object.values(state.model.elements)) if (!el.parentId) visit(el)
+          for (const id of Object.keys(state.model.elements)) if (!rebuilt[id]) rebuilt[id] = state.model.elements[id]
+          state.model.elements = rebuilt
+          state.dslSource = serializeModel(state.model)
+          state.isDirty = true
+        })
+      },
       setDirty(dirty) { set(state => { state.isDirty = dirty }) },
       regenerateDsl() {
         set(state => {

@@ -53,6 +53,19 @@ export function EdgeMarkers() {
         <marker id="gms-circle-open" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse">
           <circle cx="5" cy="5" r="3.2" fill={bg} stroke={stroke} strokeWidth="1.3" />
         </marker>
+        {/* ERD crow's-foot "many" */}
+        <marker id="gms-crow-many" viewBox="0 0 22 20" refX="20" refY="10" markerWidth="20" markerHeight="18" orient="auto-start-reverse">
+          <path d="M20,10 L6,2 M20,10 L6,10 M20,10 L6,18" fill="none" stroke={stroke} strokeWidth="1.4" strokeLinecap="round" />
+        </marker>
+        {/* ERD "one" (single bar) */}
+        <marker id="gms-crow-one" viewBox="0 0 16 20" refX="14" refY="10" markerWidth="14" markerHeight="18" orient="auto-start-reverse">
+          <path d="M8,3 L8,17" fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" />
+        </marker>
+        {/* ERD "zero or many" (circle + crow's foot) */}
+        <marker id="gms-crow-zero-many" viewBox="0 0 30 20" refX="28" refY="10" markerWidth="26" markerHeight="18" orient="auto-start-reverse">
+          <circle cx="7" cy="10" r="4" fill={bg} stroke={stroke} strokeWidth="1.3" />
+          <path d="M28,10 L14,2 M28,10 L14,10 M28,10 L14,18" fill="none" stroke={stroke} strokeWidth="1.4" strokeLinecap="round" />
+        </marker>
       </defs>
     </svg>
   )

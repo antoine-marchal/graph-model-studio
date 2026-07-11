@@ -17,14 +17,14 @@ export class TauriStorageProvider implements StorageProvider {
 
   setCurrentPath(path: string): void { this.lastPath = path }
 
-  async open(): Promise<{ content: string; name: string } | null> {
+  async open(): Promise<{ content: string; name: string; path?: string } | null> {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')
     const selected = await open({ multiple: false, directory: false, filters: FILTERS })
     if (!selected || typeof selected !== 'string') return null
     const content = await invoke<string>('read_text_file', { path: selected })
     this.lastPath = selected
-    return { content, name: baseName(selected) }
+    return { content, name: baseName(selected), path: selected }
   }
 
   async save(content: string, suggestedName?: string): Promise<string | null> {

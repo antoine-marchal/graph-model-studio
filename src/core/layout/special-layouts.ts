@@ -152,11 +152,159 @@ export function layoutGitGraphFrame(commits: GraphElement[]): ChartLayout {
   return out
 }
 
+/**
+ * Mindmap: a central root with branches radiating outward. Nodes are placed on
+ * concentric rings by depth; each subtree gets an angular slice proportional to
+ * its leaf count. Connectors are drawn as frame lines (rendered by chartFrame).
+ */
+export function layoutMindmapGraph(model: GraphModel, containerId: string, hostedIds: Set<string>): ChartLayout {
+  const out = { ...empty(), width: 320, height: 260 } as ChartLayout
+  const kidsOf = (id: string) => (model.elements[id]?.children ?? []).filter(c => hostedIds.has(c))
+  const roots = [...hostedIds].filter(id => model.elements[id]?.parentId === containerId)
+  if (roots.length === 0) return out
+
+  const leafCount = new Map<string, number>()
+  const leaves = (id: string): number => {
+    if (leafCount.has(id)) return leafCount.get(id)!
+    const k = kidsOf(id)
+    const n = k.length ? k.reduce((s, c) => s + leaves(c), 0) : 1
+    leafCount.set(id, n); return n
+  }
+  const depthOf = (id: string): number => {
+    const k = kidsOf(id)
+    return k.length ? 1 + Math.max(...k.map(depthOf)) : 0
+  }
+  const single = roots.length === 1
+  const maxDepth = (single ? 0 : 1) + Math.max(...roots.map(depthOf))
+  const RING = 165
+  const rad = maxDepth * RING
+  const size = (id: string) => defSize(model.elements[id], model.elements[id]?.type === 'mindmapRoot' ? 170 : 130, model.elements[id]?.type === 'mindmapRoot' ? 62 : 44)
+  const maxHalf = 100
+  const cx = rad + maxHalf + PADX
+  const cy = rad + maxHalf + TITLE
+  const centers: Record<string, { x: number; y: number }> = {}
+
+  const place = (id: string, depth: number, a0: number, a1: number) => {
+    const ang = (a0 + a1) / 2
+    const r = depth * RING
+    const x = cx + r * Math.cos(ang)
+    const y = cy + r * Math.sin(ang)
+    centers[id] = { x, y }
+    const s = size(id)
+    out.placements[id] = { x: x - s.width / 2, y: y - s.height / 2, width: s.width, height: s.height }
+    const kids = kidsOf(id)
+    const tot = leaves(id)
+    let a = a0
+    for (const kid of kids) {
+      const b = a + (a1 - a0) * (leaves(kid) / tot)
+      place(kid, depth + 1, a, b)
+      out.frame.lines.push({ x1: x, y1: y, x2: centers[kid].x, y2: centers[kid].y, width: 1.5, color: EDGE_COLOR })
+      a = b
+    }
+  }
+
+  if (single) {
+    place(roots[0], 0, 0, Math.PI * 2)
+  } else {
+    const tot = roots.reduce((s, r) => s + leaves(r), 0)
+    let a = 0
+    for (const r of roots) { const b = a + Math.PI * 2 * (leaves(r) / tot); place(r, 1, a, b); a = b }
+  }
+
+  out.width = 2 * (rad + maxHalf) + PADX * 2
+  out.height = 2 * (rad + maxHalf) + TITLE + PADY
+  return out
+}
+
+/** Cell + item geometry for a gridGraph (AMDEC-style N×M matrix). */
+export interface GridFrame {
+  cols: number
+  rows: number
+  cellW: number
+  cellH: number
+  originX: number
+  originY: number
+  xLabel?: string
+  yLabel?: string
+  xHeaders: string[]
+  yHeaders: string[]
+  /** background fill per "row,col" (1-based) */
+  cellBg: Record<string, string>
+  width: number
+  height: number
+}
+
+export interface GridLayout {
+  placements: Record<string, SpecialPlacement>
+  frame: GridFrame
+}
+
+const GRID_HEAD = 30 // header band thickness (px)
+const GRID_AXIS = 22 // axis-title band thickness
+
+/** Parse "2,3=#f00; 1,1=#0f0" into { "2,3": "#f00", … }. */
+function parseCellBg(raw: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const part of (raw ?? '').split(';')) {
+    const m = part.trim().match(/^(\d+)\s*,\s*(\d+)\s*=\s*(\S+)$/)
+    if (m) out[`${m[1]},${m[2]}`] = m[3]
+  }
+  return out
+}
+
+/**
+ * Grid / matrix (e.g. a 5×5 AMDEC): a labelled N×M table. `gridItem` children
+ * carry `row`/`col` (1-based) and stack inside their cell; drag-drop moves them
+ * between cells (see the drag handler). Cells can be labelled via headers and
+ * given fixed background colours.
+ */
+export function layoutGridGraph(model: GraphModel, containerId: string, hostedIds: Set<string>): GridLayout {
+  const p = model.elements[containerId]?.properties ?? {}
+  const cols = Math.max(1, parseInt(p['cols'] ?? '5', 10) || 5)
+  const rows = Math.max(1, parseInt(p['rows'] ?? '5', 10) || 5)
+  const cellW = Math.max(80, parseInt(p['cellW'] ?? '110', 10) || 110)
+  const cellH = Math.max(56, parseInt(p['cellH'] ?? '84', 10) || 84)
+  const xHeaders = (p['xHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
+  const yHeaders = (p['yHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
+  const cellBg = parseCellBg(p['cellBg'])
+
+  const originX = GRID_AXIS + GRID_HEAD
+  const originY = TITLE + GRID_AXIS + GRID_HEAD
+
+  // stack items within their cell
+  const items = [...hostedIds].map(id => model.elements[id]).filter(Boolean)
+  const perCell = new Map<string, number>()
+  const placements: Record<string, SpecialPlacement> = {}
+  for (const it of items) {
+    const r = Math.min(rows, Math.max(1, parseInt(it.properties?.['row'] ?? '1', 10) || 1))
+    const c = Math.min(cols, Math.max(1, parseInt(it.properties?.['col'] ?? '1', 10) || 1))
+    const key = `${r},${c}`
+    const idx = perCell.get(key) ?? 0
+    perCell.set(key, idx + 1)
+    const s = defSize(it, cellW - 12, 26)
+    placements[it.id] = {
+      x: originX + (c - 1) * cellW + 6,
+      y: originY + (r - 1) * cellH + 6 + idx * 30,
+      width: Math.min(s.width, cellW - 12),
+      height: 26,
+    }
+  }
+
+  const width = originX + cols * cellW + PADX
+  const height = originY + rows * cellH + PADY
+  return {
+    placements,
+    frame: { cols, rows, cellW, cellH, originX, originY, xLabel: p['xLabel'], yLabel: p['yLabel'], xHeaders, yHeaders, cellBg, width, height },
+  }
+}
+
 /** One row of a treeGraph file-tree widget. */
 export interface TreeRow {
   id: string
   label: string
   type: string
+  /** custom icon path from the `icon` property (relative to the .gmc, or absolute) */
+  icon?: string
   children: TreeRow[]
 }
 
@@ -164,6 +312,8 @@ export interface TreeGraphLayout {
   roots: TreeRow[]
   width: number
   height: number
+  /** container-local anchor point (right edge of each row) for edges to a treeNode */
+  rowAnchors: Record<string, { x: number; y: number }>
 }
 
 export const TREE_ROW_H = 24
@@ -171,33 +321,39 @@ export const TREE_INDENT = 16
 
 /**
  * File-tree (Windows Explorer style) structure for a `treeGraph` container.
- * Builds a forest from parentId nesting of the hosted tree elements and sizes
- * the widget for the fully-expanded tree. Collapse/expand is handled live in
- * the node component, so it does not affect the computed size.
+ * Only `treeNode` elements are used: a node with children renders as a folder,
+ * a childless node as a file. Builds a forest from parentId nesting and sizes
+ * the widget for the fully-expanded tree. Collapse/expand is live-only.
  */
 export function layoutTreeGraph(model: GraphModel, containerId: string, hostedIds: Set<string>): TreeGraphLayout {
   const build = (id: string): TreeRow => {
     const el = model.elements[id]
     const kids = (el.children ?? []).filter(c => hostedIds.has(c))
-    return { id, label: el.name, type: el.type, children: kids.map(build) }
+    return { id, label: el.name, type: el.type, icon: el.properties?.['icon'], children: kids.map(build) }
   }
-  // roots = hosted elements sitting directly in the container
   const roots = [...hostedIds]
     .filter(id => model.elements[id]?.parentId === containerId)
     .map(build)
 
-  let rows = 0
+  const top = TITLE + PADY
+  const rowAnchors: Record<string, { x: number; y: number }> = {}
+  let rowIdx = 0
   let maxW = 0
   const walk = (r: TreeRow, depth: number) => {
-    rows++
-    maxW = Math.max(maxW, depth * TREE_INDENT + 30 + r.label.length * 7 + 18)
+    const y = top + rowIdx * TREE_ROW_H + TREE_ROW_H / 2
+    // anchor sits just past the end of the label (where the connect dot renders)
+    const labelEnd = depth * TREE_INDENT + 30 + r.label.length * 6.6 + 8
+    rowAnchors[r.id] = { x: labelEnd, y }
+    rowIdx++
+    maxW = Math.max(maxW, labelEnd + 16)
     r.children.forEach(c => walk(c, depth + 1))
   }
   roots.forEach(r => walk(r, 0))
 
-  const width = Math.max(200, maxW + PADX * 2)
-  const height = TITLE + PADY + Math.max(rows, 1) * TREE_ROW_H + PADY
-  return { roots, width, height }
+  const width = Math.max(200, maxW + PADX)
+  const height = TITLE + PADY + Math.max(rowIdx, 1) * TREE_ROW_H + PADY
+  for (const id of Object.keys(rowAnchors)) rowAnchors[id].x = Math.min(rowAnchors[id].x, width - 10)
+  return { roots, width, height, rowAnchors }
 }
 
 /**
@@ -208,11 +364,14 @@ export function layoutTimelineGraph(events: GraphElement[]): ChartLayout {
   const out = { ...empty(), width: 240, height: 200 } as ChartLayout
   if (events.length === 0) return out
 
-  const STEP = 180
+  // generous interior margin so cards never touch the frame edges
+  const MARGIN = 28
+  const STEP = 190
   const sizes = events.map(e => defSize(e, 150, 64))
   const maxCardH = Math.max(...sizes.map(s => s.height))
-  const spineY = TITLE + PADY + maxCardH + 46
-  const tickX = (i: number) => PADX + 60 + i * STEP
+  const spineY = TITLE + MARGIN + maxCardH + 46
+  const firstX = PADX + MARGIN + Math.max(...sizes.map(s => s.width)) / 2
+  const tickX = (i: number) => firstX + i * STEP
 
   events.forEach((e, i) => {
     const s = sizes[i]
@@ -225,9 +384,9 @@ export function layoutTimelineGraph(events: GraphElement[]): ChartLayout {
     if (date) out.frame.texts.push({ x: tickX(i), y: top ? spineY + 18 : spineY - 10, text: date, size: 10, anchor: 'middle', bold: true, color: TEXT_COLOR })
   })
 
-  const width = tickX(events.length - 1) + 60 + PADX
-  const height = spineY + 46 + maxCardH + PADY
-  out.frame.lines.push({ x1: PADX, y1: spineY, x2: width - PADX, y2: spineY, width: 2.4, color: EDGE_COLOR })
+  const width = tickX(events.length - 1) + Math.max(...sizes.map(s => s.width)) / 2 + MARGIN + PADX
+  const height = spineY + 46 + maxCardH + MARGIN
+  out.frame.lines.push({ x1: PADX + MARGIN / 2, y1: spineY, x2: width - PADX - MARGIN / 2, y2: spineY, width: 2.4, color: EDGE_COLOR })
 
   out.width = width
   out.height = height

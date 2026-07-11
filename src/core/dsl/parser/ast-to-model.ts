@@ -15,15 +15,18 @@ function inferNotation(elementType: string): NotationKind {
   ])
   const flowTypes = new Set(['start', 'end', 'process', 'decision', 'inputOutput', 'connector'])
   const useCaseTypes = new Set(['actor', 'useCase', 'systemBoundary'])
-  const treeTypes = new Set(['treeGraph', 'treeRoot', 'treeNode', 'treeLeaf'])
+  const treeTypes = new Set(['treeGraph', 'treeNode'])
   const pertTypes = new Set(['pertTask', 'pertMilestone'])
   const ganttTypes = new Set(['ganttGraph', 'ganttTask', 'ganttMilestone', 'ganttSection'])
   const sequenceTypes = new Set(['seqGraph', 'participant', 'seqActor'])
-  const mindmapTypes = new Set(['mindmapRoot', 'mindmapNode'])
+  const mindmapTypes = new Set(['mindmapGraph', 'mindmapRoot', 'mindmapNode'])
   const gitTypes = new Set(['gitGraph', 'commit', 'mergeCommit'])
   const ishikawaTypes = new Set(['problem', 'cause', 'subCause'])
   const quadrantTypes = new Set(['quadrantChart', 'quadrantItem'])
   const timelineTypes = new Set(['timelineGraph', 'timelineEvent'])
+  const umlTypes = new Set(['umlClass', 'umlInterface', 'umlEnum', 'umlNote'])
+  const erdTypes = new Set(['erdEntity'])
+  const gridTypes = new Set(['gridGraph', 'gridItem'])
 
   if (c4Types.has(elementType)) return 'c4'
   if (archiTypes.has(elementType)) return 'archimate'
@@ -39,6 +42,9 @@ function inferNotation(elementType: string): NotationKind {
   if (ishikawaTypes.has(elementType)) return 'ishikawa'
   if (quadrantTypes.has(elementType)) return 'quadrant'
   if (timelineTypes.has(elementType)) return 'timeline'
+  if (umlTypes.has(elementType)) return 'uml'
+  if (erdTypes.has(elementType)) return 'erd'
+  if (gridTypes.has(elementType)) return 'grid'
   return 'generic'
 }
 

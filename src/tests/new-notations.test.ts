@@ -17,7 +17,7 @@ function parse(src: string): GraphModel {
 
 describe('new notations: registry + parsing', () => {
   it('registers use case, tree, pert and gantt element types', () => {
-    for (const t of ['actor', 'useCase', 'systemBoundary', 'treeRoot', 'treeNode', 'treeLeaf',
+    for (const t of ['actor', 'useCase', 'systemBoundary', 'treeGraph', 'treeNode',
       'pertTask', 'pertMilestone', 'ganttTask', 'ganttMilestone', 'ganttSection']) {
       expect(notationRegistry.getElementDef(t), t).toBeTruthy()
     }
@@ -30,7 +30,7 @@ describe('new notations: registry + parsing', () => {
     const m = parse(`model {
       a = actor "User"
       u = useCase "Login"
-      r = treeRoot "Root"
+      r = treeNode "Root"
       p = pertTask "Design"
       g = ganttTask "Build"
     }`)

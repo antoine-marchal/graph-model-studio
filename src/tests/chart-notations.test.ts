@@ -218,34 +218,59 @@ describe('timeline graph container', () => {
 })
 
 describe('tree graph container (file tree)', () => {
-  it('consumes tree elements into a forest widget, not as separate nodes', () => {
+  it('consumes treeNodes into a forest widget with icon + a link-out edge', () => {
     const m = parse(`model {
       files = treeGraph "Project" {
-        root = treeRoot "app" {
+        root = treeNode "app" {
           src = treeNode "src" {
-            a = treeLeaf "App.tsx"
-            b = treeLeaf "main.tsx"
+            a = treeNode "App.tsx" { icon "icons/tsx.png" }
+            b = treeNode "main.tsx"
           }
-          readme = treeLeaf "README.md"
+          readme = treeNode "README.md"
         }
       }
+      svc = node "Service"
+      a -> svc "implements"
     }
     views { view t { include * autolayout lr } }`)
     // DSL nesting preserved
     expect(m.elements['a'].parentId).toBe('src')
     const { nodes, edges } = modelToFlow(m, view(m))
-    // only the treeGraph frame is a node; the tree elements are widget rows
+    // only the treeGraph frame + outside node are real nodes; tree rows aren't
     expect(nodes.find(n => n.id === 'files')!.data.tree).toBeTruthy()
     for (const id of ['root', 'src', 'a', 'b', 'readme']) {
       expect(nodes.find(n => n.id === id)).toBeUndefined()
     }
-    // forest structure: one root "app" with children src (2 leaves) + readme
+    // forest structure + icon carried through
     const forest = nodes.find(n => n.id === 'files')!.data.tree!
     expect(forest).toHaveLength(1)
-    expect(forest[0].label).toBe('app')
     expect(forest[0].children.map(c => c.id)).toEqual(['src', 'readme'])
-    expect(forest[0].children[0].children.map(c => c.label)).toEqual(['App.tsx', 'main.tsx'])
-    expect(edges).toHaveLength(0)
+    expect(forest[0].children[0].children[0].icon).toBe('icons/tsx.png')
+    // a -> svc is kept: redirected through a frame-edge anchor node
+    expect(nodes.find(n => n.id === '__treeanchor_a')).toBeTruthy()
+    const link = edges.find(e => e.id === Object.values(m.relations)[0].id)!
+    expect(link.source).toBe('__treeanchor_a')
+    expect(link.target).toBe('svc')
+  })
+
+  it('reorderSiblings updates children order and re-sorts the widget forest', async () => {
+    const { useModelStore } = await import('@/store')
+    const m = parse(`model {
+      files = treeGraph "P" {
+        root = treeNode "app" {
+          a = treeNode "a.ts"
+          b = treeNode "b.ts"
+          c = treeNode "c.ts"
+        }
+      }
+    } views { view t { include * } }`)
+    useModelStore.getState().loadModel(m)
+    useModelStore.getState().reorderSiblings('root', ['c', 'a', 'b'])
+    const st = useModelStore.getState()
+    expect(st.model.elements['root'].children).toEqual(['c', 'a', 'b'])
+    const { nodes } = modelToFlow(st.model, Object.values(st.model.views)[0])
+    const forest = nodes.find(n => n.id === 'files')!.data.tree!
+    expect(forest[0].children.map(c => c.id)).toEqual(['c', 'a', 'b'])
   })
 })
 

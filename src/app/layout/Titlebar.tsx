@@ -20,6 +20,7 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
   const newModel = useModelStore(s => s.newModel)
   const loadModel = useModelStore(s => s.loadModel)
   const setFileName = useModelStore(s => s.setFileName)
+  const setFilePath = useModelStore(s => s.setFilePath)
   const setDirty = useModelStore(s => s.setDirty)
   const undo = useModelStore(s => s.undo)
   const redo = useModelStore(s => s.redo)
@@ -67,8 +68,9 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
     const provider = getStorageProvider()
     const result = await provider.open()
     if (!result) return
-    const { content, name } = result
+    const { content, name, path } = result
     setFileName(name)
+    setFilePath(path ?? null)
     if (name.endsWith('.json')) {
       try { loadModel(JSON.parse(content)) } catch { alert('Invalid JSON model file') }
     } else {
@@ -82,6 +84,7 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
     if (isDirty && !confirm('Discard unsaved changes?')) return
     newModel()
     setFileName(null)
+    setFilePath(null)
   }
 
   return (

@@ -7,13 +7,13 @@ import { createDefaultView, type GraphModel, type GraphView } from '@/core/model
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
 import { GraphNodeComponent } from '@/features/editor-graph/nodes/GraphNode'
 import { GanttAxisNode } from '@/features/editor-graph/nodes/GanttAxisNode'
-import { SeqPointNode } from '@/features/editor-graph/nodes/DecorNode'
+import { SeqPointNode, TreeAnchorNode } from '@/features/editor-graph/nodes/DecorNode'
 import { FloatingEdge } from '@/features/editor-graph/edges/FloatingEdge'
 import { EdgeMarkers } from '@/features/editor-graph/edges/EdgeMarkers'
 import { getExporter } from '@/core/export'
 import { finishExport, type ExportRequest } from '@/services/tauri'
 
-const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode }
+const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
 const edgeTypes = { floating: FloatingEdge }
 
 const FORMAT_TO_EXPORTER: Record<string, string> = {

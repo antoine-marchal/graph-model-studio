@@ -66,6 +66,14 @@ function serializeRelation(rel: GraphRelation, level = 1): string {
   if (rel.sourceHandle || rel.targetHandle) {
     line += ` anchor ${rel.sourceHandle ?? '_'} ${rel.targetHandle ?? '_'}`
   }
+  // custom properties (e.g. cardinality sourceCard/targetCard) round-trip in a block
+  const props = Object.entries(rel.properties ?? {})
+  if (props.length > 0) {
+    const lines = [line + ' {']
+    for (const [k, v] of props) lines.push(`${indent(level + 1)}${k} ${quoteString(v)}`)
+    lines.push(`${i}}`)
+    return lines.join('\n')
+  }
   return line
 }
 

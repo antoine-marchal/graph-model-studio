@@ -4,8 +4,9 @@ import { notationRegistry } from '@/core/notation'
 import {
   runLayout, computeGanttChart, computePert,
   layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutTreeGraph,
+  layoutMindmapGraph, layoutGridGraph,
   type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type PertResult,
-  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow,
+  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame,
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
 
@@ -63,11 +64,13 @@ const CONTAINER_FOR: Record<string, string> = {
   participant: 'seqGraph', seqActor: 'seqGraph',
   commit: 'gitGraph', mergeCommit: 'gitGraph',
   timelineEvent: 'timelineGraph',
-  treeRoot: 'treeGraph', treeNode: 'treeGraph', treeLeaf: 'treeGraph',
+  treeNode: 'treeGraph',
+  mindmapRoot: 'mindmapGraph', mindmapNode: 'mindmapGraph',
+  gridItem: 'gridGraph',
 }
-const CHART_FRAME_TYPES = new Set(['seqGraph', 'gitGraph', 'timelineGraph'])
+const CHART_FRAME_TYPES = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'mindmapGraph'])
 // containers whose children are pre-placed by a chart layout (not the graph engine)
-const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'treeGraph'])
+const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'treeGraph', 'mindmapGraph', 'gridGraph'])
 
 interface NestedLayout {
   positions: Record<string, Position> // relative-to-parent for children, absolute for top-level
@@ -76,12 +79,16 @@ interface NestedLayout {
   ishikawa: Record<string, IshikawaFrame>
   /** per-`ganttGraph` axis frame, keyed by element id */
   ganttFrames: Record<string, GanttFrame>
-  /** per seq/git/timeline container decor frame, keyed by element id */
+  /** per seq/git/timeline/mindmap container decor frame, keyed by element id */
   chartFrames: Record<string, ChartFrame>
+  /** per-`gridGraph` matrix frame, keyed by element id */
+  gridFrames: Record<string, GridFrame>
   /** per-`treeGraph` file-tree forest, keyed by element id */
   treeRoots: Record<string, TreeRow[]>
   /** tree elements consumed by a treeGraph widget (not rendered as nodes) */
   consumed: Set<string>
+  /** container-local right-edge anchor point per treeNode (for edges to other nodes) */
+  treeAnchorOf: Record<string, { x: number; y: number }>
   /** 0..100 progress per gantt task (union across every gantt graph) */
   ganttProgress: Record<string, number>
   /** React Flow parent (the enclosing chart container) for each hosted child */
@@ -140,8 +147,10 @@ export function computeNestedLayout(
   const ishikawa: Record<string, IshikawaFrame> = {}
   const ganttFrames: Record<string, GanttFrame> = {}
   const chartFrames: Record<string, ChartFrame> = {}
+  const gridFrames: Record<string, GridFrame> = {}
   const treeRoots: Record<string, TreeRow[]> = {}
   const consumed = new Set<string>()
+  const treeAnchorOf: Record<string, { x: number; y: number }> = {}
   const seqMessagesByHost: Record<string, SeqMessage[]> = {}
   const suppressedRelations = new Set<string>()
   const stored = view.layoutPositions ?? {}
@@ -168,6 +177,7 @@ export function computeNestedLayout(
       for (const rid of Object.keys(chart.placements)) chartPlacement[rid] = chart.placements[rid]
       Object.assign(ganttProgress, chart.progress)
     } else if (CHART_FRAME_TYPES.has(el.type)) {
+      const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
       const kids = hostedChildren(el.id)
       let layout: ChartLayout
       if (el.type === 'seqGraph') {
@@ -176,12 +186,20 @@ export function computeNestedLayout(
         for (const rid of layout.suppressed) suppressedRelations.add(rid)
       } else if (el.type === 'gitGraph') {
         layout = layoutGitGraphFrame(kids)
+      } else if (el.type === 'mindmapGraph') {
+        layout = layoutMindmapGraph(model, el.id, hosted)
       } else {
         layout = layoutTimelineGraph(kids)
       }
       chartFrames[el.id] = layout.frame
       containerSize[el.id] = { width: layout.width, height: layout.height }
       for (const cid of Object.keys(layout.placements)) chartPlacement[cid] = layout.placements[cid]
+    } else if (el.type === 'gridGraph') {
+      const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
+      const gl = layoutGridGraph(model, el.id, hosted)
+      gridFrames[el.id] = gl.frame
+      containerSize[el.id] = { width: gl.frame.width, height: gl.frame.height }
+      for (const cid of Object.keys(gl.placements)) chartPlacement[cid] = gl.placements[cid]
     } else if (el.type === 'treeGraph') {
       // tree elements are consumed by the widget: they render as file-tree rows
       // inside the container, not as separate nodes, and their relations are hidden
@@ -192,13 +210,15 @@ export function computeNestedLayout(
       for (const cid of hosted) {
         consumed.add(cid)
         chartPlacement[cid] = { x: 0, y: 0, width: 0, height: 0 }
+        if (tl.rowAnchors[cid]) treeAnchorOf[cid] = tl.rowAnchors[cid]
       }
     }
   }
-  // hide relations touching consumed tree elements (their nodes don't exist)
+  // intra-tree relations (both ends consumed) carry no meaning in a file tree;
+  // a relation from a treeNode to an outside node is kept (drawn via an anchor)
   if (consumed.size) {
     for (const rel of Object.values(model.relations)) {
-      if (consumed.has(rel.sourceId) || consumed.has(rel.targetId)) suppressedRelations.add(rel.id)
+      if (consumed.has(rel.sourceId) && consumed.has(rel.targetId)) suppressedRelations.add(rel.id)
     }
   }
 
@@ -369,7 +389,7 @@ export function computeNestedLayout(
   }
 
   layoutLevel(ROOT)
-  return { positions, sizes, ishikawa, ganttFrames, chartFrames, treeRoots, consumed, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations }
+  return { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations }
 }
 
 /**
@@ -466,7 +486,14 @@ export function modelToFlow(
   settings: LayoutSettings = { engine: 'layered' },
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const visible = getVisibleElementIds(model, view)
-  const { positions, sizes, ishikawa, ganttFrames, chartFrames, treeRoots, consumed, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
+  const { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
+
+  // every treeNode gets a small connect dot at its label end so the user can
+  // drag a relation from it; existing DSL relations reuse the same anchor
+  const anchorId = (id: string) => `__treeanchor_${id}`
+  const treeEdgeSide = (endpoint: string) =>
+    consumed.has(endpoint) && treeAnchorOf[endpoint] ? anchorId(endpoint) : endpoint
+  const neededAnchors = new Set<string>(Object.keys(treeAnchorOf).filter(id => visible.has(id)))
 
   // CPM values when the view shows PERT nodes (computed over the whole model
   // so partial views still display consistent numbers)
@@ -540,10 +567,12 @@ export function modelToFlow(
         pert: pert?.nodes[id],
         progress: ganttProgress[id],
         badge: el.notation === 'gitgraph' ? el.properties?.['tag'] : undefined,
-        chartProps: el.type === 'quadrantChart' ? el.properties : undefined,
+        // pass raw properties for shapes that render them (quadrant/UML/ERD/note)
+        chartProps: el.type === 'quadrantChart' || el.notation === 'uml' || el.notation === 'erd' ? el.properties : undefined,
         ishikawa: ishikawa[id],
         ganttGraph: ganttFrames[id],
         chartFrame: chartFrames[id],
+        grid: gridFrames[id],
         tree: treeRoots[id],
       },
       ...(useParent ? { parentId: rfParent } : {}),
@@ -571,6 +600,28 @@ export function modelToFlow(
         } as unknown as GraphNode)
       }
     }
+  }
+
+  // tree anchors: invisible points on the tree frame's right edge, parented to
+  // the treeGraph so they move with it
+  for (const nodeId of neededAnchors) {
+    const host = hostOf[nodeId]
+    const a = treeAnchorOf[nodeId]
+    if (!host || !a) continue
+    nodes.push({
+      id: anchorId(nodeId),
+      type: 'treeAnchor',
+      parentId: host,
+      position: { x: a.x, y: a.y - 5 },
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      connectable: true,
+      zIndex: 1200,
+      width: 10,
+      height: 10,
+      data: {},
+    } as unknown as GraphNode)
   }
 
   // nearest visible ancestor-or-self (undefined if the whole chain is hidden)
@@ -614,14 +665,19 @@ export function modelToFlow(
       let label = rel.label
       if (!label && (rel.type === 'include' || rel.type === 'extend')) label = `«${rel.type}»`
       const critical = pert?.criticalRelations.has(rel.id) ?? false
+      // a consumed treeNode endpoint is redirected to its frame-edge anchor
+      const eSource = treeEdgeSide(rel.sourceId)
+      const eTarget = treeEdgeSide(rel.targetId)
+      // if a tree endpoint has no anchor (not linked out / collapsed away), skip
+      if ((consumed.has(rel.sourceId) && eSource === rel.sourceId) || (consumed.has(rel.targetId) && eTarget === rel.targetId)) continue
       edges.push({
         id: rel.id,
-        source: rel.sourceId,
-        target: rel.targetId,
+        source: eSource,
+        target: eTarget,
         type: 'floating',
-        sourceHandle: rel.sourceHandle,
-        targetHandle: rel.targetHandle,
-        data: { label },
+        sourceHandle: consumed.has(rel.sourceId) ? undefined : rel.sourceHandle,
+        targetHandle: consumed.has(rel.targetId) ? undefined : rel.targetHandle,
+        data: { label, sourceLabel: rel.properties?.['sourceCard'], targetLabel: rel.properties?.['targetCard'] },
         markerStart: markerStart || undefined,
         markerEnd: markerEnd || undefined,
         style: {

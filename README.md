@@ -33,10 +33,17 @@ either side; they stay in sync. One model, many views, fifteen notations.
   (`timelineGraph`) are container frames that embed their nodes and draw their
   own decor (lifelines, lanes, axis, spine); drag the frame and the whole chart
   moves. Ishikawa nests `problem → cause → subCause`, quadrant charts plot items
-  from `x`/`y`, and a `treeGraph` renders a collapsible Windows-Explorer file
-  tree. Chart-specific fields (start/duration/progress, date, branch/tag, PERT
-  duration, quadrant axis labels & item x/y) are editable from the properties
-  panel.
+  from `x`/`y`, a `mindmapGraph` lays a mind map out radially, and a `treeGraph`
+  renders a collapsible Windows-Explorer file tree (`treeNode`s only; per-node
+  `icon` paths; drag a row to reorder or embed; drag from a row's connect dot to
+  link a file to any node). Reorder chart children by dragging, or drop grid
+  items into cells.
+- **UML, ERD and matrix diagrams** — `umlClass`/`umlInterface`/`umlEnum` with
+  attribute/method compartments and cardinality on relations; `erdEntity` with
+  keyed (PK/FK) attribute rows and crow's-foot relations; and a `gridGraph`
+  N×M matrix (e.g. a 5×5 AMDEC) with labelled headers, fixed cell colours and
+  drag-into-cell items. Chart-specific fields are all editable from the
+  properties panel.
 - **PERT charts with critical path** — give tasks a `duration "5"` property and
   connect them with `: dependsOn`; ES/EF, LS/LF and slack are computed per node
   and the critical path is highlighted in red.

@@ -1,10 +1,12 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
-import type { PertNodeValues, ChartFrame, TreeRow } from '@/core/layout'
+import type { PertNodeValues, ChartFrame, TreeRow, GridFrame } from '@/core/layout'
 import { GANTT_AXIS_H } from '@/core/layout'
 import type { IshikawaFrame, GanttFrame } from '../model-to-flow'
 import { TreeGraphView } from './TreeGraphView'
+import { GridGraphView } from './GridGraphView'
+import { UmlClassBody, ErdEntityBody, NoteBody } from './UmlErdBodies'
 import { NodeIcon } from './NodeIcons'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
@@ -42,6 +44,8 @@ export interface GraphNodeData extends Record<string, unknown> {
   chartFrame?: ChartFrame
   /** file-tree forest when this node is a `treeGraph` container */
   tree?: TreeRow[]
+  /** matrix frame when this node is a `gridGraph` container */
+  grid?: GridFrame
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -142,8 +146,39 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
 
   let body: JSX.Element
 
-  // ── Tree graph: movable file-explorer widget (collapsible rows) ──
-  if (shape === 'treeGraph') {
+  // ── UML class / interface / enum (compartmented box) ──
+  if (shape === 'umlClass') {
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-sm', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <UmlClassBody label={d.label} elementType={d.elementType} props={d.chartProps ?? {}} stroke={stroke} text={text} />
+      </div>
+    )
+  } else if (shape === 'erdEntity') {
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-sm', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <ErdEntityBody label={d.label} props={d.chartProps ?? {}} stroke={stroke} text={text} accent={accent} />
+      </div>
+    )
+  } else if (shape === 'note') {
+    body = (
+      <div className={cn('relative h-full w-full', ring && 'rounded ' + ring)}>
+        <Handles stroke={stroke} />
+        <NoteBody label={d.label} fill={fill} stroke={stroke} text={text} width={width} height={height} />
+      </div>
+    )
+  } else if (shape === 'gridGraph') {
+    body = (
+      <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <div className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide" style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}>
+          <span className="truncate">{d.label}</span>
+        </div>
+        {d.grid && <GridGraphView frame={d.grid} stroke={stroke} text={text} accent={accent} />}
+      </div>
+    )
+  } else if (shape === 'treeGraph') {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />

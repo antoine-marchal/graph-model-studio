@@ -17,6 +17,9 @@ export const NotationKindSchema = z.enum([
   'ishikawa',
   'quadrant',
   'timeline',
+  'uml',
+  'erd',
+  'grid',
   'generic',
 ])
 export type NotationKind = z.infer<typeof NotationKindSchema>
@@ -68,7 +71,7 @@ export const FlowchartElementTypes = [
 
 export const UseCaseElementTypes = ['actor', 'useCase', 'systemBoundary'] as const
 
-export const TreeElementTypes = ['treeGraph', 'treeRoot', 'treeNode', 'treeLeaf'] as const
+export const TreeElementTypes = ['treeGraph', 'treeNode'] as const
 
 export const PertElementTypes = ['pertTask', 'pertMilestone'] as const
 
@@ -76,7 +79,13 @@ export const GanttElementTypes = ['ganttGraph', 'ganttTask', 'ganttMilestone', '
 
 export const SequenceElementTypes = ['seqGraph', 'participant', 'seqActor'] as const
 
-export const MindmapElementTypes = ['mindmapRoot', 'mindmapNode'] as const
+export const MindmapElementTypes = ['mindmapGraph', 'mindmapRoot', 'mindmapNode'] as const
+
+export const UmlElementTypes = ['umlClass', 'umlInterface', 'umlEnum', 'umlNote'] as const
+
+export const ErdElementTypes = ['erdEntity'] as const
+
+export const GridElementTypes = ['gridGraph', 'gridItem'] as const
 
 export const GitGraphElementTypes = ['gitGraph', 'commit', 'mergeCommit'] as const
 
@@ -102,6 +111,9 @@ export type GitGraphElementType = (typeof GitGraphElementTypes)[number]
 export type IshikawaElementType = (typeof IshikawaElementTypes)[number]
 export type QuadrantElementType = (typeof QuadrantElementTypes)[number]
 export type TimelineElementType = (typeof TimelineElementTypes)[number]
+export type UmlElementType = (typeof UmlElementTypes)[number]
+export type ErdElementType = (typeof ErdElementTypes)[number]
+export type GridElementType = (typeof GridElementTypes)[number]
 export type GenericElementType = (typeof GenericElementTypes)[number]
 
 export type ElementType =
@@ -119,6 +131,9 @@ export type ElementType =
   | IshikawaElementType
   | QuadrantElementType
   | TimelineElementType
+  | UmlElementType
+  | ErdElementType
+  | GridElementType
   | GenericElementType
 
 // ─── Relation types ──────────────────────────────────────────────────────────
@@ -146,6 +161,11 @@ export type RelationType =
   | 'message'
   | 'asyncMessage'
   | 'replyMessage'
+  | 'dependency'
+  | 'erdOneToOne'
+  | 'erdOneToMany'
+  | 'erdManyToMany'
+  | 'erdZeroToMany'
 
 // ─── Layout ──────────────────────────────────────────────────────────────────
 

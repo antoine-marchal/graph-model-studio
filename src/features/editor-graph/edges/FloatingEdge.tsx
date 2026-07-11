@@ -303,11 +303,24 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     })
   }
 
-  const label = (data as { label?: string } | undefined)?.label
+  const d2 = data as { label?: string; sourceLabel?: string; targetLabel?: string } | undefined
+  const label = d2?.label
+  // multiplicity labels sit just inside each endpoint (UML/ERD cardinality)
+  const endLabel = (txt: string, x: number, y: number, key: string) => (
+    <EdgeLabelRenderer key={key}>
+      <div
+        className="nodrag nopan absolute rounded px-1 text-[10px] font-semibold"
+        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, background: 'var(--surface-1)', color: 'var(--edge-label)', pointerEvents: 'none', zIndex: 1001 }}
+      >{txt}</div>
+    </EdgeLabelRenderer>
+  )
+  const lerp = (a: number, b: number) => a + (b - a) * 0.16
 
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={style} />
+      {d2?.sourceLabel && endLabel(d2.sourceLabel, lerp(sx, tx), lerp(sy, ty) - 8, 'sc')}
+      {d2?.targetLabel && endLabel(d2.targetLabel, lerp(tx, sx), lerp(ty, sy) - 8, 'tc')}
       {label && (
         <EdgeLabelRenderer>
           <div

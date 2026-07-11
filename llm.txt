@@ -149,7 +149,7 @@ but always write one explicitly.
 
 ## 5. Notations
 
-Fifteen notations coexist in one model; the notation of each element is
+Eighteen notations coexist in one model; the notation of each element is
 inferred from its type. Mixing is allowed (e.g. a C4 `person` next to BPMN
 tasks), but a coherent diagram usually sticks to one notation family. Pick by
 intent:
@@ -168,6 +168,9 @@ intent:
 - **Ishikawa** — fishbone / cause-and-effect diagrams.
 - **Quadrant** — 2×2 priority matrices with items plotted by x/y.
 - **Timeline** — milestones on a horizontal time spine.
+- **UML Class** — classes with attributes/methods and cardinality relations.
+- **ERD** — entities with keyed attributes and crow's-foot relations.
+- **Grid / Matrix** — an N×M table (e.g. a 5×5 AMDEC) with items in cells.
 - **Generic** — anything else: `node`, `group`, `external`.
 
 Sequence, git graph, ishikawa, quadrant and timeline are **chart notations**
@@ -221,19 +224,25 @@ for nesting, though any element may hold children.
 nest use cases inside it, keep actors outside)
 
 ### Tree
-Two ways to draw a hierarchy:
-- **Graph tree** — `treeRoot`, `treeNode`, `treeLeaf` linked with `: branch`,
-  `autolayout tb` for a top-down box-and-line tree.
-- **File tree** — wrap the tree elements in a `treeGraph` container and **nest**
-  them by body (no relations). The container renders a movable Windows-Explorer
-  style widget with folder/file icons and click-to-collapse/expand rows. Nodes
-  with children are folders; `treeLeaf` (or any childless node) is a file.
+`treeGraph` (the movable frame) with **`treeNode`** children — the only tree
+element type. Nest treeNodes by body to build the hierarchy (no relations). The
+frame renders a Windows-Explorer file tree with click-to-collapse/expand rows.
+A treeNode with children is a folder, a childless one is a file. Interactions:
+drag a row onto another to reorder (top/bottom of the row) or embed inside it
+(middle); each row shows a small connect dot at its label end — drag from it to
+another node to create a relation. Extra treeNode properties:
+- `icon "path"` — custom row icon; `path` is absolute, an `http(s)://`/`data:`
+  URL, or relative to the open `.gmc` file's folder.
+- A treeNode may also be the endpoint of a normal relation to an outside node
+  (`fileNode -> service "implements"`); the edge leaves the frame at that row.
 
 ```text
 treeGraph "Project" {
-  treeRoot "my-app" {
-    src = treeNode "src" { treeLeaf "App.tsx" }
-    treeLeaf "package.json"
+  root = treeNode "my-app" {
+    src = treeNode "src" {
+      app = treeNode "App.tsx" { icon "icons/react.png" }
+    }
+    treeNode "package.json"
   }
 }
 ```
@@ -275,8 +284,19 @@ arrow), `: replyMessage` (dashed). The frame draws lifelines and ordered arrows
 automatically. Use one `seqGraph` per diagram.
 
 ### Mindmap
-`mindmapRoot` (the central idea — exactly one), `mindmapNode`. Link with
-`: branch` and use `autolayout lr`.
+`mindmapGraph` (the movable frame) with a single `mindmapRoot` nested inside,
+and `mindmapNode`s **nested** under it (no relations). The frame auto-lays the
+tree radially — root at the centre, branches radiating outward on rings by
+depth — and draws the connectors. Use one `mindmapGraph` per map.
+
+```text
+mindmapGraph "Vision" {
+  mindmapRoot "Product" {
+    ux = mindmapNode "Better UX" { mindmapNode "Onboarding" }
+    mindmapNode "Performance"
+  }
+}
+```
 
 ### Git graph
 `gitGraph` (the movable frame), `commit`, `mergeCommit`. Every commit **must be
@@ -315,6 +335,45 @@ in declaration order, alternating above/below the spine. An optional
 `date "2023-06"` property is printed on the spine. No relations needed. Use one
 `timelineGraph` per timeline.
 
+### UML Class
+`umlClass`, `umlInterface`, `umlEnum` render as compartmented boxes;
+`umlNote` is a folded-corner note. Body properties fill the compartments:
+- `attributes "- id: int; - name: string"` — `;`-separated attribute lines.
+- `methods "+ login(): bool"` — `;`-separated method lines (use `values` for
+  `umlEnum`).
+Relations use the ArchiMate-style types (`composition`, `aggregation`,
+`realization`, `specialization` = generalization, `association`) plus
+`dependency` (dashed). Add multiplicities with relation properties
+`sourceCard "1"` / `targetCard "0..*"` — they print next to each endpoint.
+
+```text
+umlClass "User" {
+  attributes "- id: int; - name: string"
+  methods "+ login(): bool"
+}
+```
+
+### ERD
+`erdEntity` — a table with a title and attribute rows. `attributes` is a
+`;`-separated list; end a line with `PK` or `FK` to badge it
+(`id: int PK; userId: int FK`). Crow's-foot relations: `erdOneToOne`,
+`erdOneToMany`, `erdManyToMany`, `erdZeroToMany`.
+
+### Grid / Matrix (AMDEC)
+`gridGraph` (the movable frame) with `gridItem` children. Frame properties:
+`cols`, `rows`, `xLabel`/`yLabel` (axis titles), `xHeaders`/`yHeaders`
+(`;`-separated header labels), `cellBg "5,5=#e53935; 1,1=#43a047"` (fixed
+per-cell background, `row,col=#hex`). Each `gridItem` carries `row`/`col`
+(1-based) and stacks in that cell; drag an item to move it between cells.
+
+```text
+gridGraph "AMDEC" {
+  cols "5"  rows "5"  xLabel "Severity"  yLabel "Occurrence"
+  cellBg "1,5=#e53935; 5,1=#43a047"
+  gridItem "Seal leak" { row "1" col "5" }
+}
+```
+
 ### Generic
 `node`, `group` (container), `external`
 
@@ -347,6 +406,11 @@ Unknown types do not error but render as generic nodes — stick to this list.
 | `message` | Sequence | solid + filled arrow |
 | `asyncMessage` | Sequence | solid + open arrow |
 | `replyMessage` | Sequence | dashed + open arrow |
+| `dependency` | UML | dashed + open arrow |
+| `erdOneToOne` | ERD | crow's foot: one — one |
+| `erdOneToMany` | ERD | crow's foot: one — many |
+| `erdManyToMany` | ERD | crow's foot: many — many |
+| `erdZeroToMany` | ERD | crow's foot: one — zero-or-many |
 
 Use `sequenceFlow` between BPMN nodes, `flowArrow` between flowchart nodes,
 the ArchiMate types between ArchiMate elements, `include`/`extend`/
@@ -509,27 +573,23 @@ views {
 }
 ```
 
-### Tree structure
+### Tree structure (file tree)
 
 ```text
 model {
-  ceo  = treeRoot "CEO"
-  cto  = treeNode "CTO"
-  cfo  = treeNode "CFO"
-  dev1 = treeLeaf "Platform Team"
-  dev2 = treeLeaf "Product Team"
-
-  ceo -> cto : branch
-  ceo -> cfo : branch
-  cto -> dev1 : branch
-  cto -> dev2 : branch
+  org = treeGraph "Org" {
+    ceo = treeNode "CEO" {
+      cto = treeNode "CTO" {
+        treeNode "Platform Team"
+        treeNode "Product Team"
+      }
+      treeNode "CFO"
+    }
+  }
 }
 
 views {
-  view org "Org Chart" {
-    include *
-    autolayout tb
-  }
+  view org "Org Chart" { include * autolayout lr }
 }
 ```
 

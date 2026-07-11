@@ -13,3 +13,18 @@ export const SeqPointNode = memo(() => (
 ))
 
 SeqPointNode.displayName = 'SeqPointNode'
+
+/** Visible connect dot at a treeNode row's label end — drag from it to draw a
+ *  relation to another node; also serves as the endpoint of existing edges. */
+export const TreeAnchorNode = memo(() => (
+  <div
+    className="rounded-full border transition-opacity"
+    style={{ width: 9, height: 9, background: 'var(--surface-1)', borderColor: 'var(--accent)', borderWidth: 1.5, opacity: 0.55, cursor: 'crosshair' }}
+    title="Drag to link this file to another node"
+  >
+    <Handle type="source" position={Position.Right} style={{ opacity: 0, inset: 0, width: '100%', height: '100%', transform: 'none', border: 'none' }} />
+    <Handle type="target" position={Position.Left} style={{ opacity: 0, inset: 0, width: '100%', height: '100%', transform: 'none', border: 'none' }} />
+  </div>
+))
+
+TreeAnchorNode.displayName = 'TreeAnchorNode'

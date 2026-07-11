@@ -28,7 +28,7 @@ import {
 } from './model-to-flow'
 import { GraphNodeComponent } from './nodes/GraphNode'
 import { GanttAxisNode } from './nodes/GanttAxisNode'
-import { SeqPointNode } from './nodes/DecorNode'
+import { SeqPointNode, TreeAnchorNode } from './nodes/DecorNode'
 import { FloatingEdge } from './edges/FloatingEdge'
 import { EdgeMarkers } from './edges/EdgeMarkers'
 import { Button } from '@/ui/components/Button'
@@ -38,7 +38,14 @@ import { runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layou
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 
-const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode }
+const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
+
+// chart-container children reorder along one axis on drag (horizontal charts by
+// x, gantt rows by y) rather than moving freely on the canvas
+const CHART_CHILD_AXIS: Record<string, 'x' | 'y' | undefined> = {
+  participant: 'x', seqActor: 'x', commit: 'x', mergeCommit: 'x', timelineEvent: 'x',
+  ganttTask: 'y', ganttMilestone: 'y', ganttSection: 'y',
+}
 const edgeTypes = { floating: FloatingEdge }
 
 /** Decode a "data:image/png;base64,…" URL into raw bytes. */
@@ -86,6 +93,7 @@ function GraphEditorInner() {
   const edgeRouting = useModelStore(s => s.edgeRouting)
   const toggleEdgeRouting = useModelStore(s => s.toggleEdgeRouting)
   const addElementsToView = useModelStore(s => s.addElementsToView)
+  const reorderSiblings = useModelStore(s => s.reorderSiblings)
 
   const { screenToFlowPosition, fitView, getIntersectingNodes } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -124,11 +132,17 @@ function GraphEditorInner() {
   }, [])
 
   const onConnect = useCallback((c: Connection) => {
-    if (!c.source || !c.target || c.source === c.target) return
-    const id = `rel_${c.source}_${c.target}_${nanoid(4)}`
-    const sh = (c.sourceHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
-    const th = (c.targetHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
-    dispatch({ type: 'ADD_RELATION', payload: { id, sourceId: c.source, targetId: c.target, notation: 'generic', sourceHandle: sh, targetHandle: th } })
+    // a connection from a treeNode's dot carries the anchor id — map back to the
+    // real treeNode so the relation is stored against it
+    const unanchor = (v: string | null | undefined) => (v && v.startsWith('__treeanchor_') ? v.slice('__treeanchor_'.length) : v)
+    const source = unanchor(c.source)
+    const target = unanchor(c.target)
+    if (!source || !target || source === target) return
+    const anchored = source !== c.source || target !== c.target
+    const id = `rel_${source}_${target}_${nanoid(4)}`
+    const sh = (anchored ? undefined : c.sourceHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
+    const th = (anchored ? undefined : c.targetHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
+    dispatch({ type: 'ADD_RELATION', payload: { id, sourceId: source, targetId: target, notation: 'generic', sourceHandle: sh, targetHandle: th } })
   }, [dispatch])
 
   // ── selection → highlight code (no focus) ──
@@ -166,11 +180,36 @@ function GraphEditorInner() {
     for (const e of deleted) dispatch({ type: 'DELETE_RELATION', payload: { id: e.id } })
   }, [dispatch])
 
-  // ── drag commit + drop-to-reparent ──
+  // ── drag commit + drop-to-reparent + drag-to-sort ──
   const onNodeDragStop = useCallback(
     (_: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
       if (dragged.length === 1) {
         const el = model.elements[node.id]
+        // gridItem dropped into the matrix → snap to the cell under it (row/col)
+        if (el?.type === 'gridItem') {
+          const parent = nodes.find(n => n.id === node.parentId)
+          const gf = (parent?.data as { grid?: { cols: number; rows: number; cellW: number; cellH: number; originX: number; originY: number } })?.grid
+          if (gf) {
+            const cx = node.position.x + (node.width ?? 0) / 2
+            const cy = node.position.y + (node.height ?? 0) / 2
+            const col = Math.min(gf.cols, Math.max(1, Math.floor((cx - gf.originX) / gf.cellW) + 1))
+            const row = Math.min(gf.rows, Math.max(1, Math.floor((cy - gf.originY) / gf.cellH) + 1))
+            const props = { ...el.properties, row: String(row), col: String(col) }
+            dispatch({ type: 'UPDATE_ELEMENT', payload: { id: node.id, properties: props } })
+            return
+          }
+        }
+        // chart children (gantt/seq/git/timeline rows) reorder among their model
+        // siblings by drop position instead of moving freely
+        const axis = el ? CHART_CHILD_AXIS[el.type] : undefined
+        if (axis && el?.parentId) {
+          const sibs = Object.values(model.elements).filter(e => e.parentId === el.parentId && CHART_CHILD_AXIS[e.type])
+          const live = new Map(nodes.map(n => [n.id, n.position]))
+          const coord = (id: string) => (id === node.id ? node.position : live.get(id))?.[axis] ?? 0
+          const ordered = sibs.map(e => e.id).sort((a, b) => coord(a) - coord(b))
+          reorderSiblings(el.parentId, ordered)
+          return
+        }
         const desc = descendantIds(model, node.id)
         // any overlapping model node (not self / not a descendant / not synthetic) can become the new parent
         const inter = (getIntersectingNodes(node) as Node[])
@@ -191,7 +230,7 @@ function GraphEditorInner() {
       for (const n of dragged) positions[n.id] = n.position
       if (Object.keys(positions).length) dispatch({ type: 'APPLY_LAYOUT', payload: { viewId, positions } })
     },
-    [dispatch, viewId, model, getIntersectingNodes],
+    [dispatch, viewId, model, getIntersectingNodes, nodes, reorderSiblings],
   )
 
   // ── add node ──

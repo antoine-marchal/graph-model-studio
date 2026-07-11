@@ -53,7 +53,7 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
 }
 
 /** Custom-property fields shown per element type, grouped under a labelled box. */
-interface PropFieldSpec { key: string; label: string; placeholder: string }
+interface PropFieldSpec { key: string; label: string; placeholder: string; multiline?: boolean }
 const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[] }> = {
   ganttTask: { group: 'Schedule', fields: [
     { key: 'start', label: 'Start (YYYY-MM-DD)', placeholder: 'e.g. 2026-08-03' },
@@ -89,14 +89,44 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
     { key: 'x', label: 'X (0 left → 1 right)', placeholder: 'e.g. 0.8' },
     { key: 'y', label: 'Y (0 bottom → 1 top)', placeholder: 'e.g. 0.6' },
   ] },
+  umlClass: { group: 'UML Class', fields: [
+    { key: 'attributes', label: 'Attributes (; separated)', placeholder: '- id: int; - name: string', multiline: true },
+    { key: 'methods', label: 'Methods (; separated)', placeholder: '+ login(): void', multiline: true },
+  ] },
+  umlInterface: { group: 'UML Interface', fields: [
+    { key: 'attributes', label: 'Attributes (; separated)', placeholder: '', multiline: true },
+    { key: 'methods', label: 'Methods (; separated)', placeholder: '+ save(): void', multiline: true },
+  ] },
+  umlEnum: { group: 'UML Enum', fields: [
+    { key: 'values', label: 'Values (; separated)', placeholder: 'ACTIVE; INACTIVE', multiline: true },
+  ] },
+  erdEntity: { group: 'ERD Entity', fields: [
+    { key: 'attributes', label: 'Attributes (; separated, end PK/FK)', placeholder: 'id: int PK; email: string', multiline: true },
+  ] },
+  gridGraph: { group: 'Matrix', fields: [
+    { key: 'cols', label: 'Columns', placeholder: '5' },
+    { key: 'rows', label: 'Rows', placeholder: '5' },
+    { key: 'xLabel', label: 'X axis title', placeholder: 'Severity' },
+    { key: 'yLabel', label: 'Y axis title', placeholder: 'Occurrence' },
+    { key: 'xHeaders', label: 'Column headers (;)', placeholder: '1; 2; 3; 4; 5' },
+    { key: 'yHeaders', label: 'Row headers (;)', placeholder: '1; 2; 3; 4; 5' },
+    { key: 'cellBg', label: 'Cell colours (r,c=#hex;)', placeholder: '5,5=#e53935; 1,1=#43a047', multiline: true },
+  ] },
+  gridItem: { group: 'Cell (1-based)', fields: [
+    { key: 'row', label: 'Row', placeholder: '1' },
+    { key: 'col', label: 'Column', placeholder: '1' },
+  ] },
 }
 
 /** One live-committed custom-property input (own hooks so the field list can vary). */
-function PropField({ value, placeholder, label, onCommit }: { value: string; placeholder: string; label: string; onCommit: (v: string) => void }) {
+function PropField({ value, placeholder, label, multiline, onCommit }: { value: string; placeholder: string; label: string; multiline?: boolean; onCommit: (v: string) => void }) {
   const [v, onChange, flush] = useLiveField(value, onCommit)
   return (
     <FieldRow label={label}>
-      <Input value={v} onChange={e => onChange(e.target.value)} onBlur={flush} placeholder={placeholder} />
+      {multiline
+        ? <textarea value={v} onChange={e => onChange(e.target.value)} onBlur={flush} rows={3} placeholder={placeholder}
+            className="w-full resize-none rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 font-mono text-[11px] text-[var(--fg)] placeholder-[var(--fg-subtle)] focus:border-[var(--accent)] focus:outline-none" />
+        : <Input value={v} onChange={e => onChange(e.target.value)} onBlur={flush} placeholder={placeholder} />}
     </FieldRow>
   )
 }
@@ -212,6 +242,7 @@ function ElementProperties({ elementId }: { elementId: string }) {
               key={f.key}
               label={f.label}
               placeholder={f.placeholder}
+              multiline={f.multiline}
               value={properties?.[f.key] ?? ''}
               onCommit={v => setProp(f.key, v)}
             />
@@ -234,6 +265,14 @@ function RelationProperties({ relationId }: { relationId: string }) {
   const commitLabel = useCallback((v: string) => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, label: v || undefined } }), [dispatch, relationId])
   const [label, onLabel, flushLabel] = useLiveField(relation?.label ?? '', commitLabel)
 
+  const relProps = relation?.properties
+  const setRelProp = useCallback((key: string, v: string) => {
+    const props = { ...(relProps ?? {}) }
+    const t = v.trim()
+    if (t) props[key] = t; else delete props[key]
+    dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, properties: props } })
+  }, [dispatch, relationId, relProps])
+
   if (!relation) return null
   const src = elements[relation.sourceId]?.name ?? relation.sourceId
   const tgt = elements[relation.targetId]?.name ?? relation.targetId
@@ -250,6 +289,11 @@ function RelationProperties({ relationId }: { relationId: string }) {
       <FieldRow label="Label">
         <Input value={label} onChange={e => onLabel(e.target.value)} onBlur={flushLabel} placeholder="Optional label" />
       </FieldRow>
+
+      <div className="grid grid-cols-2 gap-2">
+        <PropField label="Source multiplicity" placeholder="1" value={relation.properties?.['sourceCard'] ?? ''} onCommit={v => setRelProp('sourceCard', v)} />
+        <PropField label="Target multiplicity" placeholder="0..*" value={relation.properties?.['targetCard'] ?? ''} onCommit={v => setRelProp('targetCard', v)} />
+      </div>
 
       <FieldRow label="Type">
         <Select value={relation.type} onChange={e => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, type: e.target.value } })}>

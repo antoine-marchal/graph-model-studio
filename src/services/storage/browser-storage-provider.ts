@@ -13,7 +13,7 @@ export class BrowserStorageProvider implements StorageProvider {
   // CLI/file-association launches only happen under Tauri anyway.
   setCurrentPath(_path: string): void { /* no-op */ }
 
-  async open(): Promise<{ content: string; name: string } | null> {
+  async open(): Promise<{ content: string; name: string; path?: string } | null> {
     // Try File System Access API
     if ('showOpenFilePicker' in window) {
       try {

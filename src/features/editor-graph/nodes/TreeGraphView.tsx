@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import type { TreeRow } from '@/core/layout'
 import { TREE_ROW_H, TREE_INDENT } from '@/core/layout'
+import { useModelStore } from '@/store'
 
 function FolderIcon({ open, color }: { open: boolean; color: string }) {
   return (
@@ -21,13 +22,36 @@ function FileIcon({ color }: { color: string }) {
   )
 }
 
-function Rows({ nodes, depth, collapsed, toggle, accent, text }: {
+/** Resolve a treeNode `icon` path: http(s)/data/blob as-is; anything else is
+ *  treated as a file path — absolute, or relative to the open .gmc's folder —
+ *  and converted to an asset URL the webview can load (Tauri). */
+function useIconResolver(): (icon: string) => string {
+  const filePath = useModelStore(s => s.filePath)
+  return useMemo(() => {
+    const dir = filePath ? filePath.replace(/[/\\][^/\\]*$/, '') : ''
+    const sep = filePath && filePath.includes('\\') ? '\\' : '/'
+    const isAbs = (p: string) => /^(https?:|data:|blob:|file:|asset:)/i.test(p) || /^([a-zA-Z]:[\\/]|[/\\])/.test(p)
+    const toAsset = (abs: string): string => {
+      if (/^(https?:|data:|blob:)/i.test(abs)) return abs
+      const w = window as unknown as { __TAURI__?: { core?: { convertFileSrc?: (p: string) => string } } }
+      const conv = w.__TAURI__?.core?.convertFileSrc
+      try { return conv ? conv(abs) : abs } catch { return abs }
+    }
+    return (icon: string) => toAsset(isAbs(icon) ? icon : (dir ? dir + sep + icon : icon))
+  }, [filePath])
+}
+
+const DND_MIME = 'application/gms-tree-id'
+
+function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRow }: {
   nodes: TreeRow[]
   depth: number
   collapsed: Set<string>
   toggle: (id: string) => void
   accent: string
   text: string
+  resolve: (icon: string) => string
+  onDropRow: (draggedId: string, targetId: string, frac: number) => void
 }) {
   return (
     <>
@@ -37,19 +61,31 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text }: {
         return (
           <div key={n.id}>
             <div
-              className="flex items-center gap-1 rounded-sm px-1 hover:bg-[var(--surface-2)]"
+              className="flex cursor-grab items-center gap-1 rounded-sm px-1 hover:bg-[var(--surface-2)]"
               style={{ height: TREE_ROW_H, paddingLeft: 4 + depth * TREE_INDENT }}
+              draggable
               onClick={e => { if (has) { e.stopPropagation(); toggle(n.id) } }}
+              onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData(DND_MIME, n.id); e.dataTransfer.effectAllowed = 'move' }}
+              onDragOver={e => { if (e.dataTransfer.types.includes(DND_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
+              onDrop={e => {
+                const id = e.dataTransfer.getData(DND_MIME)
+                if (!id) return
+                e.preventDefault(); e.stopPropagation()
+                const rect = e.currentTarget.getBoundingClientRect()
+                onDropRow(id, n.id, (e.clientY - rect.top) / Math.max(1, rect.height))
+              }}
               role={has ? 'button' : undefined}
             >
               <span className="flex w-3 shrink-0 justify-center text-[9px]" style={{ color: text }}>
                 {has ? (isCol ? '▸' : '▾') : ''}
               </span>
-              {has ? <FolderIcon open={!isCol} color={accent} /> : <FileIcon color={accent} />}
+              {n.icon
+                ? <img src={resolve(n.icon)} alt="" width={14} height={14} draggable={false} className="shrink-0 object-contain" />
+                : has ? <FolderIcon open={!isCol} color={accent} /> : <FileIcon color={accent} />}
               <span className="truncate text-[12px]" style={{ color: text }}>{n.label}</span>
             </div>
             {has && !isCol && (
-              <Rows nodes={n.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} accent={accent} text={text} />
+              <Rows nodes={n.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} accent={accent} text={text} resolve={resolve} onDropRow={onDropRow} />
             )}
           </div>
         )
@@ -61,6 +97,10 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text }: {
 /** Windows-Explorer-style collapsible file tree rendered inside a treeGraph. */
 export function TreeGraphView({ roots, accent, text }: { roots: TreeRow[]; accent: string; text: string }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const resolve = useIconResolver()
+  const elements = useModelStore(s => s.model.elements)
+  const reorderSiblings = useModelStore(s => s.reorderSiblings)
+  const dispatch = useModelStore(s => s.dispatch)
   const toggle = useCallback((id: string) => {
     setCollapsed(s => {
       const n = new Set(s)
@@ -68,9 +108,34 @@ export function TreeGraphView({ roots, accent, text }: { roots: TreeRow[]; accen
       return n
     })
   }, [])
+  // top/bottom 30% of a row reorders around it; the middle embeds into it. A
+  // node can't be dropped into its own descendant.
+  const isDescendant = useCallback((maybeAncestor: string, id: string): boolean => {
+    let p = elements[id]?.parentId
+    while (p) { if (p === maybeAncestor) return true; p = elements[p]?.parentId }
+    return false
+  }, [elements])
+  const onDropRow = useCallback((draggedId: string, targetId: string, frac: number) => {
+    if (draggedId === targetId || isDescendant(draggedId, targetId)) return
+    if (frac >= 0.3 && frac <= 0.7) {
+      // embed as a child of target (reparent)
+      if (elements[draggedId]?.parentId !== targetId) dispatch({ type: 'UPDATE_ELEMENT', payload: { id: draggedId, parentId: targetId } })
+      return
+    }
+    // reorder within the target's parent (before/after)
+    const dp = elements[targetId]?.parentId
+    if (!dp) return
+    if (elements[draggedId]?.parentId !== dp) { dispatch({ type: 'UPDATE_ELEMENT', payload: { id: draggedId, parentId: dp } }); return }
+    const kids = elements[dp].children.filter(id => id !== draggedId)
+    let at = kids.indexOf(targetId)
+    if (at < 0) return
+    if (frac > 0.7) at += 1
+    kids.splice(at, 0, draggedId)
+    reorderSiblings(dp, kids)
+  }, [elements, reorderSiblings, dispatch, isDescendant])
   return (
     <div className="nodrag nowheel h-full w-full overflow-auto py-1">
-      <Rows nodes={roots} depth={0} collapsed={collapsed} toggle={toggle} accent={accent} text={text} />
+      <Rows nodes={roots} depth={0} collapsed={collapsed} toggle={toggle} accent={accent} text={text} resolve={resolve} onDropRow={onDropRow} />
     </div>
   )
 }
