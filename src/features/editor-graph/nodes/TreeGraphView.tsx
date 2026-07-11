@@ -53,18 +53,27 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRo
   resolve: (icon: string) => string
   onDropRow: (draggedId: string, targetId: string, frac: number) => void
 }) {
+  const selectedIds = useModelStore(s => s.selectedElementIds)
+  const selectElement = useModelStore(s => s.selectElement)
+  const setHoveredTreeNode = useModelStore(s => s.setHoveredTreeNode)
   return (
     <>
       {nodes.map(n => {
         const has = n.children.length > 0
         const isCol = collapsed.has(n.id)
+        const selected = selectedIds.includes(n.id)
         return (
           <div key={n.id}>
             <div
-              className="flex cursor-grab items-center gap-1 rounded-sm px-1 hover:bg-[var(--surface-2)]"
+              className={`flex cursor-grab items-center gap-1 rounded-sm px-1 hover:bg-[var(--surface-2)] ${selected ? 'bg-[var(--accent)]/15 ring-1 ring-inset ring-[var(--accent)]/35' : ''}`}
               style={{ height: TREE_ROW_H, paddingLeft: 4 + depth * TREE_INDENT }}
               draggable
-              onClick={e => { if (has) { e.stopPropagation(); toggle(n.id) } }}
+              onMouseEnter={() => setHoveredTreeNode(n.id)}
+              onMouseLeave={() => setHoveredTreeNode(null)}
+              onClick={e => {
+                e.stopPropagation()
+                selectElement(n.id, { additive: e.ctrlKey || e.metaKey })
+              }}
               onDragStart={e => { e.stopPropagation(); e.dataTransfer.setData(DND_MIME, n.id); e.dataTransfer.effectAllowed = 'move' }}
               onDragOver={e => { if (e.dataTransfer.types.includes(DND_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }}
               onDrop={e => {
@@ -74,11 +83,19 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRo
                 const rect = e.currentTarget.getBoundingClientRect()
                 onDropRow(id, n.id, (e.clientY - rect.top) / Math.max(1, rect.height))
               }}
-              role={has ? 'button' : undefined}
+              role="button"
+              aria-selected={selected}
             >
-              <span className="flex w-3 shrink-0 justify-center text-[9px]" style={{ color: text }}>
+              <button
+                type="button"
+                className="nodrag flex h-4 w-3 shrink-0 items-center justify-center rounded-sm text-[9px] hover:bg-[var(--surface-3)]"
+                style={{ color: text }}
+                onClick={e => { e.stopPropagation(); if (has) toggle(n.id) }}
+                aria-label={has ? (isCol ? `Expand ${n.label}` : `Collapse ${n.label}`) : undefined}
+                tabIndex={has ? 0 : -1}
+              >
                 {has ? (isCol ? '▸' : '▾') : ''}
-              </span>
+              </button>
               {n.icon
                 ? <img src={resolve(n.icon)} alt="" width={14} height={14} draggable={false} className="shrink-0 object-contain" />
                 : has ? <FolderIcon open={!isCol} color={accent} /> : <FileIcon color={accent} />}

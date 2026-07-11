@@ -116,6 +116,9 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
     { key: 'row', label: 'Row', placeholder: '1' },
     { key: 'col', label: 'Column', placeholder: '1' },
   ] },
+  treeNode: { group: 'Tree node', fields: [
+    { key: 'icon', label: 'Icon path or URL', placeholder: 'icons/file.svg, C:\\icons\\file.png, or https://…' },
+  ] },
 }
 
 /** One live-committed custom-property input (own hooks so the field list can vary). */

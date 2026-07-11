@@ -46,6 +46,7 @@ export interface ModelStore {
   focusPropertiesNonce: number
   /** id of the element currently being renamed inline on the canvas */
   editingElementId: string | null
+  hoveredTreeNodeId: string | null
   layoutEngine: LayoutEngine
   snapToGrid: boolean
   showMinimap: boolean
@@ -59,12 +60,13 @@ export interface ModelStore {
   undo(): void
   redo(): void
   setEditingElement(id: string | null): void
+  setHoveredTreeNode(id: string | null): void
   setLayoutEngine(engine: LayoutEngine): void
   toggleSnapToGrid(): void
   toggleMinimap(): void
   toggleEdgeRouting(): void
   pushRecentType(type: string): void
-  duplicateElements(ids: string[]): string[]
+  duplicateElements(ids: string[], options?: { parentId: string | null }): string[]
   setDslSource(source: string): void
   parseDslAndUpdate(source: string): void
   setActiveView(viewId: string): void
@@ -376,6 +378,7 @@ export const useModelStore = create<ModelStore>()(
       highlightRequest: null,
       focusPropertiesNonce: 0,
       editingElementId: null,
+      hoveredTreeNodeId: null,
       layoutEngine: prefs.layoutEngine,
       snapToGrid: prefs.snapToGrid,
       showMinimap: prefs.showMinimap,
@@ -449,27 +452,66 @@ export const useModelStore = create<ModelStore>()(
         persistPrefs()
       },
 
-      duplicateElements(ids) {
+      duplicateElements(ids, options) {
         const newIds: string[] = []
         set(state => {
           state.past.push({ model: state.model, dslSource: state.dslSource, activeViewId: state.activeViewId })
           state.future = []
           const view = state.activeViewId ? state.model.views[state.activeViewId] : undefined
+          const requested = [...new Set(ids)].filter(id => !!state.model.elements[id])
+          const requestedSet = new Set(requested)
+          const hasRequestedAncestor = (id: string) => {
+            let parent = state.model.elements[id]?.parentId
+            while (parent) {
+              if (requestedSet.has(parent)) return true
+              parent = state.model.elements[parent]?.parentId
+            }
+            return false
+          }
+          const roots = requested.filter(id => !hasRequestedAncestor(id))
+          const cloneIds: string[] = []
+          const collect = (id: string) => {
+            if (cloneIds.includes(id)) return
+            cloneIds.push(id)
+            for (const child of state.model.elements[id]?.children ?? []) collect(child)
+          }
+          roots.forEach(collect)
+
           const idMap = new Map<string, string>()
-          for (const id of ids) {
+          for (const id of cloneIds) {
             const el = state.model.elements[id]
             if (!el) continue
             const suffix = Math.random().toString(36).slice(2, 6)
             const nid = `${el.type}_${suffix}`
             idMap.set(id, nid)
-            newIds.push(nid)
+          }
+          const explicitTarget = options !== undefined
+          for (const id of cloneIds) {
+            const el = state.model.elements[id]
+            const nid = idMap.get(id)
+            if (!el || !nid) continue
+            const isRoot = roots.includes(id)
+            const parentId = idMap.get(el.parentId ?? '') ?? (isRoot && explicitTarget ? options.parentId ?? undefined : el.parentId)
             state.model.elements[nid] = {
-              ...el, id: nid, children: [],
-              parentId: el.parentId && idMap.has(el.parentId) ? idMap.get(el.parentId) : el.parentId,
+              ...el,
+              id: nid,
+              parentId,
+              children: el.children.map(child => idMap.get(child)).filter((child): child is string => !!child),
             }
             if (view) {
               const p = view.layoutPositions[id]
               view.layoutPositions[nid] = p ? { x: p.x + 32, y: p.y + 32 } : { x: 60, y: 60 }
+              if (view.nodeSizes[id]) view.nodeSizes[nid] = { ...view.nodeSizes[id] }
+              if (!view.includeAll && !view.includedElements.includes(nid)) view.includedElements.push(nid)
+            }
+          }
+          for (const root of roots) {
+            const nid = idMap.get(root)
+            if (!nid) continue
+            newIds.push(nid)
+            const parentId = state.model.elements[nid].parentId
+            if (parentId && state.model.elements[parentId] && !state.model.elements[parentId].children.includes(nid)) {
+              state.model.elements[parentId].children.push(nid)
             }
           }
           // copy relations whose endpoints were both duplicated
@@ -549,6 +591,8 @@ export const useModelStore = create<ModelStore>()(
           state.selectedRelationId = null
         })
       },
+
+      setHoveredTreeNode(id) { set(state => { state.hoveredTreeNodeId = id }) },
 
       selectRelation(id) {
         set(state => {

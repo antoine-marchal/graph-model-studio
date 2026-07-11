@@ -42,6 +42,21 @@ describe('new notations: registry + parsing', () => {
   })
 })
 
+describe('BPMN lane layout', () => {
+  it('reserves a left label band and starts children beside it', () => {
+    const m = parse(`model {
+      lane1 = lane "Operations" { work = task "Process request" }
+    } views { view v { include * autolayout lr } }`)
+    const { nodes } = modelToFlow(m, view(m))
+    const lane = nodes.find(n => n.id === 'lane1')!
+    const work = nodes.find(n => n.id === 'work')!
+    expect(lane.data.elementType).toBe('lane')
+    expect(work.parentId).toBe('lane1')
+    expect(work.position.x).toBeGreaterThanOrEqual(44)
+    expect(work.position.y).toBeGreaterThanOrEqual(16)
+  })
+})
+
 describe('PERT critical path', () => {
   //   a(3) -> b(2) -> d(4)
   //   a(3) -> c(5) -> d(4)   critical path: a,c,d = 12

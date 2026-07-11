@@ -309,8 +309,8 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   const endLabel = (txt: string, x: number, y: number, key: string) => (
     <EdgeLabelRenderer key={key}>
       <div
-        className="nodrag nopan absolute rounded px-1 text-[10px] font-semibold"
-        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, background: 'var(--surface-1)', color: 'var(--edge-label)', pointerEvents: 'none', zIndex: 1001 }}
+        className="gms-edge-label nodrag nopan absolute rounded px-1 text-[10px] font-semibold shadow-sm"
+        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, background: 'var(--surface-1)', color: 'var(--edge-label)', pointerEvents: 'none' }}
       >{txt}</div>
     </EdgeLabelRenderer>
   )
@@ -324,14 +324,13 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       {label && (
         <EdgeLabelRenderer>
           <div
-            className="nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium shadow-sm"
+            className="gms-edge-label nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium shadow-sm"
             style={{
               transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
               background: 'var(--surface-1)',
               color: 'var(--edge-label)',
               border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
               pointerEvents: 'all',
-              zIndex: 1001,
             }}
           >
             {label}

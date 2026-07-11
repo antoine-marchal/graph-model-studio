@@ -34,6 +34,9 @@ export interface ChartFrame {
   texts: DecorText[]
 }
 
+const MINDMAP_BLUE = '#087CB5'
+const MINDMAP_DEEP = '#71767A'
+
 /** A sequence message drawn between two lifeline points (container-local). */
 export interface SeqMessage {
   relId: string
@@ -159,46 +162,100 @@ export function layoutGitGraphFrame(commits: GraphElement[]): ChartLayout {
  */
 export function layoutMindmapGraph(model: GraphModel, containerId: string, hostedIds: Set<string>): ChartLayout {
   const out = { ...empty(), width: 320, height: 260 } as ChartLayout
-  const kidsOf = (id: string) => (model.elements[id]?.children ?? []).filter(c => hostedIds.has(c))
-  const roots = [...hostedIds].filter(id => model.elements[id]?.parentId === containerId)
+  const hosted = new Set([...hostedIds].filter(id => !!model.elements[id]))
+  const kidsOf = (id: string) => (model.elements[id]?.children ?? [])
+    .filter((child, index, all) => hosted.has(child) && child !== id && all.indexOf(child) === index)
+  const roots = [...hosted].filter(id => {
+    const parent = model.elements[id].parentId
+    return parent === containerId || !hosted.has(parent ?? '')
+  })
+  // Keep disconnected/cyclic components visible instead of silently dropping them.
+  const reachable = new Set<string>()
+  const markReachable = (id: string) => {
+    if (reachable.has(id)) return
+    reachable.add(id)
+    kidsOf(id).forEach(markReachable)
+  }
+  roots.forEach(markReachable)
+  for (const id of hosted) {
+    if (!reachable.has(id)) { roots.push(id); markReachable(id) }
+  }
   if (roots.length === 0) return out
 
   const leafCount = new Map<string, number>()
-  const leaves = (id: string): number => {
+  const leaves = (id: string, path = new Set<string>()): number => {
     if (leafCount.has(id)) return leafCount.get(id)!
-    const k = kidsOf(id)
-    const n = k.length ? k.reduce((s, c) => s + leaves(c), 0) : 1
+    if (path.has(id)) return 1
+    const nextPath = new Set(path).add(id)
+    const k = kidsOf(id).filter(child => !nextPath.has(child))
+    const n = k.length ? k.reduce((sum, child) => sum + leaves(child, nextPath), 0) : 1
     leafCount.set(id, n); return n
   }
-  const depthOf = (id: string): number => {
-    const k = kidsOf(id)
-    return k.length ? 1 + Math.max(...k.map(depthOf)) : 0
-  }
   const single = roots.length === 1
-  const maxDepth = (single ? 0 : 1) + Math.max(...roots.map(depthOf))
-  const RING = 165
-  const rad = maxDepth * RING
-  const size = (id: string) => defSize(model.elements[id], model.elements[id]?.type === 'mindmapRoot' ? 170 : 130, model.elements[id]?.type === 'mindmapRoot' ? 62 : 44)
-  const maxHalf = 100
-  const cx = rad + maxHalf + PADX
-  const cy = rad + maxHalf + TITLE
+  const depthIds = new Map<number, string[]>()
+  const depthById = new Map<string, number>()
+  const seenDepth = new Set<string>()
+  const collectDepths = (id: string, depth: number) => {
+    if (seenDepth.has(id)) return
+    seenDepth.add(id)
+    depthById.set(id, depth)
+    const ids = depthIds.get(depth) ?? []
+    ids.push(id); depthIds.set(depth, ids)
+    for (const child of kidsOf(id)) collectDepths(child, depth + 1)
+  }
+  roots.forEach(root => collectDepths(root, single ? 0 : 1))
+  const size = (id: string) => {
+    const depth = depthById.get(id) ?? 2
+    const diameter = depth === 0 ? 190 : depth === 1 ? 132 : depth === 2 ? 104 : Math.max(72, 92 - (depth - 3) * 6)
+    return defSize(model.elements[id], diameter, diameter)
+  }
+
+  // Grow each ring to fit both the radial node widths and the total tangential
+  // footprint at that depth. This prevents dense branches from overlapping.
+  const radii: number[] = [0]
+  const maxDepth = Math.max(0, ...depthIds.keys())
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const ids = depthIds.get(depth) ?? []
+    // Axis-aligned node boxes need their diagonal footprint at 45-degree
+    // positions; arc length based on diameter alone can still overlap there.
+    const circumference = ids.reduce((sum, id) => {
+      const nodeSize = size(id)
+      return sum + Math.hypot(nodeSize.width, nodeSize.height) + 28
+    }, 0)
+    const previousIds = depthIds.get(depth - 1) ?? []
+    const previousHalfWidth = Math.max(0, ...previousIds.map(id => size(id).width / 2))
+    const currentHalfWidth = Math.max(0, ...ids.map(id => size(id).width / 2))
+    const radialClearance = radii[depth - 1] + previousHalfWidth + currentHalfWidth + 54
+    radii[depth] = Math.max(radialClearance, circumference / (Math.PI * 2))
+  }
+
+  const cx = radii[maxDepth] + 160
+  const cy = radii[maxDepth] + 160 + TITLE
   const centers: Record<string, { x: number; y: number }> = {}
+  const placed = new Set<string>()
 
   const place = (id: string, depth: number, a0: number, a1: number) => {
+    if (placed.has(id)) return
+    placed.add(id)
     const ang = (a0 + a1) / 2
-    const r = depth * RING
+    const r = radii[depth] ?? radii[radii.length - 1]
     const x = cx + r * Math.cos(ang)
     const y = cy + r * Math.sin(ang)
     centers[id] = { x, y }
     const s = size(id)
     out.placements[id] = { x: x - s.width / 2, y: y - s.height / 2, width: s.width, height: s.height }
-    const kids = kidsOf(id)
+    const kids = kidsOf(id).filter(kid => !placed.has(kid))
     const tot = leaves(id)
     let a = a0
     for (const kid of kids) {
       const b = a + (a1 - a0) * (leaves(kid) / tot)
       place(kid, depth + 1, a, b)
-      out.frame.lines.push({ x1: x, y1: y, x2: centers[kid].x, y2: centers[kid].y, width: 1.5, color: EDGE_COLOR })
+      const childDepth = depthById.get(kid) ?? depth + 1
+      out.frame.lines.push({
+        x1: x, y1: y, x2: centers[kid].x, y2: centers[kid].y,
+        width: childDepth <= 2 ? 3 : 1.8,
+        color: childDepth <= 2 ? MINDMAP_BLUE : MINDMAP_DEEP,
+      })
       a = b
     }
   }
@@ -211,8 +268,19 @@ export function layoutMindmapGraph(model: GraphModel, containerId: string, hoste
     for (const r of roots) { const b = a + Math.PI * 2 * (leaves(r) / tot); place(r, 1, a, b); a = b }
   }
 
-  out.width = 2 * (rad + maxHalf) + PADX * 2
-  out.height = 2 * (rad + maxHalf) + TITLE + PADY
+  // Derive and normalize the frame from actual rectangles so custom node sizes
+  // cannot be clipped by an estimated radius.
+  const boxes = Object.values(out.placements)
+  const minX = Math.min(...boxes.map(p => p.x))
+  const minY = Math.min(...boxes.map(p => p.y))
+  const maxX = Math.max(...boxes.map(p => p.x + p.width))
+  const maxY = Math.max(...boxes.map(p => p.y + p.height))
+  const dx = PADX - minX
+  const dy = TITLE + PADY - minY
+  for (const p of boxes) { p.x += dx; p.y += dy }
+  for (const line of out.frame.lines) { line.x1 += dx; line.x2 += dx; line.y1 += dy; line.y2 += dy }
+  out.width = Math.max(320, maxX - minX + PADX * 2)
+  out.height = Math.max(260, maxY - minY + TITLE + PADY * 2)
   return out
 }
 
@@ -258,40 +326,56 @@ function parseCellBg(raw: string | undefined): Record<string, string> {
  * between cells (see the drag handler). Cells can be labelled via headers and
  * given fixed background colours.
  */
-export function layoutGridGraph(model: GraphModel, containerId: string, hostedIds: Set<string>): GridLayout {
+export function layoutGridGraph(
+  model: GraphModel,
+  containerId: string,
+  hostedIds: Set<string>,
+  targetSize?: { width: number; height: number },
+  itemSizes: Record<string, { width: number; height: number }> = {},
+): GridLayout {
   const p = model.elements[containerId]?.properties ?? {}
   const cols = Math.max(1, parseInt(p['cols'] ?? '5', 10) || 5)
   const rows = Math.max(1, parseInt(p['rows'] ?? '5', 10) || 5)
-  const cellW = Math.max(80, parseInt(p['cellW'] ?? '110', 10) || 110)
-  const cellH = Math.max(56, parseInt(p['cellH'] ?? '84', 10) || 84)
+  const preferredCellW = Math.max(80, parseInt(p['cellW'] ?? '110', 10) || 110)
+  const preferredCellH = Math.max(56, parseInt(p['cellH'] ?? '84', 10) || 84)
   const xHeaders = (p['xHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
   const yHeaders = (p['yHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
   const cellBg = parseCellBg(p['cellBg'])
 
-  const originX = GRID_AXIS + GRID_HEAD
-  const originY = TITLE + GRID_AXIS + GRID_HEAD
+  const gridMargin = GRID_AXIS + GRID_HEAD
+  const originX = gridMargin
+  const originY = TITLE + gridMargin
+  // A manually enlarged matrix distributes all additional interior space
+  // across its columns and rows instead of leaving an empty area on the right
+  // or bottom. Explicit cell sizes remain the minimum geometry.
+  const cellW = Math.max(preferredCellW, targetSize ? (targetSize.width - gridMargin * 2) / cols : 0)
+  const cellH = Math.max(preferredCellH, targetSize ? (targetSize.height - TITLE - gridMargin * 2) / rows : 0)
 
   // stack items within their cell
   const items = [...hostedIds].map(id => model.elements[id]).filter(Boolean)
-  const perCell = new Map<string, number>()
+  const perCellOffset = new Map<string, number>()
   const placements: Record<string, SpecialPlacement> = {}
   for (const it of items) {
     const r = Math.min(rows, Math.max(1, parseInt(it.properties?.['row'] ?? '1', 10) || 1))
     const c = Math.min(cols, Math.max(1, parseInt(it.properties?.['col'] ?? '1', 10) || 1))
     const key = `${r},${c}`
-    const idx = perCell.get(key) ?? 0
-    perCell.set(key, idx + 1)
-    const s = defSize(it, cellW - 12, 26)
+    const offset = perCellOffset.get(key) ?? 0
+    const fallback = defSize(it, cellW - 12, 26)
+    const requested = itemSizes[it.id] ?? fallback
+    const availableHeight = Math.max(18, cellH - 12 - offset)
+    const width = Math.min(Math.max(48, requested.width), cellW - 12)
+    const height = Math.min(Math.max(18, requested.height), availableHeight)
     placements[it.id] = {
       x: originX + (c - 1) * cellW + 6,
-      y: originY + (r - 1) * cellH + 6 + idx * 30,
-      width: Math.min(s.width, cellW - 12),
-      height: 26,
+      y: originY + (r - 1) * cellH + 6 + offset,
+      width,
+      height,
     }
+    perCellOffset.set(key, offset + height + 4)
   }
 
-  const width = originX + cols * cellW + PADX
-  const height = originY + rows * cellH + PADY
+  const width = gridMargin + cols * cellW + gridMargin
+  const height = TITLE + gridMargin + rows * cellH + gridMargin
   return {
     placements,
     frame: { cols, rows, cellW, cellH, originX, originY, xLabel: p['xLabel'], yLabel: p['yLabel'], xHeaders, yHeaders, cellBg, width, height },
@@ -313,7 +397,7 @@ export interface TreeGraphLayout {
   width: number
   height: number
   /** container-local anchor point (right edge of each row) for edges to a treeNode */
-  rowAnchors: Record<string, { x: number; y: number }>
+  rowAnchors: Record<string, { leftX: number; rightX: number; y: number }>
 }
 
 export const TREE_ROW_H = 24
@@ -336,14 +420,14 @@ export function layoutTreeGraph(model: GraphModel, containerId: string, hostedId
     .map(build)
 
   const top = TITLE + PADY
-  const rowAnchors: Record<string, { x: number; y: number }> = {}
+  const rowAnchors: Record<string, { leftX: number; rightX: number; y: number }> = {}
   let rowIdx = 0
   let maxW = 0
   const walk = (r: TreeRow, depth: number) => {
     const y = top + rowIdx * TREE_ROW_H + TREE_ROW_H / 2
     // anchor sits just past the end of the label (where the connect dot renders)
-    const labelEnd = depth * TREE_INDENT + 30 + r.label.length * 6.6 + 8
-    rowAnchors[r.id] = { x: labelEnd, y }
+    const labelEnd = depth * TREE_INDENT + 30 + r.label.length * 6.6 + 16
+    rowAnchors[r.id] = { leftX: depth * TREE_INDENT + 17, rightX: labelEnd, y }
     rowIdx++
     maxW = Math.max(maxW, labelEnd + 16)
     r.children.forEach(c => walk(c, depth + 1))
@@ -352,7 +436,7 @@ export function layoutTreeGraph(model: GraphModel, containerId: string, hostedId
 
   const width = Math.max(200, maxW + PADX)
   const height = TITLE + PADY + Math.max(rowIdx, 1) * TREE_ROW_H + PADY
-  for (const id of Object.keys(rowAnchors)) rowAnchors[id].x = Math.min(rowAnchors[id].x, width - 10)
+  for (const id of Object.keys(rowAnchors)) rowAnchors[id].rightX = Math.min(rowAnchors[id].rightX, width - 10)
   return { roots, width, height, rowAnchors }
 }
 

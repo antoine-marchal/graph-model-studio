@@ -134,7 +134,10 @@ function GraphEditorInner() {
   const onConnect = useCallback((c: Connection) => {
     // a connection from a treeNode's dot carries the anchor id — map back to the
     // real treeNode so the relation is stored against it
-    const unanchor = (v: string | null | undefined) => (v && v.startsWith('__treeanchor_') ? v.slice('__treeanchor_'.length) : v)
+    const unanchor = (v: string | null | undefined) => {
+      if (!v?.startsWith('__treeanchor_')) return v
+      return v.slice('__treeanchor_'.length).replace(/_[lr]$/, '')
+    }
     const source = unanchor(c.source)
     const target = unanchor(c.target)
     if (!source || !target || source === target) return
@@ -367,10 +370,11 @@ function GraphEditorInner() {
       if (mod && e.key.toLowerCase() === 'd') {
         e.preventDefault(); duplicateSelection()
       } else if (mod && e.key.toLowerCase() === 'c') {
-        clipboard.current = nodes.filter(n => n.selected).map(n => n.id)
+        clipboard.current = [...useModelStore.getState().selectedElementIds]
       } else if (mod && e.key.toLowerCase() === 'v') {
         if (clipboard.current.length) {
-          const created = duplicateElements(clipboard.current)
+          const selectedTarget = useModelStore.getState().selectedElementId
+          const created = duplicateElements(clipboard.current, { parentId: selectedTarget })
           setTimeout(() => selectElements(created), 0)
         }
       } else if (e.key === 'F2') {

@@ -218,6 +218,19 @@ describe('timeline graph container', () => {
 })
 
 describe('tree graph container (file tree)', () => {
+  it('redirects both ends of a cross-tree relation through their row anchors', () => {
+    const m = parse(`model {
+      left = treeGraph "Left" { a = treeNode "a.ts" }
+      right = treeGraph "Right" { b = treeNode "b.ts" }
+      a -> b "depends on"
+    } views { view t { include * autolayout lr } }`)
+    const { nodes, edges } = modelToFlow(m, view(m))
+    expect(nodes.find(n => n.id === '__treeanchor_a_r')).toBeTruthy()
+    expect(nodes.find(n => n.id === '__treeanchor_b_l')).toBeTruthy()
+    const relation = edges.find(e => e.source === '__treeanchor_a_r')!
+    expect(relation.target).toBe('__treeanchor_b_l')
+  })
+
   it('consumes treeNodes into a forest widget with icon + a link-out edge', () => {
     const m = parse(`model {
       files = treeGraph "Project" {
@@ -247,10 +260,13 @@ describe('tree graph container (file tree)', () => {
     expect(forest[0].children.map(c => c.id)).toEqual(['src', 'readme'])
     expect(forest[0].children[0].children[0].icon).toBe('icons/tsx.png')
     // a -> svc is kept: redirected through a frame-edge anchor node
-    expect(nodes.find(n => n.id === '__treeanchor_a')).toBeTruthy()
+    expect(nodes.find(n => n.id === '__treeanchor_a_r')).toBeTruthy()
     const link = edges.find(e => e.id === Object.values(m.relations)[0].id)!
-    expect(link.source).toBe('__treeanchor_a')
+    expect(link.source).toBe('__treeanchor_a_r')
     expect(link.target).toBe('svc')
+    const anchor = nodes.find(n => n.id === '__treeanchor_a_r')!
+    expect(anchor.width).toBe(6)
+    expect(anchor.height).toBe(6)
   })
 
   it('reorderSiblings updates children order and re-sorts the widget forest', async () => {

@@ -42,6 +42,8 @@ export interface GraphNodeData extends Record<string, unknown> {
   ganttGraph?: GanttFrame
   /** decor (lifelines/spine/lanes) when this node is a seq/git/timeline container */
   chartFrame?: ChartFrame
+  /** zero-based topic depth inside a mind map */
+  mindmapDepth?: number
   /** file-tree forest when this node is a `treeGraph` container */
   tree?: TreeRow[]
   /** matrix frame when this node is a `gridGraph` container */
@@ -168,6 +170,25 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <NoteBody label={d.label} fill={fill} stroke={stroke} text={text} width={width} height={height} />
       </div>
     )
+  } else if (d.notation === 'mindmap' && d.elementType !== 'mindmapGraph') {
+    const depth = d.mindmapDepth ?? (d.elementType === 'mindmapRoot' ? 0 : 1)
+    const root = depth === 0
+    const primary = depth === 1
+    const secondary = depth === 2
+    const background = root ? '#08A1DD' : primary ? '#087CB5' : secondary ? '#FFFFFF' : '#A3A7AA'
+    const border = root || primary ? background : secondary ? '#303234' : '#8A8E91'
+    const foreground = root || primary || depth >= 3 ? '#FFFFFF' : '#27292B'
+    body = (
+      <div
+        className={cn('relative flex h-full w-full items-center justify-center rounded-full text-center', ring && 'rounded-full ' + ring)}
+        style={{ background, border: `${root ? 3 : 2}px solid ${border}`, color: foreground }}
+      >
+        <Handles stroke={border} />
+        <span className={cn('max-w-[82%] leading-tight', root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>
+          {d.label}
+        </span>
+      </div>
+    )
   } else if (shape === 'gridGraph') {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
@@ -195,7 +216,21 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (d.chartFrame) {
     const cf = d.chartFrame
-    body = (
+    body = d.elementType === 'mindmapGraph' ? (
+      // A mind map lives directly on the canvas. Its graph element is only an
+      // invisible grouping/layout surface, not a titled chart container.
+      <div className="relative h-full w-full">
+        <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
+          {cf.lines.map((l, i) => (
+            <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
+          ))}
+        </svg>
+        <div className="pointer-events-none absolute left-4 top-1 text-xs font-bold uppercase tracking-[0.16em] text-[var(--fg-subtle)]">
+          {d.label}
+        </div>
+        {selected && <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-blue-500/35" />}
+      </div>
+    ) : (
       <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
         <div
@@ -289,6 +324,21 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           <span className="absolute left-1 top-1/2 z-0 origin-center -translate-y-1/2 -rotate-90 text-[10px] font-semibold opacity-70" style={{ color: text }}>{p.yLabel}</span>
         )}
         <span className="absolute left-1/2 top-1 z-0 -translate-x-1/2 text-[11px] font-bold" style={{ color: text }}>{d.label}</span>
+      </div>
+    )
+  } else if (d.elementType === 'lane') {
+    body = (
+      <div
+        className={cn('relative h-full w-full overflow-hidden rounded-sm', ring)}
+        style={{ background: accent + '10', border: `1.5px solid ${stroke}` }}
+      >
+        <Handles stroke={stroke} />
+        <div
+          className="absolute inset-y-0 left-0 flex w-7 items-center justify-center text-[11px] font-bold uppercase tracking-wide"
+          style={{ background: accent + '24', color: text, borderRight: `1px solid ${stroke}66` }}
+        >
+          <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{d.label}</span>
+        </div>
       </div>
     )
   } else if (d.isContainer || shape === 'container') {

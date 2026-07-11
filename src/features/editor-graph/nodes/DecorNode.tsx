@@ -1,5 +1,6 @@
 import { memo } from 'react'
-import { Handle, Position } from '@xyflow/react'
+import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { useModelStore } from '@/store'
 
 /** Invisible 2×2 endpoint node a sequence message edge attaches to.
  *  React Flow only renders an edge when its endpoint nodes expose a handle,
@@ -16,15 +17,25 @@ SeqPointNode.displayName = 'SeqPointNode'
 
 /** Visible connect dot at a treeNode row's label end — drag from it to draw a
  *  relation to another node; also serves as the endpoint of existing edges. */
-export const TreeAnchorNode = memo(() => (
-  <div
-    className="rounded-full border transition-opacity"
-    style={{ width: 9, height: 9, background: 'var(--surface-1)', borderColor: 'var(--accent)', borderWidth: 1.5, opacity: 0.55, cursor: 'crosshair' }}
-    title="Drag to link this file to another node"
-  >
-    <Handle type="source" position={Position.Right} style={{ opacity: 0, inset: 0, width: '100%', height: '100%', transform: 'none', border: 'none' }} />
-    <Handle type="target" position={Position.Left} style={{ opacity: 0, inset: 0, width: '100%', height: '100%', transform: 'none', border: 'none' }} />
-  </div>
-))
+export const TreeAnchorNode = memo(({ data }: NodeProps) => {
+  const treeNodeId = (data as { treeNodeId?: string }).treeNodeId
+  const hovered = useModelStore(s => s.hoveredTreeNodeId === treeNodeId)
+  const setHoveredTreeNode = useModelStore(s => s.setHoveredTreeNode)
+  return (
+    <div
+      className="rounded-full border transition-opacity"
+      style={{
+        width: 6, height: 6, background: 'var(--surface-1)', borderColor: 'var(--accent)', borderWidth: 1,
+        opacity: hovered ? 0.62 : 0, cursor: 'crosshair', pointerEvents: hovered ? 'auto' : 'none',
+      }}
+      onMouseEnter={() => treeNodeId && setHoveredTreeNode(treeNodeId)}
+      onMouseLeave={() => setHoveredTreeNode(null)}
+      title="Drag to link this file to another node"
+    >
+      {/* ConnectionMode.Loose makes one handle valid as both source and target. */}
+      <Handle type="source" position={Position.Right} style={{ opacity: 0, inset: -3, width: 12, height: 12, transform: 'none', border: 'none' }} />
+    </div>
+  )
+})
 
 TreeAnchorNode.displayName = 'TreeAnchorNode'

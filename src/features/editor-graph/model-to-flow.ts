@@ -88,7 +88,7 @@ interface NestedLayout {
   /** tree elements consumed by a treeGraph widget (not rendered as nodes) */
   consumed: Set<string>
   /** container-local right-edge anchor point per treeNode (for edges to other nodes) */
-  treeAnchorOf: Record<string, { x: number; y: number }>
+  treeAnchorOf: Record<string, { leftX: number; rightX: number; y: number }>
   /** 0..100 progress per gantt task (union across every gantt graph) */
   ganttProgress: Record<string, number>
   /** React Flow parent (the enclosing chart container) for each hosted child */
@@ -150,7 +150,7 @@ export function computeNestedLayout(
   const gridFrames: Record<string, GridFrame> = {}
   const treeRoots: Record<string, TreeRow[]> = {}
   const consumed = new Set<string>()
-  const treeAnchorOf: Record<string, { x: number; y: number }> = {}
+  const treeAnchorOf: Record<string, { leftX: number; rightX: number; y: number }> = {}
   const seqMessagesByHost: Record<string, SeqMessage[]> = {}
   const suppressedRelations = new Set<string>()
   const stored = view.layoutPositions ?? {}
@@ -196,7 +196,7 @@ export function computeNestedLayout(
       for (const cid of Object.keys(layout.placements)) chartPlacement[cid] = layout.placements[cid]
     } else if (el.type === 'gridGraph') {
       const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
-      const gl = layoutGridGraph(model, el.id, hosted)
+      const gl = layoutGridGraph(model, el.id, hosted, (view.nodeSizes ?? {})[el.id], view.nodeSizes ?? {})
       gridFrames[el.id] = gl.frame
       containerSize[el.id] = { width: gl.frame.width, height: gl.frame.height }
       for (const cid of Object.keys(gl.placements)) chartPlacement[cid] = gl.placements[cid]
@@ -214,11 +214,14 @@ export function computeNestedLayout(
       }
     }
   }
-  // intra-tree relations (both ends consumed) carry no meaning in a file tree;
-  // a relation from a treeNode to an outside node is kept (drawn via an anchor)
+  // Relations within the same file-tree widget carry no additional meaning;
+  // cross-tree relations must remain visible through both row anchors.
   if (consumed.size) {
     for (const rel of Object.values(model.relations)) {
-      if (consumed.has(rel.sourceId) && consumed.has(rel.targetId)) suppressedRelations.add(rel.id)
+      if (
+        consumed.has(rel.sourceId) && consumed.has(rel.targetId) &&
+        hostOf[rel.sourceId] === hostOf[rel.targetId]
+      ) suppressedRelations.add(rel.id)
     }
   }
 
@@ -320,8 +323,9 @@ export function computeNestedLayout(
     }
 
     const isRoot = parentKey === ROOT
-    const offX = isRoot ? 40 : CONTAINER_PAD
-    const offY = isRoot ? 40 : CONTAINER_TITLE_H + CONTAINER_PAD
+    const verticalLane = !isRoot && model.elements[parentKey]?.type === 'lane'
+    const offX = isRoot ? 40 : verticalLane ? CONTAINER_TITLE_H + CONTAINER_PAD : CONTAINER_PAD
+    const offY = isRoot ? 40 : verticalLane ? CONTAINER_PAD : CONTAINER_TITLE_H + CONTAINER_PAD
 
     const kidSet = new Set(kids)
     const graphKids = kids.filter(id => !fixedPlacement(id))
@@ -366,7 +370,10 @@ export function computeNestedLayout(
         continue
       }
       const useStored = !settings.ignoreStored && stored[kid]
-      positions[kid] = useStored ? stored[kid] : (laid[kid] ?? { x: offX, y: offY })
+      const proposed = useStored ? stored[kid] : (laid[kid] ?? { x: offX, y: offY })
+      positions[kid] = verticalLane
+        ? { x: Math.max(offX, proposed.x), y: Math.max(offY, proposed.y) }
+        : proposed
     }
 
     if (isRoot) return { width: 0, height: 0 }
@@ -490,9 +497,17 @@ export function modelToFlow(
 
   // every treeNode gets a small connect dot at its label end so the user can
   // drag a relation from it; existing DSL relations reuse the same anchor
-  const anchorId = (id: string) => `__treeanchor_${id}`
-  const treeEdgeSide = (endpoint: string) =>
-    consumed.has(endpoint) && treeAnchorOf[endpoint] ? anchorId(endpoint) : endpoint
+  const anchorId = (id: string, side: 'l' | 'r') => `__treeanchor_${id}_${side}`
+  const endpointCenterX = (id: string) => {
+    const displayId = hostOf[id] ?? id
+    const p = positions[displayId]
+    const s = sizes[displayId]
+    return (p?.x ?? 0) + (s?.width ?? 0) / 2
+  }
+  const treeEdgeSide = (endpoint: string, other: string) => {
+    if (!consumed.has(endpoint) || !treeAnchorOf[endpoint]) return endpoint
+    return anchorId(endpoint, endpointCenterX(other) < endpointCenterX(endpoint) ? 'l' : 'r')
+  }
   const neededAnchors = new Set<string>(Object.keys(treeAnchorOf).filter(id => visible.has(id)))
 
   // CPM values when the view shows PERT nodes (computed over the whole model
@@ -510,6 +525,22 @@ export function modelToFlow(
     const d = p && visible.has(p) ? depth(p) + 1 : 0
     depthOf.set(id, d)
     return d
+  }
+
+  function mindmapDepth(id: string): number | undefined {
+    if (model.elements[id]?.notation !== 'mindmap' || model.elements[id]?.type === 'mindmapGraph') return undefined
+    const host = hostOf[id]
+    if (!host) return undefined
+    let current = id
+    let topicDepth = 0
+    const seenParents = new Set<string>()
+    while (model.elements[current]?.parentId && model.elements[current].parentId !== host) {
+      if (seenParents.has(current)) break
+      seenParents.add(current)
+      current = model.elements[current].parentId!
+      topicDepth++
+    }
+    return topicDepth
   }
 
   // emit containers before their children (React Flow requirement for parentId)
@@ -563,7 +594,9 @@ export function modelToFlow(
         iconSrc: def.iconSrc,
         width: size.width,
         height: size.height,
-        isContainer: container,
+        // Chart-hosted items retain their notation shape even when they own DSL
+        // descendants. The chart host provides grouping; the topic is not a box.
+        isContainer: container && !placed,
         pert: pert?.nodes[id],
         progress: ganttProgress[id],
         badge: el.notation === 'gitgraph' ? el.properties?.['tag'] : undefined,
@@ -572,6 +605,7 @@ export function modelToFlow(
         ishikawa: ishikawa[id],
         ganttGraph: ganttFrames[id],
         chartFrame: chartFrames[id],
+        mindmapDepth: mindmapDepth(id),
         grid: gridFrames[id],
         tree: treeRoots[id],
       },
@@ -608,20 +642,22 @@ export function modelToFlow(
     const host = hostOf[nodeId]
     const a = treeAnchorOf[nodeId]
     if (!host || !a) continue
-    nodes.push({
-      id: anchorId(nodeId),
-      type: 'treeAnchor',
-      parentId: host,
-      position: { x: a.x, y: a.y - 5 },
-      draggable: false,
-      selectable: false,
-      focusable: false,
-      connectable: true,
-      zIndex: 1200,
-      width: 10,
-      height: 10,
-      data: {},
-    } as unknown as GraphNode)
+    for (const side of ['l', 'r'] as const) {
+      nodes.push({
+        id: anchorId(nodeId, side),
+        type: 'treeAnchor',
+        parentId: host,
+        position: { x: side === 'l' ? a.leftX : a.rightX, y: a.y - 3 },
+        draggable: false,
+        selectable: false,
+        focusable: false,
+        connectable: true,
+        zIndex: 1200,
+        width: 6,
+        height: 6,
+        data: { treeNodeId: nodeId, side },
+      } as unknown as GraphNode)
+    }
   }
 
   // nearest visible ancestor-or-self (undefined if the whole chain is hidden)
@@ -666,8 +702,8 @@ export function modelToFlow(
       if (!label && (rel.type === 'include' || rel.type === 'extend')) label = `«${rel.type}»`
       const critical = pert?.criticalRelations.has(rel.id) ?? false
       // a consumed treeNode endpoint is redirected to its frame-edge anchor
-      const eSource = treeEdgeSide(rel.sourceId)
-      const eTarget = treeEdgeSide(rel.targetId)
+      const eSource = treeEdgeSide(rel.sourceId, rel.targetId)
+      const eTarget = treeEdgeSide(rel.targetId, rel.sourceId)
       // if a tree endpoint has no anchor (not linked out / collapsed away), skip
       if ((consumed.has(rel.sourceId) && eSource === rel.sourceId) || (consumed.has(rel.targetId) && eTarget === rel.targetId)) continue
       edges.push({

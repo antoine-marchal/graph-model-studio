@@ -68,9 +68,17 @@ body {
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:focus .react-flow__edge-path { stroke: var(--accent) !important; stroke-width: 2.2; }
 
-/* keep edge labels above node bodies and arrow heads, even when a node is
-   selected (React Flow elevates selected nodes ~1000) */
-.react-flow__edgelabel-renderer { z-index: 1100 !important; }
+/* Relation and multiplicity labels are semantic foreground content. Keep the
+   portal and each label above selected nodes, nested charts and helper anchors. */
+.react-flow__edgelabel-renderer {
+  z-index: 2147483647 !important;
+  overflow: visible !important;
+  pointer-events: none;
+}
+.react-flow__edgelabel-renderer .gms-edge-label {
+  z-index: 2147483647 !important;
+  isolation: isolate;
+}
 
 /* subtle handles, reveal on node hover */
 .react-flow__handle { opacity: 0; transition: opacity .12s ease; }
