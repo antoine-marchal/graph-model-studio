@@ -48,6 +48,8 @@ export interface GraphNodeData extends Record<string, unknown> {
   tree?: TreeRow[]
   /** matrix frame when this node is a `gridGraph` container */
   grid?: GridFrame
+  /** Arrow endpoint relative to this item's centre, derived from its `projection`. */
+  projection?: { dx: number; dy: number }
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -69,6 +71,36 @@ function Handles({ stroke }: { stroke: string }) {
       <Handle id="l" type="source" position={Position.Left} className={cls} style={style} />
       <Handle id="r" type="source" position={Position.Right} className={cls} style={style} />
     </>
+  )
+}
+
+function ProjectionArrow({ projection, width, height }: {
+  projection?: { dx: number; dy: number }
+  width: number
+  height: number
+}) {
+  if (!projection) return null
+  const cx = width / 2
+  const cy = height / 2
+  const distance = Math.hypot(projection.dx, projection.dy)
+  if (distance < 2) return null
+  // Start at the item boundary so the line does not cross its label/fill.
+  const boundaryScale = 1 / Math.sqrt(
+    (projection.dx / Math.max(1, cx)) ** 2 + (projection.dy / Math.max(1, cy)) ** 2,
+  )
+  return (
+    <svg className="pointer-events-none absolute inset-0 z-0 overflow-visible" width={width} height={height} aria-hidden>
+      <line
+        x1={cx + projection.dx * boundaryScale}
+        y1={cy + projection.dy * boundaryScale}
+        x2={cx + projection.dx}
+        y2={cy + projection.dy}
+        stroke="var(--edge)"
+        strokeWidth={1.6}
+        strokeLinecap="round"
+        markerEnd="url(#gms-arrow-open)"
+      />
+    </svg>
   )
 }
 
@@ -193,7 +225,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide" style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}>
+        <div className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--fg)]" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55` }}>
           <span className="truncate">{d.label}</span>
         </div>
         {d.grid && <GridGraphView frame={d.grid} stroke={stroke} text={text} accent={accent} />}
@@ -205,12 +237,12 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
         >
           <span className="truncate">{d.label}</span>
         </div>
         <div className="min-h-0 flex-1 px-1">
-          <TreeGraphView roots={d.tree ?? []} accent={accent} text={text} />
+          <TreeGraphView roots={d.tree ?? []} accent={accent} />
         </div>
       </div>
     )
@@ -235,7 +267,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
         >
           <span className="truncate">{d.label}</span>
         </div>
@@ -244,7 +276,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
           ))}
           {cf.texts.map((t, i) => (
-            <text key={i} x={t.x} y={t.y} fontSize={t.size ?? 10} fill={t.color ?? 'var(--fg-subtle)'} textAnchor={t.anchor ?? 'start'} fontWeight={t.bold ? 700 : 400} fontFamily="inherit">{t.text}</text>
+            <text key={i} x={t.x} y={t.y} fontSize={t.size ?? 10} fill={t.color ?? 'var(--fg-muted)'} textAnchor={t.anchor ?? 'start'} fontWeight={t.bold ? 700 : 400} fontFamily="inherit">{t.text}</text>
           ))}
         </svg>
       </div>
@@ -258,7 +290,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: text, borderBottom: `1px solid ${stroke}55` }}
+          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
         >
           <span className="truncate">{d.label}</span>
         </div>
@@ -267,7 +299,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           {fr.ticks.map((t, i) => (
             <g key={i}>
               <line x1={16 + t.x} y1={axisBase} x2={16 + t.x} y2={height - 8} stroke={stroke} strokeWidth={1} strokeOpacity={0.22} strokeDasharray="2 4" />
-              <text x={16 + t.x + 3} y={axisBase - 5} fontSize={9} fill={text} fillOpacity={0.7} fontFamily="inherit">{t.label}</text>
+              <text x={16 + t.x + 3} y={axisBase - 5} fontSize={9} fill="var(--fg-muted)" fontWeight={600} fontFamily="inherit">{t.label}</text>
             </g>
           ))}
         </svg>
@@ -302,7 +334,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   } else if (shape === 'quadrantChart') {
     const p = d.chartProps ?? {}
     const qLabel = (key: string, cls: string) =>
-      p[key] ? <span className={cn('absolute z-0 text-[10px] font-bold uppercase tracking-wide opacity-60', cls)} style={{ color: text }}>{p[key]}</span> : null
+      p[key] ? <span className={cn('absolute z-0 text-[10px] font-bold uppercase tracking-wide text-[var(--fg-muted)]', cls)}>{p[key]}</span> : null
     body = (
       <div className={cn('relative h-full w-full overflow-hidden rounded-md', ring)} style={{ background: 'var(--surface-1)', border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
@@ -319,11 +351,11 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         {qLabel('q2', 'left-2 top-1')}
         {qLabel('q3', 'left-2 bottom-1')}
         {qLabel('q4', 'right-2 bottom-1')}
-        {p.xLabel && <span className="absolute bottom-1 left-1/2 z-0 -translate-x-1/2 text-[10px] font-semibold opacity-70" style={{ color: text }}>{p.xLabel}</span>}
+        {p.xLabel && <span className="absolute bottom-1 left-1/2 z-0 -translate-x-1/2 text-[10px] font-semibold text-[var(--fg-muted)]">{p.xLabel}</span>}
         {p.yLabel && (
-          <span className="absolute left-1 top-1/2 z-0 origin-center -translate-y-1/2 -rotate-90 text-[10px] font-semibold opacity-70" style={{ color: text }}>{p.yLabel}</span>
+          <span className="absolute left-1 top-1/2 z-0 origin-center -translate-y-1/2 -rotate-90 text-[10px] font-semibold text-[var(--fg-muted)]">{p.yLabel}</span>
         )}
-        <span className="absolute left-1/2 top-1 z-0 -translate-x-1/2 text-[11px] font-bold" style={{ color: text }}>{d.label}</span>
+        <span className="absolute left-1/2 top-1 z-0 -translate-x-1/2 text-[11px] font-bold text-[var(--fg)]">{d.label}</span>
       </div>
     )
   } else if (d.elementType === 'lane') {
@@ -335,7 +367,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="absolute inset-y-0 left-0 flex w-7 items-center justify-center text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '24', color: text, borderRight: `1px solid ${stroke}66` }}
+          style={{ background: accent + '24', color: 'var(--fg)', borderRight: `1px solid ${stroke}66` }}
         >
           <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{d.label}</span>
         </div>
@@ -350,7 +382,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
+          style={{ background: accent + '26', color: 'var(--fg)', borderBottom: `1px solid ${stroke}66` }}
         >
           <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>
@@ -497,7 +529,8 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative h-full w-full', ring && 'rounded-full ' + ring)}>
         <Handles stroke={stroke} />
-        <div className="h-full w-full rounded-full" style={{ background: fill, border: `2.5px solid ${stroke}` }} />
+        <ProjectionArrow projection={d.projection} width={width} height={height} />
+        <div className="relative z-10 h-full w-full rounded-full" style={{ background: fill, border: `2.5px solid ${stroke}` }} />
         {d.badge && (
           <span className="absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-1)] px-1 text-[9px] font-semibold" style={{ color: 'var(--fg)' }}>
             {d.badge}
@@ -522,6 +555,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative flex h-full w-full items-center justify-center', radius, ring)} style={{ background: fill, border: `2px solid ${stroke}` }}>
         <Handles stroke={stroke} />
+        {d.elementType === 'gridItem' && <ProjectionArrow projection={d.projection} width={width} height={height} />}
         {(iconSrc || icon !== 'none') && (
           <div
             className={cn('absolute top-1.5 opacity-90', d.notation === 'bpmn' ? 'left-1.5' : 'right-1.5')}

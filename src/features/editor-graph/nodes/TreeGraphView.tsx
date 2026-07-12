@@ -43,13 +43,12 @@ function useIconResolver(): (icon: string) => string {
 
 const DND_MIME = 'application/gms-tree-id'
 
-function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRow }: {
+function Rows({ nodes, depth, collapsed, toggle, accent, resolve, onDropRow }: {
   nodes: TreeRow[]
   depth: number
   collapsed: Set<string>
   toggle: (id: string) => void
   accent: string
-  text: string
   resolve: (icon: string) => string
   onDropRow: (draggedId: string, targetId: string, frac: number) => void
 }) {
@@ -89,7 +88,7 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRo
               <button
                 type="button"
                 className="nodrag flex h-4 w-3 shrink-0 items-center justify-center rounded-sm text-[9px] hover:bg-[var(--surface-3)]"
-                style={{ color: text }}
+                style={{ color: 'var(--fg)' }}
                 onClick={e => { e.stopPropagation(); if (has) toggle(n.id) }}
                 aria-label={has ? (isCol ? `Expand ${n.label}` : `Collapse ${n.label}`) : undefined}
                 tabIndex={has ? 0 : -1}
@@ -99,10 +98,10 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRo
               {n.icon
                 ? <img src={resolve(n.icon)} alt="" width={14} height={14} draggable={false} className="shrink-0 object-contain" />
                 : has ? <FolderIcon open={!isCol} color={accent} /> : <FileIcon color={accent} />}
-              <span className="truncate text-[12px]" style={{ color: text }}>{n.label}</span>
+              <span className="truncate text-[12px] font-medium text-[var(--fg)]">{n.label}</span>
             </div>
             {has && !isCol && (
-              <Rows nodes={n.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} accent={accent} text={text} resolve={resolve} onDropRow={onDropRow} />
+              <Rows nodes={n.children} depth={depth + 1} collapsed={collapsed} toggle={toggle} accent={accent} resolve={resolve} onDropRow={onDropRow} />
             )}
           </div>
         )
@@ -112,7 +111,7 @@ function Rows({ nodes, depth, collapsed, toggle, accent, text, resolve, onDropRo
 }
 
 /** Windows-Explorer-style collapsible file tree rendered inside a treeGraph. */
-export function TreeGraphView({ roots, accent, text }: { roots: TreeRow[]; accent: string; text: string }) {
+export function TreeGraphView({ roots, accent }: { roots: TreeRow[]; accent: string }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const resolve = useIconResolver()
   const elements = useModelStore(s => s.model.elements)
@@ -152,7 +151,7 @@ export function TreeGraphView({ roots, accent, text }: { roots: TreeRow[]; accen
   }, [elements, reorderSiblings, dispatch, isDescendant])
   return (
     <div className="nodrag nowheel h-full w-full overflow-auto py-1">
-      <Rows nodes={roots} depth={0} collapsed={collapsed} toggle={toggle} accent={accent} text={text} resolve={resolve} onDropRow={onDropRow} />
+      <Rows nodes={roots} depth={0} collapsed={collapsed} toggle={toggle} accent={accent} resolve={resolve} onDropRow={onDropRow} />
     </div>
   )
 }

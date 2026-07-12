@@ -88,6 +88,7 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   quadrantItem: { group: 'Position (0–1)', fields: [
     { key: 'x', label: 'X (0 left → 1 right)', placeholder: 'e.g. 0.8' },
     { key: 'y', label: 'Y (0 bottom → 1 top)', placeholder: 'e.g. 0.6' },
+    { key: 'projection', label: 'Projection (x y)', placeholder: 'e.g. 0.9 0.3' },
   ] },
   umlClass: { group: 'UML Class', fields: [
     { key: 'attributes', label: 'Attributes (; separated)', placeholder: '- id: int; - name: string', multiline: true },
@@ -115,6 +116,7 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   gridItem: { group: 'Cell (1-based)', fields: [
     { key: 'row', label: 'Row', placeholder: '1' },
     { key: 'col', label: 'Column', placeholder: '1' },
+    { key: 'projection', label: 'Projection (row column)', placeholder: 'e.g. 2 4' },
   ] },
   treeNode: { group: 'Tree node', fields: [
     { key: 'icon', label: 'Icon path or URL', placeholder: 'icons/file.svg, C:\\icons\\file.png, or https://…' },

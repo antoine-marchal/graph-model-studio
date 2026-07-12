@@ -23,7 +23,7 @@ export const GanttAxisNode = memo(({ data }: NodeProps) => {
         {d.ticks.map(t => (
           <g key={t.x}>
             <line x1={t.x} y1={GANTT_AXIS_H - 12} x2={t.x} y2={d.height} stroke="var(--border)" strokeWidth="1" strokeDasharray="2 4" />
-            <text x={t.x + 3} y={GANTT_AXIS_H - 16} fontSize="9" fill="var(--fg-subtle)" fontFamily="inherit">
+            <text x={t.x + 3} y={GANTT_AXIS_H - 16} fontSize="9" fontWeight="600" fill="var(--fg-muted)" fontFamily="inherit">
               {t.label}
             </text>
           </g>

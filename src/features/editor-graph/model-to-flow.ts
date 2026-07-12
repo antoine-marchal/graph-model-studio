@@ -510,6 +510,46 @@ export function modelToFlow(
   }
   const neededAnchors = new Set<string>(Object.keys(treeAnchorOf).filter(id => visible.has(id)))
 
+  const projectionFor = (id: string): { dx: number; dy: number } | undefined => {
+    const el = model.elements[id]
+    if (el?.type !== 'gridItem' && el?.type !== 'quadrantItem') return undefined
+    const raw = el.properties?.['projection']?.trim()
+    if (!raw) return undefined
+    const parts = raw.split(/[\s,]+/).filter(Boolean)
+    if (parts.length !== 2) return undefined
+    const parentId = hostOf[id] ?? el.parentId
+    if (!parentId) return undefined
+    let tx: number
+    let ty: number
+    if (el.type === 'gridItem') {
+      const frame = gridFrames[parentId]
+      if (!frame) return undefined
+      const row = Number(parts[0])
+      const col = Number(parts[1])
+      if (!Number.isInteger(row) || !Number.isInteger(col) || row < 1 || row > frame.rows || col < 1 || col > frame.cols) return undefined
+      tx = frame.originX + (col - 0.5) * frame.cellW
+      ty = frame.originY + (row - 0.5) * frame.cellH
+    } else {
+      const x = Number(parts[0])
+      const y = Number(parts[1])
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined
+      const px = Math.max(0, Math.min(1, x))
+      const py = Math.max(0, Math.min(1, y))
+      const parentSize = sizes[parentId]
+      if (!parentSize) return undefined
+      const inset = 26
+      tx = inset + px * (parentSize.width - 2 * inset)
+      ty = parentSize.height - inset - py * (parentSize.height - 2 * inset)
+    }
+    const position = positions[id]
+    const size = sizes[id]
+    if (!position || !size) return undefined
+    return {
+      dx: tx - (position.x + size.width / 2),
+      dy: ty - (position.y + size.height / 2),
+    }
+  }
+
   // CPM values when the view shows PERT nodes (computed over the whole model
   // so partial views still display consistent numbers)
   let pert: PertResult | null = null
@@ -608,6 +648,7 @@ export function modelToFlow(
         mindmapDepth: mindmapDepth(id),
         grid: gridFrames[id],
         tree: treeRoots[id],
+        projection: projectionFor(id),
       },
       ...(useParent ? { parentId: rfParent } : {}),
     }

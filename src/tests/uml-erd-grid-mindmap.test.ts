@@ -147,7 +147,7 @@ describe('grid / AMDEC matrix', () => {
         xLabel "Severity"
         yLabel "Occurrence"
         cellBg "5,5=#e53935; 1,1=#43a047"
-        i1 = gridItem "Leak" { row "5" col "5" }
+        i1 = gridItem "Leak" { row "5" col "5" projection "1, 1" }
         i2 = gridItem "Typo" { row "1" col "1" }
       }
     }
@@ -163,6 +163,10 @@ describe('grid / AMDEC matrix', () => {
     expect(i1.parentId).toBe('amdec')
     expect(i1.position.x).toBeGreaterThan(i2.position.x)
     expect(i1.position.y).toBeGreaterThan(i2.position.y)
+    expect(i1.data.projection).toBeDefined()
+    expect(i1.data.projection!.dx).toBeLessThan(0)
+    expect(i1.data.projection!.dy).toBeLessThan(0)
+    expect(i2.data.projection).toBeUndefined()
   })
 
   it('expands cells to fill a manually resized matrix', () => {

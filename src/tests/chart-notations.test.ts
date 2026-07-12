@@ -175,7 +175,7 @@ describe('quadrant chart layout', () => {
         q1 "Do first"
         xLabel "Effort"
         yLabel "Impact"
-        a = quadrantItem "A" { x "0.9" y "0.9" }
+        a = quadrantItem "A" { x "0.9" y "0.9" projection "0.1 0.2" }
         b = quadrantItem "B" { x "0.1" y "0.1" }
       }
     }
@@ -190,6 +190,9 @@ describe('quadrant chart layout', () => {
     const chart = nodes.find(n => n.id === 'chart')!
     expect(chart.width).toBe(480)
     expect((chart.data as { chartProps?: Record<string, string> }).chartProps?.q1).toBe('Do first')
+    expect(a.data.projection).toBeDefined()
+    expect(a.data.projection!.dx).toBeLessThan(0)
+    expect(a.data.projection!.dy).toBeGreaterThan(0)
   })
 })
 
