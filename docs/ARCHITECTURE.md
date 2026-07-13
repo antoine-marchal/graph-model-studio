@@ -74,13 +74,17 @@ notation, and layout logic unit-testable in isolation (see `src/tests`).
 
 `core/layout` exposes a small dispatcher:
 
-- **`layered`** — a Sugiyama-lite layout (longest-path layering, barycenter
-  ordering) implemented in `auto-layout.ts`. Respects container nesting.
+- **`layered`** — a deterministic Sugiyama-style layout implemented in
+  `auto-layout.ts`. It condenses cycles before rank assignment and uses stable
+  barycentre sweeps for ordering. Respects container nesting.
 - **`dagre`** — `dagre-layout.ts` adapts `@dagrejs/dagre`, converting its
   centre-based coordinates to the top-left convention used everywhere else.
 
 `runLayout` / `runLayoutSubset` pick the engine; the choice is a user preference
 in the store, so it applies to both live rendering and explicit "Layout" actions.
+Both engines share the same subset pipeline. **All** recomputes the complete
+nested view, while **Selected** preserves the selection's visual centre and lays
+out each parent-relative sibling group independently.
 
 ## Notation registry
 

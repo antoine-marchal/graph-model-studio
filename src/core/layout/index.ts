@@ -1,7 +1,7 @@
 import type { Position } from '../model'
 import {
   layeredLayout,
-  layeredLayoutSubset,
+  layoutSubset,
   type LayoutNodeInput,
   type LayoutEdgeInput,
   type LayoutOptions,
@@ -41,27 +41,12 @@ export function runLayoutSubset(
   subsetIds: Set<string>,
   options: LayoutOptions,
 ): Record<string, Position> {
-  if (engine === 'layered') {
-    return layeredLayoutSubset(allNodes, allEdges, currentPositions, subsetIds, options)
-  }
-  // dagre: lay out the induced subgraph then translate back onto the current centroid
-  const subNodes = allNodes.filter(n => subsetIds.has(n.id))
-  if (subNodes.length === 0) return {}
-  const subEdges = allEdges.filter(e => subsetIds.has(e.source) && subsetIds.has(e.target))
-  const laid = dagreLayout(subNodes, subEdges, { ...options, origin: { x: 0, y: 0 } })
-
-  let cx = 0, cy = 0, count = 0
-  for (const n of subNodes) {
-    const p = currentPositions[n.id]
-    if (p) { cx += p.x + n.width / 2; cy += p.y + n.height / 2; count++ }
-  }
-  if (count === 0) return laid
-  cx /= count; cy /= count
-  let lx = 0, ly = 0
-  for (const n of subNodes) { lx += laid[n.id].x + n.width / 2; ly += laid[n.id].y + n.height / 2 }
-  lx /= subNodes.length; ly /= subNodes.length
-  const dx = cx - lx, dy = cy - ly
-  const shifted: Record<string, Position> = {}
-  for (const id of Object.keys(laid)) shifted[id] = { x: laid[id].x + dx, y: laid[id].y + dy }
-  return shifted
+  return layoutSubset(
+    (nodes, edges, layoutOptions) => runLayout(engine, nodes, edges, layoutOptions),
+    allNodes,
+    allEdges,
+    currentPositions,
+    subsetIds,
+    options,
+  )
 }

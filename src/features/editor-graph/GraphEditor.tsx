@@ -22,7 +22,6 @@ import { useModelStore } from '@/store'
 import {
   modelToFlow,
   computeAutoLayout,
-  buildLayoutInputs,
   type GraphNode,
   type GraphEdge,
 } from './model-to-flow'
@@ -34,7 +33,7 @@ import { EdgeMarkers } from './edges/EdgeMarkers'
 import { Button } from '@/ui/components/Button'
 import { nanoid } from './nanoid'
 import { notationRegistry } from '@/core/notation'
-import { runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layout'
+import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layout'
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 
@@ -277,30 +276,92 @@ function GraphEditorInner() {
   }, [screenToFlowPosition])
 
   // ── auto layout ──
-  // A node with an explicit `at` in the DSL is "pinned": stored in the view's
-  // layoutPositions. Auto-layout never moves pinned nodes — it only arranges the
-  // rest around them. (Remove the `at` line, or drag the node, to re-pin/un-pin.)
+  // "All" deliberately starts fresh; "Selected" preserves the surrounding layout.
   const runAutoLayout = useCallback((scope: 'all' | 'selected') => {
     if (!activeView) return
-    //const pinned = new Set(Object.keys(activeView.layoutPositions ?? {}))
     if (scope === 'all') {
-      // ignoreStored:false keeps every pinned node at its stored position and
-      // only computes positions for the unpinned ones
-      setViewPositions(viewId, computeAutoLayout(model, activeView, { engine: layoutEngine, ignoreStored: false }), false)
+      setViewPositions(viewId, computeAutoLayout(model, activeView, { engine: layoutEngine, ignoreStored: true }), false)
     } else {
-      // lay out the selected nodes even that are pinned, keeping everything else put
-      const selectedIds = nodes.filter(n => n.selected).map(n => n.id)
-      if (selectedIds.length === 0) return
-      const { nodes: lin, edges: led } = buildLayoutInputs(model, activeView)
-      const current: Record<string, { x: number; y: number }> = {}
-      for (const n of nodes) current[n.id] = n.position
-      const positions = runLayoutSubset(layoutEngine, lin, led, current, new Set(selectedIds), {
-        direction: activeView.layoutDirection, layerGap: 90, nodeGap: 48,
-      })
+      // Positions are parent-relative, so layout each selected sibling group in
+      // its own coordinate space. This preserves nested containers and charts.
+      const graphNodes = nodes.filter(node => model.elements[node.id])
+      const selected = graphNodes.filter(node => node.selected)
+      if (selected.length === 0) return
+      const parentOf = new Map(nodes.map(node => [node.id, node.parentId]))
+      const groups = new Map<string, typeof selected>()
+      for (const node of selected) {
+        const key = node.parentId ?? '__root__'
+        groups.set(key, [...(groups.get(key) ?? []), node])
+      }
+
+      const positions: Record<string, { x: number; y: number }> = {}
+      for (const group of groups.values()) {
+        const groupIds = new Set(group.map(node => node.id))
+        const liftToGroup = (endpoint: string): string | undefined => {
+          let current: string | undefined = endpoint
+          const visited = new Set<string>()
+          while (current && !visited.has(current)) {
+            if (groupIds.has(current)) return current
+            visited.add(current)
+            current = parentOf.get(current)
+          }
+          return undefined
+        }
+        const layoutEdges = edges.flatMap(edge => {
+          const source = liftToGroup(edge.source)
+          const target = liftToGroup(edge.target)
+          return source && target && source !== target ? [{ source, target }] : []
+        })
+        const layoutNodes = group.map(node => ({
+          id: node.id,
+          width: node.measured?.width ?? node.width ?? 150,
+          height: node.measured?.height ?? node.height ?? 70,
+        }))
+        const current = Object.fromEntries(group.map(node => [node.id, node.position]))
+        Object.assign(positions, runLayoutSubset(layoutEngine, layoutNodes, layoutEdges, current, groupIds, {
+          direction: activeView.layoutDirection,
+          layerGap: activeView.layoutDirection === 'lr' || activeView.layoutDirection === 'rl' ? 100 : 70,
+          nodeGap: 44,
+        }))
+      }
+      if (Object.keys(positions).length === 0) return
       setViewPositions(viewId, positions, true)
     }
     setTimeout(() => fitView({ duration: 300, padding: 0.2 }), 50)
-  }, [activeView, model, nodes, viewId, setViewPositions, fitView, layoutEngine])
+  }, [activeView, model, nodes, edges, viewId, setViewPositions, fitView, layoutEngine])
+
+  const alignSelection = useCallback((alignment: 'vertical' | 'horizontal') => {
+    const selected = nodes.filter(node => node.selected && model.elements[node.id])
+    const groups = new Map<string, typeof selected>()
+    for (const node of selected) {
+      const key = node.parentId ?? '__root__'
+      groups.set(key, [...(groups.get(key) ?? []), node])
+    }
+
+    const positions: Record<string, { x: number; y: number }> = {}
+    for (const group of groups.values()) {
+      const layoutNodes = group.map(node => ({
+        id: node.id,
+        width: node.measured?.width ?? node.width ?? 150,
+        height: node.measured?.height ?? node.height ?? 70,
+      }))
+      const current = Object.fromEntries(group.map(node => [node.id, node.position]))
+      Object.assign(positions, alignNodes(layoutNodes, current, alignment))
+    }
+    if (Object.keys(positions).length) setViewPositions(viewId, positions, true)
+  }, [model.elements, nodes, setViewPositions, viewId])
+
+  const canAlignSelection = (() => {
+    const parentCounts = new Map<string, number>()
+    for (const node of nodes) {
+      if (!node.selected || !model.elements[node.id]) continue
+      const key = node.parentId ?? '__root__'
+      const count = (parentCounts.get(key) ?? 0) + 1
+      if (count >= 2) return true
+      parentCounts.set(key, count)
+    }
+    return false
+  })()
 
   // ── duplicate / copy / paste ──
   const duplicateSelection = useCallback(() => {
@@ -482,6 +543,8 @@ function GraphEditorInner() {
           </select>
           <Button size="sm" variant="outline" onClick={() => runAutoLayout('all')} title="Auto-layout the whole view">⤢ All</Button>
           <Button size="sm" variant="outline" onClick={() => runAutoLayout('selected')} title="Layout selected nodes only">⤢ Selected</Button>
+          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('vertical')} title="Align selected node centres on a vertical line">Align V</Button>
+          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('horizontal')} title="Align selected node centres on a horizontal line">Align H</Button>
           <Button size="sm" variant="outline" onClick={() => fitView({ duration: 300, padding: 0.2 })}>Fit</Button>
         </Panel>
 

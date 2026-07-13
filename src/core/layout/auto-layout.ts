@@ -1,16 +1,7 @@
 import type { LayoutDirection, Position } from '../model'
 
-export interface LayoutNodeInput {
-  id: string
-  width: number
-  height: number
-}
-
-export interface LayoutEdgeInput {
-  source: string
-  target: string
-}
-
+export interface LayoutNodeInput { id: string; width: number; height: number }
+export interface LayoutEdgeInput { source: string; target: string }
 export interface LayoutOptions {
   direction: LayoutDirection
   layerGap?: number
@@ -18,245 +9,219 @@ export interface LayoutOptions {
   origin?: Position
 }
 
-interface InternalNode extends LayoutNodeInput {
-  layer: number
-  order: number
-}
+type LayoutRunner = (nodes: LayoutNodeInput[], edges: LayoutEdgeInput[], options: LayoutOptions) => Record<string, Position>
 
 /**
- * Layered (Sugiyama-lite) layout.
- * - assigns layers via longest-path on the DAG (back-edges from cycles ignored)
- * - orders nodes within layers by barycenter (one down + one up sweep)
- * - positions along the primary axis by layer, cross axis spread + centered
- * Disconnected nodes are placed in their own trailing band.
+ * Deterministic layered layout. Cycles are condensed into strongly connected
+ * components before ranks are assigned, then stable barycentre sweeps reduce
+ * crossings without making repeated layouts jump around.
  */
-export function layeredLayout(
-  nodes: LayoutNodeInput[],
-  edges: LayoutEdgeInput[],
-  options: LayoutOptions,
-): Record<string, Position> {
+export function layeredLayout(nodes: LayoutNodeInput[], edges: LayoutEdgeInput[], options: LayoutOptions): Record<string, Position> {
   if (nodes.length === 0) return {}
-
   const layerGap = options.layerGap ?? 90
   const nodeGap = options.nodeGap ?? 50
   const origin = options.origin ?? { x: 40, y: 40 }
+  const nodeById = new Map(nodes.map(node => [node.id, node]))
+  const inputOrder = new Map(nodes.map((node, index) => [node.id, index]))
+  const outgoing = new Map(nodes.map(node => [node.id, [] as string[]]))
+  const incoming = new Map(nodes.map(node => [node.id, [] as string[]]))
+  const edgeKeys = new Set<string>()
 
-  const nodeMap = new Map<string, InternalNode>()
-  for (const n of nodes) {
-    nodeMap.set(n.id, { ...n, layer: 0, order: 0 })
+  for (const edge of edges) {
+    if (edge.source === edge.target || !nodeById.has(edge.source) || !nodeById.has(edge.target)) continue
+    const key = `${edge.source}\u0000${edge.target}`
+    if (edgeKeys.has(key)) continue
+    edgeKeys.add(key)
+    outgoing.get(edge.source)!.push(edge.target)
+    incoming.get(edge.target)!.push(edge.source)
   }
 
-  // Only keep edges between known nodes; drop self-loops
-  const validEdges = edges.filter(
-    e => e.source !== e.target && nodeMap.has(e.source) && nodeMap.has(e.target),
-  )
+  const isolatedIds = new Set(nodes.filter(node => outgoing.get(node.id)!.length === 0 && incoming.get(node.id)!.length === 0).map(node => node.id))
+  const connectedIds = nodes.filter(node => !isolatedIds.has(node.id)).map(node => node.id)
 
-  const outgoing = new Map<string, string[]>()
-  const incoming = new Map<string, string[]>()
-  for (const id of nodeMap.keys()) {
-    outgoing.set(id, [])
-    incoming.set(id, [])
-  }
-  for (const e of validEdges) {
-    outgoing.get(e.source)!.push(e.target)
-    incoming.get(e.target)!.push(e.source)
-  }
-
-  // ── Layer assignment: longest path from sources, with cycle protection ──
-  const visiting = new Set<string>()
-  const done = new Set<string>()
-
-  function assignLayer(id: string): number {
-    if (done.has(id)) return nodeMap.get(id)!.layer
-    if (visiting.has(id)) return nodeMap.get(id)!.layer // break cycle
-    visiting.add(id)
-    let maxParent = -1
-    for (const p of incoming.get(id)!) {
-      maxParent = Math.max(maxParent, assignLayer(p))
+  // Tarjan SCC condensation makes cyclic input rankable and deterministic.
+  let nextIndex = 0
+  const indexes = new Map<string, number>()
+  const lowLinks = new Map<string, number>()
+  const stack: string[] = []
+  const onStack = new Set<string>()
+  const components: string[][] = []
+  const visit = (id: string) => {
+    indexes.set(id, nextIndex)
+    lowLinks.set(id, nextIndex++)
+    stack.push(id)
+    onStack.add(id)
+    for (const target of outgoing.get(id)!) {
+      if (!indexes.has(target)) {
+        visit(target)
+        lowLinks.set(id, Math.min(lowLinks.get(id)!, lowLinks.get(target)!))
+      } else if (onStack.has(target)) {
+        lowLinks.set(id, Math.min(lowLinks.get(id)!, indexes.get(target)!))
+      }
     }
-    const layer = maxParent + 1
-    nodeMap.get(id)!.layer = layer
-    visiting.delete(id)
-    done.add(id)
-    return layer
+    if (lowLinks.get(id) !== indexes.get(id)) return
+    const component: string[] = []
+    let member: string
+    do {
+      member = stack.pop()!
+      onStack.delete(member)
+      component.push(member)
+    } while (member !== id)
+    component.sort((a, b) => inputOrder.get(a)! - inputOrder.get(b)!)
+    components.push(component)
   }
-  for (const id of nodeMap.keys()) assignLayer(id)
+  for (const id of connectedIds) if (!indexes.has(id)) visit(id)
 
-  // Connected vs isolated
-  const isolated: string[] = []
-  for (const id of nodeMap.keys()) {
-    if (outgoing.get(id)!.length === 0 && incoming.get(id)!.length === 0) {
-      isolated.push(id)
+  const componentOf = new Map<string, number>()
+  components.forEach((component, ci) => component.forEach(id => componentOf.set(id, ci)))
+  const componentOut = components.map(() => new Set<number>())
+  const indegree = components.map(() => 0)
+  for (const key of edgeKeys) {
+    const [source, target] = key.split('\u0000')
+    const a = componentOf.get(source)
+    const b = componentOf.get(target)
+    if (a === undefined || b === undefined || a === b || componentOut[a].has(b)) continue
+    componentOut[a].add(b)
+    indegree[b]++
+  }
+
+  const componentRank = components.map(() => 0)
+  const queue = components.map((_, ci) => ci).filter(ci => indegree[ci] === 0)
+    .sort((a, b) => inputOrder.get(components[a][0])! - inputOrder.get(components[b][0])!)
+  while (queue.length) {
+    const ci = queue.shift()!
+    for (const next of componentOut[ci]) {
+      componentRank[next] = Math.max(componentRank[next], componentRank[ci] + 1)
+      if (--indegree[next] === 0) queue.push(next)
     }
   }
-  const isolatedSet = new Set(isolated)
 
-  // Build layers (excluding isolated)
   const layers: string[][] = []
-  for (const [id, n] of nodeMap) {
-    if (isolatedSet.has(id)) continue
-    while (layers.length <= n.layer) layers.push([])
-    layers[n.layer].push(id)
+  components.forEach((component, ci) => {
+    const rank = componentRank[ci]
+    while (layers.length <= rank) layers.push([])
+    layers[rank].push(...component)
+  })
+  const order = new Map<string, number>()
+  const updateOrder = (layer: string[]) => layer.forEach((id, index) => order.set(id, index))
+  layers.forEach(updateOrder)
+  const barycentre = (id: string, neighbours: Map<string, string[]>) => {
+    const ranked = neighbours.get(id)!.filter(neighbour => order.has(neighbour))
+    return ranked.length
+      ? ranked.reduce((sum, neighbour) => sum + order.get(neighbour)!, 0) / ranked.length
+      : order.get(id) ?? 0
   }
-
-  // ── Cross-axis ordering: barycenter sweeps ──
-  const orderInLayer = new Map<string, number>()
-  layers.forEach(layer => layer.forEach((id, i) => orderInLayer.set(id, i)))
-
-  function barycenter(id: string, neighborGetter: Map<string, string[]>): number {
-    const ns = neighborGetter.get(id)!
-    if (ns.length === 0) return orderInLayer.get(id) ?? 0
-    const sum = ns.reduce((acc, nid) => acc + (orderInLayer.get(nid) ?? 0), 0)
-    return sum / ns.length
-  }
-
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 8; pass++) {
     const downward = pass % 2 === 0
-    const range = downward
-      ? [...Array(layers.length).keys()]
-      : [...Array(layers.length).keys()].reverse()
-    for (const li of range) {
-      const layer = layers[li]
-      const getter = downward ? incoming : outgoing
-      const withBary = layer.map(id => ({ id, b: barycenter(id, getter) }))
-      withBary.sort((a, b) => a.b - b.b)
-      layers[li] = withBary.map(x => x.id)
-      layers[li].forEach((id, i) => orderInLayer.set(id, i))
+    const layerIndexes = layers.map((_, index) => index)
+    if (!downward) layerIndexes.reverse()
+    for (const layerIndex of layerIndexes) {
+      const neighbours = downward ? incoming : outgoing
+      layers[layerIndex] = layers[layerIndex]
+        .map(id => ({ id, barycentre: barycentre(id, neighbours), previous: order.get(id) ?? 0 }))
+        .sort((a, b) => a.barycentre - b.barycentre || a.previous - b.previous || inputOrder.get(a.id)! - inputOrder.get(b.id)!)
+        .map(item => item.id)
+      updateOrder(layers[layerIndex])
     }
   }
 
-  // ── Coordinate assignment ──
-  const result: Record<string, Position> = {}
   const horizontal = options.direction === 'lr' || options.direction === 'rl'
   const reverse = options.direction === 'rl' || options.direction === 'bt'
-
-  // Max extent along cross axis for centering
-  const layerCrossExtents = layers.map(layer =>
-    layer.reduce((acc, id) => {
-      const n = nodeMap.get(id)!
-      return acc + (horizontal ? n.height : n.width) + nodeGap
-    }, -nodeGap),
-  )
-  const maxCrossExtent = Math.max(0, ...layerCrossExtents)
-
-  // Primary axis offsets per layer (uses max node size in each layer)
-  const layerPrimarySizes = layers.map(layer =>
-    Math.max(0, ...layer.map(id => {
-      const n = nodeMap.get(id)!
-      return horizontal ? n.width : n.height
-    })),
-  )
-  const layerPrimaryOffsets: number[] = []
-  {
-    let acc = 0
-    for (let i = 0; i < layers.length; i++) {
-      layerPrimaryOffsets.push(acc)
-      acc += layerPrimarySizes[i] + layerGap
-    }
+  const primarySize = (id: string) => horizontal ? nodeById.get(id)!.width : nodeById.get(id)!.height
+  const crossSize = (id: string) => horizontal ? nodeById.get(id)!.height : nodeById.get(id)!.width
+  const primarySizes = layers.map(layer => Math.max(0, ...layer.map(primarySize)))
+  const crossSizes = layers.map(layer => layer.reduce((sum, id, index) => sum + crossSize(id) + (index ? nodeGap : 0), 0))
+  const maxCrossSize = Math.max(0, ...crossSizes)
+  const layerOffsets: number[] = []
+  let totalPrimary = 0
+  for (const size of primarySizes) {
+    layerOffsets.push(totalPrimary)
+    totalPrimary += size + layerGap
   }
-  const totalPrimary = layerPrimaryOffsets.length
-    ? layerPrimaryOffsets[layers.length - 1] + layerPrimarySizes[layers.length - 1]
-    : 0
+  if (layers.length) totalPrimary -= layerGap
 
-  layers.forEach((layer, li) => {
-    // center this layer's nodes on the cross axis
-    const crossExtent = layerCrossExtents[li]
-    let crossPos = (maxCrossExtent - crossExtent) / 2
-    const primaryBase = reverse
-      ? totalPrimary - layerPrimaryOffsets[li] - layerPrimarySizes[li]
-      : layerPrimaryOffsets[li]
-
+  const result: Record<string, Position> = {}
+  layers.forEach((layer, layerIndex) => {
+    let cross = (maxCrossSize - crossSizes[layerIndex]) / 2
+    const primary = reverse ? totalPrimary - layerOffsets[layerIndex] - primarySizes[layerIndex] : layerOffsets[layerIndex]
     for (const id of layer) {
-      const n = nodeMap.get(id)!
-      const crossSize = horizontal ? n.height : n.width
-      const primarySize = horizontal ? n.width : n.height
-      // align node center within layer band
-      const primaryOffset = (layerPrimarySizes[li] - primarySize) / 2
-
-      if (horizontal) {
-        result[id] = {
-          x: origin.x + primaryBase + primaryOffset,
-          y: origin.y + crossPos,
-        }
-      } else {
-        result[id] = {
-          x: origin.x + crossPos,
-          y: origin.y + primaryBase + primaryOffset,
-        }
-      }
-      crossPos += crossSize + nodeGap
+      const alignedPrimary = primary + (primarySizes[layerIndex] - primarySize(id)) / 2
+      result[id] = horizontal
+        ? { x: origin.x + alignedPrimary, y: origin.y + cross }
+        : { x: origin.x + cross, y: origin.y + alignedPrimary }
+      cross += crossSize(id) + nodeGap
     }
   })
 
-  // ── Isolated nodes: trailing band ──
-  if (isolated.length > 0) {
-    const bandPrimary = totalPrimary + layerGap
-    let crossPos = 0
-    for (const id of isolated) {
-      const n = nodeMap.get(id)!
-      const crossSize = horizontal ? n.height : n.width
-      if (horizontal) {
-        result[id] = { x: origin.x + bandPrimary, y: origin.y + crossPos }
-      } else {
-        result[id] = { x: origin.x + crossPos, y: origin.y + bandPrimary }
-      }
-      crossPos += crossSize + nodeGap
-    }
+  // Unconnected nodes live in a compact trailing band, outside meaningful ranks.
+  let isolatedCross = 0
+  const bandPrimary = layers.length ? totalPrimary + layerGap : 0
+  for (const node of nodes.filter(node => isolatedIds.has(node.id))) {
+    result[node.id] = horizontal
+      ? { x: origin.x + bandPrimary, y: origin.y + isolatedCross }
+      : { x: origin.x + isolatedCross, y: origin.y + bandPrimary }
+    isolatedCross += (horizontal ? node.height : node.width) + nodeGap
   }
-
   return result
 }
 
-/**
- * Layout only a subset of nodes (induced subgraph) and keep the result
- * roughly centered on the subset's current centroid.
- */
-export function layeredLayoutSubset(
+/** Shared induced-subgraph and visual-centre behaviour for every engine. */
+export function layoutSubset(
+  layout: LayoutRunner,
   allNodes: LayoutNodeInput[],
   allEdges: LayoutEdgeInput[],
   currentPositions: Record<string, Position>,
   subsetIds: Set<string>,
   options: LayoutOptions,
 ): Record<string, Position> {
-  const subNodes = allNodes.filter(n => subsetIds.has(n.id))
-  if (subNodes.length === 0) return {}
-  const subEdges = allEdges.filter(e => subsetIds.has(e.source) && subsetIds.has(e.target))
+  const nodes = allNodes.filter(node => subsetIds.has(node.id))
+  if (nodes.length === 0) return {}
+  const edges = allEdges.filter(edge => subsetIds.has(edge.source) && subsetIds.has(edge.target))
+  const laidOut = layout(nodes, edges, { ...options, origin: { x: 0, y: 0 } })
+  const positioned = nodes.filter(node => currentPositions[node.id])
+  if (positioned.length === 0) return laidOut
 
-  // current centroid
-  let cx = 0
-  let cy = 0
-  let count = 0
-  for (const n of subNodes) {
-    const p = currentPositions[n.id]
-    if (p) {
-      cx += p.x + n.width / 2
-      cy += p.y + n.height / 2
-      count++
-    }
-  }
-  const origin = count > 0 ? { x: 0, y: 0 } : { x: 40, y: 40 }
-  const laid = layeredLayout(subNodes, subEdges, { ...options, origin })
+  const centre = (positions: Record<string, Position>, members: LayoutNodeInput[]) => ({
+    x: members.reduce((sum, node) => sum + positions[node.id].x + node.width / 2, 0) / members.length,
+    y: members.reduce((sum, node) => sum + positions[node.id].y + node.height / 2, 0) / members.length,
+  })
+  const before = centre(currentPositions, positioned)
+  const after = centre(laidOut, nodes)
+  return Object.fromEntries(nodes.map(node => [node.id, {
+    x: laidOut[node.id].x + before.x - after.x,
+    y: laidOut[node.id].y + before.y - after.y,
+  }]))
+}
 
-  if (count === 0) return laid
+/**
+ * Align node centres on one axis while preserving the selection's centre.
+ * A vertical alignment shares X; a horizontal alignment shares Y.
+ */
+export function alignNodes(
+  nodes: LayoutNodeInput[],
+  currentPositions: Record<string, Position>,
+  alignment: 'vertical' | 'horizontal',
+): Record<string, Position> {
+  const positioned = nodes.filter(node => currentPositions[node.id])
+  if (positioned.length < 2) return {}
+  const vertical = alignment === 'vertical'
+  const sharedCentre = positioned.reduce((sum, node) => {
+    const position = currentPositions[node.id]
+    return sum + (vertical ? position.x + node.width / 2 : position.y + node.height / 2)
+  }, 0) / positioned.length
 
-  cx /= count
-  cy /= count
-  // centroid of the laid-out result
-  let lx = 0
-  let ly = 0
-  for (const n of subNodes) {
-    const p = laid[n.id]
-    lx += p.x + n.width / 2
-    ly += p.y + n.height / 2
-  }
-  lx /= subNodes.length
-  ly /= subNodes.length
+  return Object.fromEntries(positioned.map(node => {
+    const position = currentPositions[node.id]
+    return [node.id, vertical
+      ? { x: sharedCentre - node.width / 2, y: position.y }
+      : { x: position.x, y: sharedCentre - node.height / 2 }]
+  }))
+}
 
-  const dx = cx - lx
-  const dy = cy - ly
-  const shifted: Record<string, Position> = {}
-  for (const id of Object.keys(laid)) {
-    shifted[id] = { x: laid[id].x + dx, y: laid[id].y + dy }
-  }
-  return shifted
+/** @deprecated Use runLayoutSubset so every engine follows the same behaviour. */
+export function layeredLayoutSubset(
+  allNodes: LayoutNodeInput[], allEdges: LayoutEdgeInput[], currentPositions: Record<string, Position>,
+  subsetIds: Set<string>, options: LayoutOptions,
+): Record<string, Position> {
+  return layoutSubset(layeredLayout, allNodes, allEdges, currentPositions, subsetIds, options)
 }

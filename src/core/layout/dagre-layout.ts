@@ -27,11 +27,13 @@ export function dagreLayout(
   const g = new Dagre.graphlib.Graph({ compound: false })
   g.setGraph({
     rankdir: rankdir(options.direction),
+    ranker: 'network-simplex',
+    acyclicer: 'greedy',
     ranksep: options.layerGap ?? 80,
     nodesep: options.nodeGap ?? 48,
     edgesep: 16,
-    marginx: 8,
-    marginy: 8,
+    marginx: 0,
+    marginy: 0,
   })
   g.setDefaultEdgeLabel(() => ({}))
 
@@ -45,12 +47,20 @@ export function dagreLayout(
   Dagre.layout(g)
 
   const origin = options.origin ?? { x: 40, y: 40 }
-  const out: Record<string, Position> = {}
+  const raw: Record<string, Position> = {}
+  let minX = Infinity
+  let minY = Infinity
   for (const n of nodes) {
     const dn = g.node(n.id)
     if (!dn) continue
-    // dagre reports node centre — convert to top-left and shift to origin
-    out[n.id] = { x: origin.x + dn.x - n.width / 2, y: origin.y + dn.y - n.height / 2 }
+    raw[n.id] = { x: dn.x - n.width / 2, y: dn.y - n.height / 2 }
+    minX = Math.min(minX, raw[n.id].x)
+    minY = Math.min(minY, raw[n.id].y)
+  }
+  // Normalise Dagre's bounding box so `origin` means the same thing for both engines.
+  const out: Record<string, Position> = {}
+  for (const [id, position] of Object.entries(raw)) {
+    out[id] = { x: origin.x + position.x - minX, y: origin.y + position.y - minY }
   }
   return out
 }
