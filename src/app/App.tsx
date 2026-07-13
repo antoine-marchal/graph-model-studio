@@ -127,7 +127,7 @@ export function App() {
         {layout.explorerOpen && (
           <>
             <aside
-              className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--surface-1)]"
+              className="relative z-10 flex shrink-0 flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--surface-1)] shadow-[3px_0_12px_rgba(0,0,0,0.025)]"
               style={{ width: layout.explorerW }}
             >
               <Explorer />
@@ -139,7 +139,7 @@ export function App() {
           </>
         )}
 
-        <main ref={centerRef} className="flex flex-1 overflow-hidden">
+        <main ref={centerRef} className="flex flex-1 overflow-hidden bg-[var(--surface-0)]">
           {showCode && (
             <div
               className="flex min-w-0 flex-col"
@@ -175,7 +175,7 @@ export function App() {
               onDoubleClick={() => setLayout(l => ({ ...l, propsOpen: false }))}
             />
             <aside
-              className="flex shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--surface-1)]"
+              className="relative z-10 flex shrink-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--surface-1)] shadow-[-3px_0_12px_rgba(0,0,0,0.025)]"
               style={{ width: layout.propsW }}
             >
               <PropertiesPanel />
@@ -190,8 +190,9 @@ export function App() {
 
 function PanelHeader({ label, children }: { label: string; children?: React.ReactNode }) {
   return (
-    <div className="flex h-7 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-1)] px-3">
-      <span className="text-[11px] font-medium text-[var(--fg-subtle)]">{label}</span>
+    <div className="flex h-9 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-1)] px-3">
+      <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_0_3px_var(--accent-soft)]" />
+      <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--fg-muted)]">{label}</span>
       {children}
     </div>
   )
@@ -204,13 +205,13 @@ function ViewTabs() {
   const views = Object.values(model.views)
   if (views.length <= 1) return null
   return (
-    <div className="ml-2 flex gap-0.5">
+    <div className="ml-2 flex gap-0.5 rounded-md bg-[var(--surface-2)] p-0.5">
       {views.map(v => (
         <button
           key={v.id}
           onClick={() => setActiveView(v.id)}
-          className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-            v.id === activeViewId ? 'bg-[var(--surface-3)] text-[var(--fg)]' : 'text-[var(--fg-subtle)] hover:text-[var(--fg-muted)]'
+          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+            v.id === activeViewId ? 'bg-[var(--surface-raised)] text-[var(--accent)] shadow-[var(--shadow-sm)]' : 'text-[var(--fg-subtle)] hover:text-[var(--fg)]'
           }`}
         >
           {v.name}

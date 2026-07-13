@@ -7,8 +7,8 @@ import { getVisibleElementIds, isRelationIncluded } from '@/core/model/view-visi
 
 function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-3 pb-1 pt-2.5">
-      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--fg-subtle)]">{title}</span>
+    <div className="flex items-center justify-between px-3 pb-1.5 pt-3">
+      <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-[var(--fg-subtle)]">{title}</span>
       {action}
     </div>
   )
@@ -31,10 +31,10 @@ function VisCheckbox({ checked, onToggle, title }: { checked: boolean; onToggle:
       onClick={e => { e.stopPropagation(); onToggle() }}
       title={title}
       className={cn(
-        'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-sm border text-[9px] leading-none transition-colors',
+        'flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[9px] leading-none transition-all',
         checked
-          ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]'
-          : 'border-[var(--border)] text-transparent hover:border-[var(--accent)]',
+          ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)] shadow-sm'
+          : 'border-[var(--border-strong)] bg-[var(--surface-1)] text-transparent hover:border-[var(--accent)]',
       )}
     >
       ✓
@@ -110,8 +110,8 @@ export function Explorer() {
       <div>
         <div
           className={cn(
-            'group flex w-full items-center gap-1 py-1 pr-2 text-xs transition-colors hover:bg-[var(--surface-2)]',
-            selected ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--fg-muted)]',
+            'group mx-1 flex w-[calc(100%-8px)] items-center gap-1 rounded-md py-1.5 pr-2 text-xs transition-colors hover:bg-[var(--surface-2)]',
+            selected ? 'bg-[var(--accent-soft)] font-medium text-[var(--accent)]' : 'text-[var(--fg-muted)]',
           )}
           style={{ paddingLeft: 6 + depth * 12 }}
         >
@@ -148,15 +148,16 @@ export function Explorer() {
   }
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <div className="border-b border-[var(--border)] px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Explorer</span>
+    <div className="flex h-full flex-col overflow-y-auto bg-[var(--surface-1)]">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
+        <span className="grid h-5 w-5 place-items-center rounded-md bg-[var(--accent-soft)] text-[11px] text-[var(--accent)]">⌘</span>
+        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--fg-muted)]">Explorer</span>
       </div>
 
       <SectionHeader
         title="Views"
         action={
-          <button onClick={() => createView()} title="Add view" className="rounded px-1 text-sm leading-none text-[var(--fg-subtle)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]">＋</button>
+          <button onClick={() => createView()} title="Add view" className="grid h-5 w-5 place-items-center rounded-md bg-[var(--surface-2)] text-sm leading-none text-[var(--fg-muted)] transition-colors hover:bg-[var(--accent-soft)] hover:text-[var(--accent)]">＋</button>
         }
       />
       {views.map(v => (
@@ -166,9 +167,9 @@ export function Explorer() {
           onDragLeave={() => setDragOverView(c => (c === v.id ? null : c))}
           onDrop={e => onViewDrop(e, v.id)}
           className={cn(
-            'group flex items-center gap-1.5 px-3 py-1 text-xs transition-colors hover:bg-[var(--surface-2)]',
+            'group mx-2 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs transition-colors hover:bg-[var(--surface-2)]',
             dragOverView === v.id && 'outline-dashed outline-1 outline-[var(--accent)] bg-[var(--accent)]/10',
-            v.id === activeViewId ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--fg-muted)]',
+            v.id === activeViewId ? 'bg-[var(--accent-soft)] font-semibold text-[var(--accent)]' : 'text-[var(--fg-muted)]',
           )}
         >
           <button onClick={() => setActiveView(v.id)} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -179,14 +180,14 @@ export function Explorer() {
           )}
         </div>
       ))}
-      <p className="px-3 py-1 text-[10px] text-[var(--fg-subtle)]">Tip: drag elements/relations onto a view, or use the checkboxes to toggle visibility.</p>
+      <p className="mx-2 mt-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 text-[9px] leading-relaxed text-[var(--fg-subtle)]"><span className="font-semibold text-[var(--fg-muted)]">Tip</span> · Drag items onto a view, or use the checkboxes to control visibility.</p>
 
-      <div className="my-1 border-t border-[var(--border)]" />
+      <div className="mx-3 mt-2 border-t border-[var(--border)]" />
       <SectionHeader title={`Elements (${Object.keys(model.elements).length})`} />
       {rootElements.length === 0 && <p className="px-3 py-1 text-xs text-[var(--fg-subtle)]">No elements</p>}
       {rootElements.map(el => <ElementRow key={el.id} id={el.id} depth={0} />)}
 
-      <div className="my-1 border-t border-[var(--border)]" />
+      <div className="mx-3 mt-2 border-t border-[var(--border)]" />
       <SectionHeader title={`Relations (${relations.length})`} />
       {relations.length === 0 && <p className="px-3 py-1 text-xs text-[var(--fg-subtle)]">No relations</p>}
       {relations.map(rel => {
@@ -198,8 +199,8 @@ export function Explorer() {
           <div
             key={rel.id}
             className={cn(
-              'group flex items-center gap-1 px-3 py-1 text-[11px] transition-colors hover:bg-[var(--surface-2)]',
-              selected ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--fg-subtle)]',
+              'group mx-1 flex items-center gap-1 rounded-md px-2 py-1.5 text-[11px] transition-colors hover:bg-[var(--surface-2)]',
+              selected ? 'bg-[var(--accent-soft)] font-medium text-[var(--accent)]' : 'text-[var(--fg-subtle)]',
             )}
           >
             {activeView && (

@@ -69,8 +69,8 @@ export function ResizeHandle({
         className={cn(
           'pointer-events-none absolute opacity-0 transition-opacity group-hover:opacity-100',
           axis === 'x'
-            ? 'left-1/2 top-1/2 h-6 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)]'
-            : 'left-1/2 top-1/2 h-[3px] w-6 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)]',
+            ? 'left-1/2 top-1/2 h-8 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)] shadow-[0_0_0_3px_var(--surface-1)]'
+            : 'left-1/2 top-1/2 h-1 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--accent)] shadow-[0_0_0_3px_var(--surface-1)]',
         )}
       />
     </div>

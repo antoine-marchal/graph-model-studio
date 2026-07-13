@@ -23,7 +23,7 @@ function TypeField({ value, onPick }: { value: string; onPick: (type: string) =>
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(o => !o)}
-        className="flex w-full items-center gap-2 rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-sm text-[var(--fg)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:outline-none"
+        className="flex h-8 w-full items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 text-sm text-[var(--fg)] hover:border-[var(--border-strong)] focus:border-[var(--accent)] focus:bg-[var(--surface-1)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/15"
       >
         {def && <TypeSwatch t={def} size={14} />}
         <span className="truncate">{def?.label ?? value}</span>
@@ -45,8 +45,8 @@ function TypeField({ value, onPick }: { value: string; onPick: (type: string) =>
 
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-1">
-      <label className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">{label}</label>
+    <div className="flex flex-col gap-1.5">
+      <label className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--fg-subtle)]">{label}</label>
       {children}
     </div>
   )
@@ -491,9 +491,10 @@ export function PropertiesPanel() {
   const selectedRelationId = useModelStore(s => s.selectedRelationId)
 
   return (
-    <div className="flex h-full flex-col text-[var(--fg)]">
-      <div className="border-b border-[var(--border)] px-3 py-2">
-        <span className="text-xs font-semibold uppercase tracking-wider text-[var(--fg-muted)]">Properties</span>
+    <div className="flex h-full flex-col bg-[var(--surface-1)] text-[var(--fg)]">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--border)] px-3">
+        <span className="grid h-5 w-5 place-items-center rounded-md bg-[var(--accent-soft)] text-[11px] text-[var(--accent)]">◫</span>
+        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--fg-muted)]">Inspector</span>
       </div>
       <div className="flex-1 overflow-y-auto">
         {selectedElementIds.length > 1 && <MultiSelectionPanel ids={selectedElementIds} />}

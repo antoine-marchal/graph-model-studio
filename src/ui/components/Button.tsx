@@ -11,17 +11,17 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     <button
       ref={ref}
       className={cn(
-        'inline-flex items-center justify-center gap-1.5 rounded font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--accent)] disabled:pointer-events-none disabled:opacity-50',
+        'inline-flex select-none items-center justify-center gap-1.5 rounded-md font-medium transition-[color,background-color,border-color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/35 disabled:pointer-events-none disabled:opacity-40 active:translate-y-px',
         {
-          'bg-[var(--accent)] text-[var(--accent-fg)] hover:brightness-110': variant === 'default',
-          'text-[var(--fg-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]': variant === 'ghost',
-          'border border-[var(--border)] bg-[var(--surface-1)] text-[var(--fg-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]': variant === 'outline',
-          'bg-red-600 text-white hover:bg-red-700': variant === 'danger',
+          'bg-[var(--accent)] text-[var(--accent-fg)] shadow-sm hover:bg-[var(--accent-hover)]': variant === 'default',
+          'text-[var(--fg-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--fg)]': variant === 'ghost',
+          'border border-[var(--border)] bg-[var(--surface-raised)] text-[var(--fg-muted)] shadow-[var(--shadow-sm)] hover:border-[var(--border-strong)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]': variant === 'outline',
+          'bg-[var(--danger)] text-white shadow-sm hover:brightness-110': variant === 'danger',
         },
         {
-          'h-7 px-2 text-xs': size === 'sm',
-          'h-8 px-3 text-sm': size === 'md',
-          'h-7 w-7 text-base': size === 'icon',
+          'h-7 px-2.5 text-xs': size === 'sm',
+          'h-9 px-3.5 text-sm': size === 'md',
+          'h-8 w-8 text-sm': size === 'icon',
         },
         className,
       )}

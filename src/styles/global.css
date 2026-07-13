@@ -2,43 +2,66 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Light theme (default) ── */
+/* Light theme */
 :root {
-  --surface-0: #f4f5f7;
+  color-scheme: light;
+  --surface-0: #f1f4f9;
   --surface-1: #ffffff;
-  --surface-2: #eef0f3;
-  --surface-3: #e2e5ea;
-  --border: #d8dce2;
-  --accent: #2563eb;
+  --surface-2: #f5f7fb;
+  --surface-3: #e8edf5;
+  --surface-raised: #ffffff;
+  --canvas: #f8faff;
+  --border: #dce3ed;
+  --border-strong: #c8d2e0;
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: rgba(79, 70, 229, 0.11);
   --accent-fg: #ffffff;
-  --fg: #1f2933;
-  --fg-muted: #5b6573;
-  --fg-subtle: #94a0b0;
-  --edge: #6b7685;
-  --edge-label: #4a5568;
-  --rf-bg-dots: #c5ccd6;
-  --rf-bg-lines: #e2e6ec;
+  --fg: #172033;
+  --fg-muted: #526079;
+  --fg-subtle: #8b98ad;
+  --edge: #748198;
+  --edge-label: #46536a;
+  --rf-bg-dots: #c8d1df;
+  --rf-bg-lines: #e4e9f1;
+  --success: #059669;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --shadow-sm: 0 1px 2px rgba(27, 39, 63, .06), 0 1px 5px rgba(27, 39, 63, .04);
+  --shadow-md: 0 8px 24px rgba(27, 39, 63, .10), 0 2px 8px rgba(27, 39, 63, .06);
 }
 
-/* ── Dark theme ── */
+/* Dark theme */
 .dark {
-  --surface-0: #0a0e16;
-  --surface-1: #0f1623;
-  --surface-2: #18202e;
-  --surface-3: #232c3b;
-  --border: #2a3343;
-  --accent: #3b82f6;
+  color-scheme: dark;
+  --surface-0: #090e1a;
+  --surface-1: #0e1524;
+  --surface-2: #141d2e;
+  --surface-3: #202b3e;
+  --surface-raised: #182235;
+  --canvas: #0a101c;
+  --border: #243047;
+  --border-strong: #34435f;
+  --accent: #818cf8;
+  --accent-hover: #a5b4fc;
+  --accent-soft: rgba(129, 140, 248, 0.14);
   --accent-fg: #ffffff;
-  --fg: #e8edf4;
-  --fg-muted: #97a3b4;
-  --fg-subtle: #5f6c7e;
-  --edge: #6b7685;
-  --edge-label: #aab4c2;
-  --rf-bg-dots: #141a23;
-  --rf-bg-lines: #10151d;
+  --fg: #edf2fb;
+  --fg-muted: #a3aec2;
+  --fg-subtle: #66758f;
+  --edge: #77849b;
+  --edge-label: #b7c1d2;
+  --rf-bg-dots: #263249;
+  --rf-bg-lines: #172034;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .24), 0 1px 5px rgba(0, 0, 0, .16);
+  --shadow-md: 0 12px 32px rgba(0, 0, 0, .34), 0 3px 10px rgba(0, 0, 0, .24);
 }
 
 * { box-sizing: border-box; }
+*::selection { background: var(--accent-soft); color: var(--fg); }
 
 html, body, #root {
   height: 100%;
@@ -48,14 +71,24 @@ html, body, #root {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--surface-0);
   color: var(--fg);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+button, input, select, textarea { font: inherit; }
+button { -webkit-tap-highlight-color: transparent; }
+button:focus-visible, [role='button']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* React Flow theming via CSS vars */
 .react-flow {
-  --xy-background-color-default: var(--surface-0);
+  --xy-background-color-default: var(--canvas);
   --xy-edge-stroke-default: var(--edge);
   --xy-edge-stroke-selected-default: var(--accent);
   --xy-node-boxshadow-selected-default: 0 0 0 2px var(--accent);
@@ -68,8 +101,6 @@ body {
 .react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:focus .react-flow__edge-path { stroke: var(--accent) !important; stroke-width: 2.2; }
 
-/* Relation and multiplicity labels are semantic foreground content. Keep the
-   portal and each label above selected nodes, nested charts and helper anchors. */
 .react-flow__edgelabel-renderer {
   z-index: 2147483647 !important;
   overflow: visible !important;
@@ -80,43 +111,85 @@ body {
   isolation: isolate;
 }
 
-/* subtle handles, reveal on node hover */
 .react-flow__handle { opacity: 0; transition: opacity .12s ease; }
 .react-flow__node:hover .react-flow__handle,
 .react-flow__node.selected .react-flow__handle { opacity: 0.9; }
 .react-flow__handle:hover { opacity: 1; }
 
-/* code editor line highlight (used when jumping from graph) */
 .monaco-editor .gms-line-highlight {
-  background: rgba(99, 132, 255, 0.16);
+  background: var(--accent-soft);
   border-left: 2px solid var(--accent);
 }
-/* lines for model parts not displayed by the active view */
 .monaco-editor .gms-line-dim { opacity: 0.38; }
+
 .react-flow__controls {
-  box-shadow: 0 1px 4px rgba(0,0,0,.2);
-  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border);
+  border-radius: 9px;
   overflow: hidden;
 }
 .react-flow__controls-button {
-  background: var(--surface-1);
+  width: 30px;
+  height: 30px;
+  background: var(--surface-raised);
   border-bottom: 1px solid var(--border);
   color: var(--fg);
   fill: var(--fg);
 }
-.react-flow__controls-button:hover { background: var(--surface-2); }
+.react-flow__controls-button:hover { background: var(--surface-3); }
 .react-flow__minimap {
-  background: var(--surface-1);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
 .react-flow__attribution { display: none; }
 
-/* Scrollbars */
-::-webkit-scrollbar { width: 7px; height: 7px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: var(--fg-subtle); }
+.gms-canvas-toolbar {
+  gap: 2px !important;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: blur(14px);
+}
+.gms-canvas-toolbar > div[class*='w-px'] { margin-inline: 3px; }
+.gms-graph-workspace { container-type: inline-size; }
+.gms-canvas-toolbar .compact-only { display: none; }
 
-/* Transitions for theme switch */
+@container (max-width: 700px) {
+  .gms-canvas-toolbar .wide-label { display: none; }
+  .gms-canvas-toolbar .compact-only { display: inline; }
+  .gms-canvas-toolbar button { padding-inline: 7px; }
+  .gms-canvas-toolbar > div[class*='w-px'] { margin-inline: 1px; }
+}
+
+@container (max-width: 400px) {
+  .gms-secondary-toolbar { top: 48px !important; }
+}
+
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-subtle);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 .react-flow__node, .react-flow__edge-path { transition: filter .12s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+  }
+}

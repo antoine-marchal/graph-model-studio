@@ -6,6 +6,7 @@ import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
 import { ExportDialog } from '@/features/model-import-export/ExportDialog'
 import { isTauri, minimizeWindow, toggleMaximizeWindow, closeWindow } from '@/services/tauri'
+import appIcon from '../../../icon.png'
 
 type ViewMode = 'split' | 'code' | 'graph'
 
@@ -90,40 +91,44 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
   return (
     <header
       data-tauri-drag-region
-      className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[var(--border)] bg-[var(--surface-1)] px-3"
+      className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--surface-1)] px-2.5 shadow-[var(--shadow-sm)]"
     >
       <Button
         size="icon" variant="ghost" title="Toggle explorer"
         onClick={() => window.dispatchEvent(new CustomEvent('gms:toggle-explorer'))}
-        className={layoutFlags && !layoutFlags.explorerOpen ? 'text-[var(--fg-subtle)]' : 'text-[var(--accent)]'}
-      >▥</Button>
+        className={layoutFlags && !layoutFlags.explorerOpen ? 'text-[var(--fg-subtle)]' : 'bg-[var(--accent-soft)] text-[var(--accent)]'}
+      ><span className="text-base leading-none">▥</span></Button>
 
-      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2">
-        <span className="text-sm font-bold text-[var(--accent)]">Graph Model Studio</span>
-        <span className="text-xs text-[var(--fg-subtle)]">v{APP_VERSION}</span>
+      <div data-tauri-drag-region className="flex min-w-0 items-center gap-2.5 pr-1">
+        <img src={appIcon} alt="" className="h-7 w-7 shrink-0 rounded-lg object-contain shadow-sm" draggable={false} />
+        <div data-tauri-drag-region className="flex min-w-0 flex-col leading-none">
+          <span className="whitespace-nowrap text-[12px] font-bold tracking-tight text-[var(--fg)]">Graph Model Studio</span>
+          <span className="mt-1 text-[9px] font-medium uppercase tracking-[0.14em] text-[var(--fg-subtle)]">Visual modeling · v{APP_VERSION}</span>
+        </div>
       </div>
 
-      <div className="mx-1.5 h-4 w-px bg-[var(--border)]" />
+      <div className="mx-0.5 h-6 w-px bg-[var(--border)]" />
 
-      <Button size="sm" variant="ghost" onClick={handleNew}>New</Button>
-      <Button size="sm" variant="ghost" onClick={handleOpen}>Open</Button>
-      <Button size="sm" variant="ghost" onClick={handleSave} title="Ctrl/Cmd+S">Save{isDirty ? ' •' : ''}</Button>
-      <Button size="sm" variant="ghost" onClick={() => setShowExport(true)}>Export</Button>
+      <nav className="flex items-center gap-0.5 rounded-lg bg-[var(--surface-2)] p-0.5" aria-label="File actions">
+        <Button size="sm" variant="ghost" onClick={handleNew}>New</Button>
+        <Button size="sm" variant="ghost" onClick={handleOpen}>Open</Button>
+        <Button size="sm" variant={isDirty ? 'default' : 'ghost'} onClick={handleSave} title="Save (Ctrl/Cmd+S)">Save</Button>
+        <Button size="sm" variant="ghost" onClick={() => setShowExport(true)}>Export</Button>
+      </nav>
 
-      <div className="mx-1.5 h-4 w-px bg-[var(--border)]" />
+      <div className="flex items-center gap-0.5">
+        <Button size="icon" variant="ghost" onClick={undo} disabled={!canUndo} title="Undo (Ctrl/Cmd+Z)">↶</Button>
+        <Button size="icon" variant="ghost" onClick={redo} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">↷</Button>
+      </div>
 
-      <Button size="icon" variant="ghost" onClick={undo} disabled={!canUndo} title="Undo (Ctrl/Cmd+Z)">↶</Button>
-      <Button size="icon" variant="ghost" onClick={redo} disabled={!canRedo} title="Redo (Ctrl/Cmd+Shift+Z)">↷</Button>
-
-      <div className="mx-1.5 h-4 w-px bg-[var(--border)]" />
-
-      <div className="flex gap-0.5 rounded border border-[var(--border)] p-0.5">
+      <div className="flex gap-0.5 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-0.5 shadow-inner" aria-label="Workspace view">
         {(['split', 'code', 'graph'] as const).map(m => (
           <button
             key={m}
             onClick={() => updateViewMode(m)}
-            className={`rounded px-2 py-0.5 text-xs capitalize transition-colors ${
-              viewMode === m ? 'bg-[var(--accent)] text-[var(--accent-fg)]' : 'text-[var(--fg-muted)] hover:bg-[var(--surface-2)]'
+            aria-pressed={viewMode === m}
+            className={`h-7 rounded-md px-2.5 text-[11px] font-medium capitalize transition-all ${
+              viewMode === m ? 'bg-[var(--surface-raised)] text-[var(--accent)] shadow-[var(--shadow-sm)]' : 'text-[var(--fg-muted)] hover:text-[var(--fg)]'
             }`}
           >
             {m}
@@ -131,29 +136,29 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
         ))}
       </div>
 
-      <div className="ml-auto flex min-w-0 items-center gap-2">
+      <div className="ml-auto flex min-w-0 items-center gap-1.5">
         <span
-          className="flex min-w-0 items-center gap-1 text-xs text-[var(--fg-subtle)]"
+          className="flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 text-[11px] text-[var(--fg-muted)]"
           title={isDirty ? 'Unsaved changes' : 'All changes saved'}
         >
           <span
-            className="h-1.5 w-1.5 shrink-0 rounded-full"
-            style={{ background: isDirty ? 'var(--accent)' : 'transparent', border: isDirty ? 'none' : '1px solid var(--border)' }}
+            className="h-2 w-2 shrink-0 rounded-full"
+            style={{ background: isDirty ? 'var(--warning)' : 'var(--success)', boxShadow: `0 0 0 3px ${isDirty ? 'color-mix(in srgb, var(--warning) 14%, transparent)' : 'color-mix(in srgb, var(--success) 14%, transparent)'}` }}
           />
-          <span className="max-w-[160px] truncate">{fileName ?? 'Untitled'}</span>
+          <span className="max-w-[130px] truncate font-medium">{fileName ?? 'Untitled'}</span>
         </span>
         <Button size="icon" variant="ghost" onClick={toggleTheme} title="Toggle theme">
-          {theme === 'dark' ? '☀' : '☾'}
+          <span className="text-base">{theme === 'dark' ? '☀' : '☾'}</span>
         </Button>
         <Button
           size="icon" variant="ghost" title="Toggle properties"
           onClick={() => window.dispatchEvent(new CustomEvent('gms:toggle-props'))}
-          className={layoutFlags && !layoutFlags.propsOpen ? 'text-[var(--fg-subtle)]' : 'text-[var(--accent)]'}
-        >▤</Button>
+          className={layoutFlags && !layoutFlags.propsOpen ? 'text-[var(--fg-subtle)]' : 'bg-[var(--accent-soft)] text-[var(--accent)]'}
+        ><span className="text-base leading-none">▤</span></Button>
 
         {TAURI && (
           <>
-            <div className="mx-1 h-4 w-px bg-[var(--border)]" />
+            <div className="mx-1 h-6 w-px bg-[var(--border)]" />
             <div className="flex items-center">
               <button
                 onClick={() => minimizeWindow()}

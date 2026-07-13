@@ -483,7 +483,7 @@ function GraphEditorInner() {
   }, [activeView, addElementsToView, screenToFlowPosition, setViewPositions])
 
   return (
-    <div ref={wrapperRef} className="h-full w-full" onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
+    <div ref={wrapperRef} className="gms-graph-workspace h-full w-full" onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
       <EdgeMarkers />
       <ReactFlow
         nodes={nodes}
@@ -530,35 +530,35 @@ function GraphEditorInner() {
         <Controls />
         {showMinimap && <MiniMap pannable zoomable nodeColor={n => (n.data as { stroke?: string })?.stroke ?? '#888'} />}
 
-        <Panel position="top-left" className="flex flex-wrap items-center gap-1">
-          <Button size="sm" variant="outline" onClick={openAddMenuFromButton} title="Add node (or right-click canvas)">＋ Node</Button>
+        <Panel position="top-left" className="gms-canvas-toolbar flex flex-nowrap items-center">
+          <Button size="sm" variant="outline" onClick={openAddMenuFromButton} title="Add node (or right-click canvas)">＋ <span className="wide-label">Node</span></Button>
           <div className="mx-0.5 h-5 w-px bg-[var(--border)]" />
           <select
             value={layoutEngine}
             onChange={e => setLayoutEngine(e.target.value as LayoutEngine)}
             title="Layout engine"
-            className="h-7 rounded border border-[var(--border)] bg-[var(--surface-1)] px-1.5 text-xs text-[var(--fg-muted)] focus:outline-none"
+            className="h-7 rounded-md border-0 bg-transparent px-1.5 text-xs font-medium text-[var(--fg-muted)] focus:outline-none"
           >
             {LAYOUT_ENGINES.map(en => <option key={en.id} value={en.id}>{en.label}</option>)}
           </select>
-          <Button size="sm" variant="outline" onClick={() => runAutoLayout('all')} title="Auto-layout the whole view">⤢ All</Button>
-          <Button size="sm" variant="outline" onClick={() => runAutoLayout('selected')} title="Layout selected nodes only">⤢ Selected</Button>
-          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('vertical')} title="Align selected node centres on a vertical line">Align V</Button>
-          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('horizontal')} title="Align selected node centres on a horizontal line">Align H</Button>
+          <Button size="sm" variant="outline" onClick={() => runAutoLayout('all')} title="Auto-layout the whole view">⤢ <span className="wide-label">Layout</span></Button>
+          <Button size="sm" variant="outline" onClick={() => runAutoLayout('selected')} title="Layout selected nodes only"><span className="wide-label">Selection</span><span className="compact-only">Sel.</span></Button>
+          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('vertical')} title="Align selected node centres on a vertical line" aria-label="Align vertically">↕</Button>
+          <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('horizontal')} title="Align selected node centres on a horizontal line" aria-label="Align horizontally">↔</Button>
           <Button size="sm" variant="outline" onClick={() => fitView({ duration: 300, padding: 0.2 })}>Fit</Button>
         </Panel>
 
-        <Panel position="top-right" className="flex items-center gap-1">
-          <Button size="sm" variant="outline" onClick={duplicateSelection} title="Duplicate selection (Ctrl/Cmd+D)">⧉ Duplicate</Button>
+        <Panel position="top-right" className="gms-canvas-toolbar gms-secondary-toolbar flex items-center">
+          <Button size="sm" variant="outline" onClick={duplicateSelection} title="Duplicate selection (Ctrl/Cmd+D)" aria-label="Duplicate selection">⧉</Button>
           <Button
             size="sm" variant="outline"
             className={toggleBtn(edgeRouting === 'orthogonal')}
             onClick={toggleEdgeRouting}
             title="Smart routing: orthogonal edges that avoid nodes"
-          >↳ Route</Button>
-          <Button size="sm" variant="outline" className={toggleBtn(snapToGrid)} onClick={toggleSnapToGrid} title="Snap to grid">⌗ Snap</Button>
-          <Button size="sm" variant="outline" className={toggleBtn(showMinimap)} onClick={toggleMinimap} title="Toggle minimap">▭ Map</Button>
-          <Button size="sm" variant="outline" onClick={exportPng} title="Export PNG of the current view">⤓ PNG</Button>
+          >↳ <span className="wide-label">Route</span></Button>
+          <Button size="sm" variant="outline" className={toggleBtn(snapToGrid)} onClick={toggleSnapToGrid} title="Snap to grid">⌗ <span className="wide-label">Snap</span></Button>
+          <Button size="sm" variant="outline" className={toggleBtn(showMinimap)} onClick={toggleMinimap} title="Toggle minimap">▭ <span className="wide-label">Map</span></Button>
+          <Button size="sm" variant="outline" onClick={exportPng} title="Export PNG of the current view">⤓ <span className="wide-label">PNG</span></Button>
         </Panel>
       </ReactFlow>
 
