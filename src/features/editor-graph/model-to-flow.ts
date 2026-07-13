@@ -6,7 +6,7 @@ import {
   layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutTreeGraph,
   layoutMindmapGraph, layoutGridGraph,
   type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type PertResult,
-  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart,
+  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart, measureSankeyHeight,
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
 
@@ -219,8 +219,13 @@ export function computeNestedLayout(
     } else if (['sankeyGraph', 'radarChart', 'xyChart', 'barChart'].includes(el.type)) {
       const def = notationRegistry.getElementDef(el.type)!
       const manual = (view.nodeSizes ?? {})[el.id]
-      const width = Math.max(def.defaultWidth, manual?.width ?? 0)
-      const height = Math.max(def.defaultHeight, manual?.height ?? 0)
+      // Explicit analytic-chart sizes are exact (within a small usable floor),
+      // so users can shrink as well as grow them. An unpinned Sankey derives its
+      // height from the tallest depth column and therefore reacts to new links.
+      const width = manual ? Math.max(160, manual.width) : def.defaultWidth
+      const height = manual
+        ? Math.max(120, manual.height)
+        : el.type === 'sankeyGraph' ? measureSankeyHeight(model, el.id, visible) : def.defaultHeight
       const frame = buildAnalyticChart(model, el.id, width, height, visible)
       if (frame) analyticCharts[el.id] = frame
       containerSize[el.id] = { width, height }
@@ -513,6 +518,7 @@ export function modelToFlow(
   // every treeNode gets a small connect dot at its label end so the user can
   // drag a relation from it; existing DSL relations reuse the same anchor
   const anchorId = (id: string, side: 'l' | 'r') => `__treeanchor_${id}_${side}`
+  const sankeyAnchorId = (id: string, side: 'l' | 'r') => `__sankeyanchor_${id}_${side}`
   const endpointCenterX = (id: string) => {
     const displayId = hostOf[id] ?? id
     const p = positions[displayId]
@@ -522,6 +528,20 @@ export function modelToFlow(
   const treeEdgeSide = (endpoint: string, other: string) => {
     if (!consumed.has(endpoint) || !treeAnchorOf[endpoint]) return endpoint
     return anchorId(endpoint, endpointCenterX(other) < endpointCenterX(endpoint) ? 'l' : 'r')
+  }
+  const sankeyEdgeSide = (endpoint: string, other: string): 'l' | 'r' | undefined => {
+    if (!consumed.has(endpoint) || model.elements[endpoint]?.type !== 'sankeyNode') return undefined
+    const host = hostOf[endpoint]
+    const frame = host ? analyticCharts[host] : undefined
+    if (!host || frame?.kind !== 'sankey') return undefined
+    const embedded = frame.nodes.find(n => n.id === endpoint)
+    if (!embedded) return undefined
+    const embeddedCenterX = (positions[host]?.x ?? 0) + embedded.x + embedded.width / 2
+    return endpointCenterX(other) < embeddedCenterX ? 'l' : 'r'
+  }
+  const edgeEndpoint = (endpoint: string, other: string) => {
+    const sankeySide = sankeyEdgeSide(endpoint, other)
+    return sankeySide ? sankeyAnchorId(endpoint, sankeySide) : treeEdgeSide(endpoint, other)
   }
   const neededAnchors = new Set<string>(Object.keys(treeAnchorOf).filter(id => visible.has(id)))
 
@@ -717,6 +737,32 @@ export function modelToFlow(
     }
   }
 
+  // Embedded Sankey bars are drawn inside one React Flow host node. Invisible
+  // child points give persisted external relations real endpoints at each bar,
+  // while the visible overlay handles remain responsible for interactive drag.
+  for (const [hostId, frame] of Object.entries(analyticCharts)) {
+    if (frame.kind !== 'sankey') continue
+    for (const embedded of frame.nodes) {
+      for (const side of ['l', 'r'] as const) {
+        const x = side === 'l' ? embedded.x : embedded.x + embedded.width
+        nodes.push({
+          id: sankeyAnchorId(embedded.id, side),
+          type: 'seqPoint',
+          parentId: hostId,
+          position: { x: x - 1, y: embedded.y - 1 },
+          draggable: false,
+          selectable: false,
+          focusable: false,
+          connectable: false,
+          zIndex: 1200,
+          width: 2,
+          height: 2,
+          data: {},
+        } as unknown as GraphNode)
+      }
+    }
+  }
+
   // nearest visible ancestor-or-self (undefined if the whole chain is hidden)
   function liftToVisible(id: string): string | undefined {
     let cur: string | undefined = id
@@ -759,8 +805,8 @@ export function modelToFlow(
       if (!label && (rel.type === 'include' || rel.type === 'extend')) label = `«${rel.type}»`
       const critical = pert?.criticalRelations.has(rel.id) ?? false
       // a consumed treeNode endpoint is redirected to its frame-edge anchor
-      const eSource = treeEdgeSide(rel.sourceId, rel.targetId)
-      const eTarget = treeEdgeSide(rel.targetId, rel.sourceId)
+      const eSource = edgeEndpoint(rel.sourceId, rel.targetId)
+      const eTarget = edgeEndpoint(rel.targetId, rel.sourceId)
       // if a tree endpoint has no anchor (not linked out / collapsed away), skip
       if ((consumed.has(rel.sourceId) && eSource === rel.sourceId) || (consumed.has(rel.targetId) && eTarget === rel.targetId)) continue
       edges.push({

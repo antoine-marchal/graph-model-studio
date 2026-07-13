@@ -10,6 +10,11 @@ export interface Point { x: number; y: number }
 /** Axis-aligned segment of an already-routed edge. */
 export interface Segment { a: Point; b: Point }
 
+export interface NodeRect {
+  id: string
+  rect: Rect
+}
+
 const MARGIN = 14 // keep this far away from node borders
 const BEND_PENALTY = 18 // discourage corners (≈ favouring straighter routes)
 const MAX_OBSTACLES = 60 // above this, A* gets too heavy — caller should fall back
@@ -17,6 +22,24 @@ const LANE_GAP = 5 // min separation between parallel segments of different edge
 const OVERLAP_COST = 2 // malus per px of parallel overlap closer than LANE_GAP
 const MAX_LANES = 24 // cap on escape-lane grid lines per axis (keeps the grid small)
 const CORRIDOR = 140 // padding around the endpoints' bbox that routing cares about
+
+/**
+ * Build the node obstacle set for an edge. Endpoint nodes must remain obstacles:
+ * the caller routes between outward stubs, so excluding them lets a pinned edge
+ * turn around and pass back through its own source or target. Ancestor containers
+ * enclosing an endpoint are still ignored because they would trap the route.
+ */
+export function filterRoutingObstacles(
+  nodes: NodeRect[], sourceId: string, targetId: string, source: Point, target: Point,
+): Rect[] {
+  const encloses = (r: Rect, p: Point) =>
+    p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height
+
+  return nodes
+    .filter(({ id, rect }) =>
+      id === sourceId || id === targetId || (!encloses(rect, source) && !encloses(rect, target)))
+    .map(({ rect }) => rect)
+}
 
 function uniqSorted(values: number[]): number[] {
   return [...new Set(values.map(v => Math.round(v)))].sort((a, b) => a - b)

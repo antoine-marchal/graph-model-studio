@@ -7,6 +7,15 @@ import { NodeIcon } from './nodes/NodeIcons'
 
 const NOTATIONS = notationRegistry.getNotations()
 const ALL_TYPES = notationRegistry.getAllElementTypes()
+export const NODE_TYPE_QUERY_KEY = 'gms-node-type-query-v1'
+
+export function loadNodeTypeQuery(): string {
+  try { return localStorage.getItem(NODE_TYPE_QUERY_KEY) ?? '' } catch { return '' }
+}
+
+export function saveNodeTypeQuery(query: string): void {
+  try { localStorage.setItem(NODE_TYPE_QUERY_KEY, query) } catch { /* storage may be unavailable */ }
+}
 
 export function TypeSwatch({ t, size = 16 }: { t: ElementTypeDefinition; size?: number }) {
   return (
@@ -39,7 +48,7 @@ export function NodeTypePicker({
   autoFocus?: boolean
 }) {
   const listRef = useRef<HTMLDivElement>(null)
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(loadNodeTypeQuery)
   const [active, setActive] = useState(0)
   const recentTypes = useModelStore(s => s.recentTypes)
 
@@ -112,7 +121,7 @@ export function NodeTypePicker({
         <input
           autoFocus={autoFocus}
           value={query}
-          onChange={e => setQuery(e.target.value)}
+          onChange={e => { setQuery(e.target.value); saveNodeTypeQuery(e.target.value) }}
           placeholder="Search node types…"
           className="w-full rounded border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-xs text-[var(--fg)] placeholder-[var(--fg-subtle)] focus:border-[var(--accent)] focus:outline-none"
         />

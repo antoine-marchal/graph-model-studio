@@ -109,6 +109,18 @@ describe('mindmap graph (radial)', () => {
     expect(Math.abs(xc.x - rc.x) + Math.abs(xc.y - rc.y)).toBeGreaterThan(100)
   })
 
+  it('keeps relations from a mind-map topic to an external node connectable', () => {
+    const m = parse(`model {
+      mm = mindmapGraph { root = mindmapRoot { topic = mindmapNode } }
+      external = artifact
+      topic -> external anchor r l
+    } views { view v { include * autolayout lr } }`)
+    const { edges } = modelToFlow(m, view(m))
+    const relation = edges.find(e => e.source === 'topic' && e.target === 'external')
+    expect(relation).toBeTruthy()
+    expect(relation).toMatchObject({ sourceHandle: 'r', targetHandle: 'l' })
+  })
+
   it('expands dense rings so sibling nodes do not overlap', () => {
     const children = Array.from({ length: 16 }, (_, i) => `n${i} = mindmapNode "Branch ${i}"`).join('\n')
     const m = parse(`model { mm = mindmapGraph "Dense" { root = mindmapRoot "Root" { ${children} } } }`)

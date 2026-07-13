@@ -38,6 +38,41 @@ describe('analytic charts', () => {
     expect(out.edges).toHaveLength(0)
   })
 
+  it('recomputes natural Sankey height when links change its depth columns', () => {
+    const disconnected = flow(`model { chart = sankeyGraph {
+      a = sankeyNode b = sankeyNode c = sankeyNode
+    } } views { view v { include * } }`)
+    const connected = flow(`model { chart = sankeyGraph {
+      a = sankeyNode b = sankeyNode c = sankeyNode
+    } a -> b b -> c } views { view v { include * } }`)
+    const before = frame(disconnected.nodes, 'chart')
+    const after = frame(connected.nodes, 'chart')
+    expect(before.kind).toBe('sankey')
+    expect(after.kind).toBe('sankey')
+    expect(after.height).toBeLessThan(before.height)
+    expect(connected.nodes.find(n => n.id === 'chart')!.height).toBe(after.height)
+  })
+
+  it('honours a manually resized Sankey frame below its registry default', () => {
+    const out = flow(`model { chart = sankeyGraph {
+      a = sankeyNode b = sankeyNode c = sankeyNode
+    } a -> b b -> c } views { view v { include * chart size 300 180 } }`)
+    const f = frame(out.nodes, 'chart')
+    expect(f.width).toBe(300)
+    expect(f.height).toBe(180)
+  })
+
+  it('routes external Sankey relations through embedded-node anchor points', () => {
+    const out = flow(`model { chart = sankeyGraph {
+      a = sankeyNode b = sankeyNode c = sankeyNode
+    } external = artifact a -> b b -> c c -> external
+    } views { view v { include * autolayout lr } }`)
+    const external = out.edges.find(e => e.target === 'external')
+    expect(external).toBeTruthy()
+    expect(String(external!.source)).toMatch(/^__sankeyanchor_c_[lr]$/)
+    expect(out.nodes.some(n => n.id === external!.source && n.parentId === 'chart')).toBe(true)
+  })
+
   it('builds multiple radar series over configured axes', () => {
     const out = flow(`model { chart = radarChart "Products" {
       axes "Speed; Quality; Cost; Reach" max "100"

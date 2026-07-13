@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
+import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, filterRoutingObstacles, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
 
 function hitsAny(pts: Point[], obstacles: Rect[]): boolean {
   for (let i = 0; i < pts.length - 1; i++) {
@@ -29,6 +29,24 @@ describe('routeOrthogonal', () => {
     expect(pts).not.toBeNull()
     expect(pts!.length).toBeGreaterThan(2) // it had to bend
     expect(hitsAny(pts!, [obstacle])).toBe(false) // and avoided the node
+  })
+
+  it('does not let pinned side anchors route back through an endpoint node', () => {
+    const sourceRect: Rect = { x: 720, y: 32, width: 160, height: 64 }
+    const targetRect: Rect = { x: 720, y: 144, width: 160, height: 64 }
+    const source = { x: 880, y: 64 } // source anchor r
+    const target = { x: 720, y: 176 } // target anchor l
+    const sourceStub = { x: 900, y: 64 }
+    const targetStub = { x: 700, y: 176 }
+    const obstacles = filterRoutingObstacles([
+      { id: 'source', rect: sourceRect },
+      { id: 'target', rect: targetRect },
+    ], 'source', 'target', source, target)
+
+    const middle = routeOrthogonal(sourceStub, targetStub, obstacles)
+    expect(middle).not.toBeNull()
+    const route = [source, ...middle!, target]
+    expect(hitsAny(route, [sourceRect, targetRect])).toBe(false)
   })
 
   it('keeps endpoints exact', () => {

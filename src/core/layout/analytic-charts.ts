@@ -16,6 +16,50 @@ const COLORS = ['#3B82F6', '#EC4899', '#10B981', '#F59E0B', '#8B5CF6', '#06B6D4'
 const list = (raw?: string) => (raw ?? '').split(';').map(s => s.trim()).filter(Boolean)
 const num = (raw: string | undefined, fallback = 0) => { const n = Number(raw); return Number.isFinite(n) ? n : fallback }
 
+const SANKEY_TOP = 58
+const SANKEY_BOTTOM = 48
+const SANKEY_GAP = 12
+
+function sankeyMetrics(model: GraphModel, id: string, visibleIds: ReadonlySet<string>) {
+  const chart = model.elements[id]
+  if (!chart || chart.type !== 'sankeyGraph') return undefined
+  const items = chart.children.map(cid => model.elements[cid]).filter(e => e?.type === 'sankeyNode' && visibleIds.has(e.id))
+  const ids = new Set(items.map(e => e.id))
+  const rawLinks = Object.values(model.relations).filter(r => ids.has(r.sourceId) && ids.has(r.targetId)).map((r, i) => ({
+    id: r.id, source: r.sourceId, target: r.targetId, value: Math.max(0.1, num(r.properties?.value, num(r.label, 1))), color: r.properties?.color ?? COLORS[i % COLORS.length],
+  }))
+  const incoming: Record<string, number> = {}, outgoing: Record<string, number> = {}, totals: Record<string, number> = {}
+  for (const item of items) {
+    incoming[item.id] = rawLinks.filter(l => l.target === item.id).reduce((a, l) => a + l.value, 0)
+    outgoing[item.id] = rawLinks.filter(l => l.source === item.id).reduce((a, l) => a + l.value, 0)
+    totals[item.id] = Math.max(incoming[item.id], outgoing[item.id], 1)
+  }
+  const maxTotal = Math.max(1, ...Object.values(totals))
+  const scale = 90 / maxTotal
+  const depth: Record<string, number> = Object.fromEntries(items.map(e => [e.id, 0]))
+  for (let pass = 0; pass < items.length; pass++) for (const l of rawLinks) depth[l.target] = Math.max(depth[l.target] ?? 0, (depth[l.source] ?? 0) + 1)
+  const groups = new Map<number, typeof items>()
+  for (const item of items) groups.set(depth[item.id], [...(groups.get(depth[item.id]) ?? []), item])
+  return { items, rawLinks, incoming, outgoing, totals, scale, depth, groups }
+}
+
+/** Natural frame height changes when Sankey links move nodes into new depth columns. */
+export function measureSankeyHeight(
+  model: GraphModel,
+  id: string,
+  visibleIds: ReadonlySet<string> = new Set(Object.keys(model.elements)),
+): number {
+  const metrics = sankeyMetrics(model, id, visibleIds)
+  if (!metrics || metrics.items.length === 0) return 160
+  let tallest = 0
+  for (const group of metrics.groups.values()) {
+    const nodesHeight = group.reduce((sum, item) =>
+      sum + Math.max(16, num(item.properties?.height, metrics.totals[item.id] * metrics.scale)), 0)
+    tallest = Math.max(tallest, nodesHeight + Math.max(0, group.length - 1) * SANKEY_GAP)
+  }
+  return Math.max(160, Math.ceil(SANKEY_TOP + tallest + SANKEY_BOTTOM))
+}
+
 export function buildAnalyticChart(
   model: GraphModel,
   id: string,
@@ -27,23 +71,9 @@ export function buildAnalyticChart(
   if (!chart) return undefined
   const children = chart.children.map(cid => model.elements[cid]).filter(e => e && visibleIds.has(e.id))
   if (chart.type === 'sankeyGraph') {
-    const items = children.filter(e => e.type === 'sankeyNode')
-    const ids = new Set(items.map(e => e.id))
-    const rawLinks = Object.values(model.relations).filter(r => ids.has(r.sourceId) && ids.has(r.targetId)).map((r, i) => ({
-      id: r.id, source: r.sourceId, target: r.targetId, value: Math.max(0.1, num(r.properties?.value, num(r.label, 1))), color: r.properties?.color ?? COLORS[i % COLORS.length],
-    }))
-    const incoming: Record<string, number> = {}, outgoing: Record<string, number> = {}, totals: Record<string, number> = {}
-    for (const item of items) {
-      incoming[item.id] = rawLinks.filter(l => l.target === item.id).reduce((a,l)=>a+l.value,0)
-      outgoing[item.id] = rawLinks.filter(l => l.source === item.id).reduce((a,l)=>a+l.value,0)
-      totals[item.id] = Math.max(incoming[item.id], outgoing[item.id], 1)
-    }
-    const maxTotal = Math.max(1, ...Object.values(totals)), scale = 90 / maxTotal
-    const depth: Record<string, number> = Object.fromEntries(items.map(e => [e.id, 0]))
-    for (let pass = 0; pass < items.length; pass++) for (const l of rawLinks) depth[l.target] = Math.max(depth[l.target] ?? 0, (depth[l.source] ?? 0) + 1)
+    const metrics = sankeyMetrics(model, id, visibleIds)!
+    const { rawLinks, incoming, outgoing, totals, scale, depth, groups } = metrics
     const maxDepth = Math.max(1, ...Object.values(depth))
-    const groups = new Map<number, typeof items>()
-    for (const item of items) groups.set(depth[item.id], [...(groups.get(depth[item.id]) ?? []), item])
     const nodes: SankeyNodeFrame[] = []
     for (const [d, group] of groups) {
       const available = Math.max(20, height - 100)
@@ -51,7 +81,7 @@ export function buildAnalyticChart(
       const requested = group.map(item => Math.max(16, num(item.properties?.height, totals[item.id] * scale)))
       const usable = Math.max(group.length * 2, available - gap * (group.length - 1))
       const fit = Math.min(1, usable / requested.reduce((sum, value) => sum + value, 0))
-      let cursor = 58
+      let cursor = SANKEY_TOP
       group.forEach((item, i) => {
         const nodeHeight = requested[i] * fit
         nodes.push({

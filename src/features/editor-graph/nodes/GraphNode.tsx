@@ -63,9 +63,9 @@ function Glyph({ iconSrc, icon, color, size }: { iconSrc?: string; icon: IconKin
   return null
 }
 
-function Handles({ stroke }: { stroke: string }) {
+function Handles({ stroke, prominent = false }: { stroke: string; prominent?: boolean }) {
   // Keep node-level handles above embedded SVG/chart interaction layers.
-  const cls = '!z-50 !h-2.5 !w-2.5 !border-2 !bg-zinc-50 dark:!bg-zinc-900'
+  const cls = `!z-50 !border-2 !bg-zinc-50 dark:!bg-zinc-900 ${prominent ? '!h-4 !w-4' : '!h-2.5 !w-2.5'}`
   const style = { borderColor: stroke }
   return (
     <>
@@ -218,7 +218,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         className={cn('relative flex h-full w-full items-center justify-center rounded-full text-center', ring && 'rounded-full ' + ring)}
         style={{ background, border: `${root ? 3 : 2}px solid ${border}`, color: foreground }}
       >
-        <Handles stroke={border} />
+        <Handles stroke={border} prominent />
         <span className={cn('max-w-[82%] leading-tight', root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>
           {d.label}
         </span>

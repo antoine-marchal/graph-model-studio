@@ -11,7 +11,7 @@ import {
   Position,
 } from '@xyflow/react'
 import { useModelStore } from '@/store'
-import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, type Rect, type Point, type Segment } from './orthogonal-router'
+import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
 
 // Routes of currently-mounted edges, so each edge can pay a malus for running
 // on the same pixel line as another relation (see overlapPenalty in the router).
@@ -216,18 +216,19 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   let labelY: number
   let routed: Point[] | null = null
   if (routing === 'orthogonal') {
-    const obstacles: Rect[] = []
+    const nodeRects: NodeRect[] = []
     for (const [, n] of nodeLookup) {
-      if (n.id === source || n.id === target) continue
       const x = n.internals.positionAbsolute.x
       const y = n.internals.positionAbsolute.y
       const w = n.measured.width ?? 0
       const h = n.measured.height ?? 0
-      // skip nodes that enclose an endpoint (ancestor containers) — they would trap the route
-      const encloses = (px: number, py: number) => px >= x && px <= x + w && py >= y && py <= y + h
-      if (encloses(sx, sy) || encloses(tx, ty)) continue
-      obstacles.push({ x, y, width: w, height: h })
+      nodeRects.push({ id: n.id, rect: { x, y, width: w, height: h } })
     }
+    // The middle route runs between outward stubs. Keeping endpoint rectangles
+    // here stops pinned edges from turning back through their own source/target.
+    const obstacles = filterRoutingObstacles(
+      nodeRects, source, target, { x: sx, y: sy }, { x: tx, y: ty },
+    )
     // segments of every other already-routed relation — soft-avoided so two
     // relations never sit on the same pixel line (staggered by ≥ 5px)
     const occupied: Segment[] = []
