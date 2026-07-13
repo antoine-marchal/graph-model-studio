@@ -13,6 +13,7 @@ export { dagreLayout } from './dagre-layout'
 export * from './gantt-layout'
 export * from './pert'
 export * from './special-layouts'
+export * from './analytic-charts'
 
 export type LayoutEngine = 'layered' | 'dagre'
 

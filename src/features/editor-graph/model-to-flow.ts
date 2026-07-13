@@ -6,7 +6,7 @@ import {
   layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutTreeGraph,
   layoutMindmapGraph, layoutGridGraph,
   type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type PertResult,
-  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame,
+  type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart,
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
 
@@ -67,10 +67,12 @@ const CONTAINER_FOR: Record<string, string> = {
   treeNode: 'treeGraph',
   mindmapRoot: 'mindmapGraph', mindmapNode: 'mindmapGraph',
   gridItem: 'gridGraph',
+  sankeyNode: 'sankeyGraph', radarSeries: 'radarChart',
+  xySeries: 'xyChart', xyPoint: 'xyChart', barSeries: 'barChart',
 }
 const CHART_FRAME_TYPES = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'mindmapGraph'])
 // containers whose children are pre-placed by a chart layout (not the graph engine)
-const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'treeGraph', 'mindmapGraph', 'gridGraph'])
+const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'treeGraph', 'mindmapGraph', 'gridGraph', 'sankeyGraph', 'radarChart', 'xyChart', 'barChart'])
 
 interface NestedLayout {
   positions: Record<string, Position> // relative-to-parent for children, absolute for top-level
@@ -83,6 +85,7 @@ interface NestedLayout {
   chartFrames: Record<string, ChartFrame>
   /** per-`gridGraph` matrix frame, keyed by element id */
   gridFrames: Record<string, GridFrame>
+  analyticCharts: Record<string, AnalyticChartFrame>
   /** per-`treeGraph` file-tree forest, keyed by element id */
   treeRoots: Record<string, TreeRow[]>
   /** tree elements consumed by a treeGraph widget (not rendered as nodes) */
@@ -148,6 +151,7 @@ export function computeNestedLayout(
   const ganttFrames: Record<string, GanttFrame> = {}
   const chartFrames: Record<string, ChartFrame> = {}
   const gridFrames: Record<string, GridFrame> = {}
+  const analyticCharts: Record<string, AnalyticChartFrame> = {}
   const treeRoots: Record<string, TreeRow[]> = {}
   const consumed = new Set<string>()
   const treeAnchorOf: Record<string, { leftX: number; rightX: number; y: number }> = {}
@@ -212,6 +216,17 @@ export function computeNestedLayout(
         chartPlacement[cid] = { x: 0, y: 0, width: 0, height: 0 }
         if (tl.rowAnchors[cid]) treeAnchorOf[cid] = tl.rowAnchors[cid]
       }
+    } else if (['sankeyGraph', 'radarChart', 'xyChart', 'barChart'].includes(el.type)) {
+      const def = notationRegistry.getElementDef(el.type)!
+      const manual = (view.nodeSizes ?? {})[el.id]
+      const width = Math.max(def.defaultWidth, manual?.width ?? 0)
+      const height = Math.max(def.defaultHeight, manual?.height ?? 0)
+      const frame = buildAnalyticChart(model, el.id, width, height, visible)
+      if (frame) analyticCharts[el.id] = frame
+      containerSize[el.id] = { width, height }
+      const hosted = Object.keys(hostOf).filter(cid => hostOf[cid] === el.id)
+      for (const cid of hosted) { consumed.add(cid); chartPlacement[cid] = { x: 0, y: 0, width: 0, height: 0 } }
+      if (el.type === 'sankeyGraph') for (const rel of Object.values(model.relations)) if (hosted.includes(rel.sourceId) && hosted.includes(rel.targetId)) suppressedRelations.add(rel.id)
     }
   }
   // Relations within the same file-tree widget carry no additional meaning;
@@ -396,7 +411,7 @@ export function computeNestedLayout(
   }
 
   layoutLevel(ROOT)
-  return { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations }
+  return { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations }
 }
 
 /**
@@ -493,7 +508,7 @@ export function modelToFlow(
   settings: LayoutSettings = { engine: 'layered' },
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const visible = getVisibleElementIds(model, view)
-  const { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
+  const { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
 
   // every treeNode gets a small connect dot at its label end so the user can
   // drag a relation from it; existing DSL relations reuse the same anchor
@@ -647,6 +662,7 @@ export function modelToFlow(
         chartFrame: chartFrames[id],
         mindmapDepth: mindmapDepth(id),
         grid: gridFrames[id],
+        analyticChart: analyticCharts[id],
         tree: treeRoots[id],
         projection: projectionFor(id),
       },

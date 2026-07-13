@@ -121,6 +121,46 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   treeNode: { group: 'Tree node', fields: [
     { key: 'icon', label: 'Icon path or URL', placeholder: 'icons/file.svg, C:\\icons\\file.png, or https://…' },
   ] },
+  sankeyNode: { group: 'Sankey', fields: [
+    { key: 'color', label: 'Colour', placeholder: '#0ea5e9' },
+    { key: 'height', label: 'Node height', placeholder: '38' },
+  ] },
+  radarChart: { group: 'Radar', fields: [
+    { key: 'axes', label: 'Axes (; separated)', placeholder: 'Speed; Quality; Cost; Reach' },
+    { key: 'max', label: 'Maximum value', placeholder: '100' },
+  ] },
+  radarSeries: { group: 'Radar series', fields: [
+    { key: 'values', label: 'Values (; separated)', placeholder: '80; 60; 90; 50' },
+    { key: 'color', label: 'Colour', placeholder: '#8b5cf6' },
+  ] },
+  xyChart: { group: 'XY chart', fields: [
+    { key: 'xLabel', label: 'X axis label', placeholder: 'Revenue' },
+    { key: 'yLabel', label: 'Y axis label', placeholder: 'Growth' },
+    { key: 'xMin', label: 'X minimum', placeholder: 'auto' },
+    { key: 'xMax', label: 'X maximum', placeholder: 'auto' },
+    { key: 'yMin', label: 'Y minimum', placeholder: 'auto' },
+    { key: 'yMax', label: 'Y maximum', placeholder: 'auto' },
+    { key: 'connect', label: 'Connect points', placeholder: 'true / false' },
+    { key: 'regression', label: 'Linear regression', placeholder: 'true / false' },
+  ] },
+  xySeries: { group: 'XY series', fields: [
+    { key: 'color', label: 'Colour', placeholder: '#10b981' },
+  ] },
+  xyPoint: { group: 'XY / bubble point', fields: [
+    { key: 'x', label: 'X', placeholder: '10' },
+    { key: 'y', label: 'Y', placeholder: '25' },
+    { key: 'size', label: 'Bubble radius', placeholder: '6' },
+  ] },
+  barChart: { group: 'Bar chart', fields: [
+    { key: 'categories', label: 'Categories (; separated)', placeholder: 'Q1; Q2; Q3; Q4' },
+    { key: 'xLabel', label: 'X axis label', placeholder: 'Quarter' },
+    { key: 'yLabel', label: 'Y axis label', placeholder: 'Revenue' },
+    { key: 'mode', label: 'Mode', placeholder: 'grouped / stacked' },
+  ] },
+  barSeries: { group: 'Bar series', fields: [
+    { key: 'values', label: 'Values (; separated)', placeholder: '12; 18; 24; 30' },
+    { key: 'color', label: 'Colour', placeholder: '#f59e0b' },
+  ] },
 }
 
 /** One live-committed custom-property input (own hooks so the field list can vary). */
@@ -298,6 +338,11 @@ function RelationProperties({ relationId }: { relationId: string }) {
       <div className="grid grid-cols-2 gap-2">
         <PropField label="Source multiplicity" placeholder="1" value={relation.properties?.['sourceCard'] ?? ''} onCommit={v => setRelProp('sourceCard', v)} />
         <PropField label="Target multiplicity" placeholder="0..*" value={relation.properties?.['targetCard'] ?? ''} onCommit={v => setRelProp('targetCard', v)} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <PropField label="Flow value" placeholder="1" value={relation.properties?.['value'] ?? ''} onCommit={v => setRelProp('value', v)} />
+        <PropField label="Flow colour" placeholder="#0ea5e9" value={relation.properties?.['color'] ?? ''} onCommit={v => setRelProp('color', v)} />
       </div>
 
       <FieldRow label="Type">

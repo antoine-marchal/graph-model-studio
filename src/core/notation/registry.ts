@@ -28,6 +28,7 @@ export type NodeShape =
   | 'erdEntity'
   | 'gridGraph'
   | 'note'
+  | 'analyticChart'
 
 export type IconKind =
   // ArchiMate generic-by-category
@@ -335,6 +336,24 @@ const GRID_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'gridItem', label: 'Grid Item', notation: 'grid', shape: 'roundedRectangle', fill: '#5C6BC0', stroke: '#3949AB', text: '#FFFFFF', accent: '#7986CB', icon: 'none', defaultWidth: 120, defaultHeight: 34 },
 ]
 
+const SANKEY_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'sankeyGraph', label: 'Sankey Diagram', notation: 'sankey', shape: 'analyticChart', fill: 'rgba(14,165,233,0.05)', stroke: '#0284C7', text: '#0C4A6E', accent: '#0EA5E9', icon: 'none', defaultWidth: 620, defaultHeight: 400 },
+  { type: 'sankeyNode', label: 'Sankey Node', notation: 'sankey', shape: 'roundedRectangle', fill: '#0EA5E9', stroke: '#0284C7', text: '#FFFFFF', accent: '#38BDF8', icon: 'none', defaultWidth: 100, defaultHeight: 36 },
+]
+const RADAR_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'radarChart', label: 'Radar / Spider Chart', notation: 'radar', shape: 'analyticChart', fill: 'rgba(139,92,246,0.05)', stroke: '#7C3AED', text: '#4C1D95', accent: '#8B5CF6', icon: 'none', defaultWidth: 520, defaultHeight: 440 },
+  { type: 'radarSeries', label: 'Radar Series', notation: 'radar', shape: 'roundedRectangle', fill: '#8B5CF6', stroke: '#7C3AED', text: '#FFFFFF', accent: '#A78BFA', icon: 'none', defaultWidth: 120, defaultHeight: 34 },
+]
+const XY_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'xyChart', label: 'XY / Bubble Chart', notation: 'xy', shape: 'analyticChart', fill: 'rgba(16,185,129,0.05)', stroke: '#059669', text: '#064E3B', accent: '#10B981', icon: 'none', defaultWidth: 620, defaultHeight: 440 },
+  { type: 'xySeries', label: 'XY Series', notation: 'xy', shape: 'container', fill: 'rgba(16,185,129,0.08)', stroke: '#059669', text: '#064E3B', accent: '#10B981', icon: 'none', defaultWidth: 180, defaultHeight: 100 },
+  { type: 'xyPoint', label: 'XY / Bubble Point', notation: 'xy', shape: 'dot', fill: '#10B981', stroke: '#059669', text: '#064E3B', accent: '#34D399', icon: 'none', defaultWidth: 16, defaultHeight: 16 },
+]
+const BAR_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'barChart', label: 'Bar Chart', notation: 'bar', shape: 'analyticChart', fill: 'rgba(245,158,11,0.05)', stroke: '#D97706', text: '#78350F', accent: '#F59E0B', icon: 'none', defaultWidth: 620, defaultHeight: 420 },
+  { type: 'barSeries', label: 'Bar Series', notation: 'bar', shape: 'roundedRectangle', fill: '#F59E0B', stroke: '#D97706', text: '#FFFFFF', accent: '#FBBF24', icon: 'none', defaultWidth: 120, defaultHeight: 34 },
+]
+
 // ─── Git graph ───────────────────────────────────────────────────────────────
 const GITGRAPH_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'gitGraph', label: 'Git Graph', notation: 'gitgraph', shape: 'chartFrame', fill: 'rgba(0,121,107,0.05)', stroke: '#00796B', text: '#00332C', accent: '#26A69A', icon: 'none', defaultWidth: 460, defaultHeight: 220 },
@@ -373,7 +392,8 @@ const ALL_ELEMENTS = [
   ...USECASE_ELEMENTS, ...TREE_ELEMENTS, ...PERT_ELEMENTS, ...GANTT_ELEMENTS,
   ...SEQUENCE_ELEMENTS, ...MINDMAP_ELEMENTS, ...GITGRAPH_ELEMENTS,
   ...ISHIKAWA_ELEMENTS, ...QUADRANT_ELEMENTS, ...TIMELINE_ELEMENTS,
-  ...UML_ELEMENTS, ...ERD_ELEMENTS, ...GRID_ELEMENTS, ...GENERIC_ELEMENTS,
+  ...UML_ELEMENTS, ...ERD_ELEMENTS, ...GRID_ELEMENTS, ...SANKEY_ELEMENTS,
+  ...RADAR_ELEMENTS, ...XY_ELEMENTS, ...BAR_ELEMENTS, ...GENERIC_ELEMENTS,
 ]
 const elementByType = new Map(ALL_ELEMENTS.map(e => [e.type, e]))
 const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
@@ -383,6 +403,7 @@ const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
   ['sequence', SEQUENCE_ELEMENTS], ['mindmap', MINDMAP_ELEMENTS], ['gitgraph', GITGRAPH_ELEMENTS],
   ['ishikawa', ISHIKAWA_ELEMENTS], ['quadrant', QUADRANT_ELEMENTS], ['timeline', TIMELINE_ELEMENTS],
   ['uml', UML_ELEMENTS], ['erd', ERD_ELEMENTS], ['grid', GRID_ELEMENTS],
+  ['sankey', SANKEY_ELEMENTS], ['radar', RADAR_ELEMENTS], ['xy', XY_ELEMENTS], ['bar', BAR_ELEMENTS],
   ['generic', GENERIC_ELEMENTS],
 ])
 
@@ -463,6 +484,10 @@ export const notationRegistry: NotationRegistry = {
     { kind: 'uml', label: 'UML Class' },
     { kind: 'erd', label: 'ERD' },
     { kind: 'grid', label: 'Grid / Matrix' },
+    { kind: 'sankey', label: 'Sankey' },
+    { kind: 'radar', label: 'Radar / Spider' },
+    { kind: 'xy', label: 'XY / Bubble' },
+    { kind: 'bar', label: 'Bar Chart' },
     { kind: 'generic', label: 'Generic' },
   ],
   getGroups: n => uniqueGroups(byNotation.get(n) ?? []),

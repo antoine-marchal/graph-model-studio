@@ -27,6 +27,10 @@ function inferNotation(elementType: string): NotationKind {
   const umlTypes = new Set(['umlClass', 'umlInterface', 'umlEnum', 'umlNote'])
   const erdTypes = new Set(['erdEntity'])
   const gridTypes = new Set(['gridGraph', 'gridItem'])
+  const sankeyTypes = new Set(['sankeyGraph', 'sankeyNode'])
+  const radarTypes = new Set(['radarChart', 'radarSeries'])
+  const xyTypes = new Set(['xyChart', 'xySeries', 'xyPoint'])
+  const barTypes = new Set(['barChart', 'barSeries'])
 
   if (c4Types.has(elementType)) return 'c4'
   if (archiTypes.has(elementType)) return 'archimate'
@@ -45,6 +49,10 @@ function inferNotation(elementType: string): NotationKind {
   if (umlTypes.has(elementType)) return 'uml'
   if (erdTypes.has(elementType)) return 'erd'
   if (gridTypes.has(elementType)) return 'grid'
+  if (sankeyTypes.has(elementType)) return 'sankey'
+  if (radarTypes.has(elementType)) return 'radar'
+  if (xyTypes.has(elementType)) return 'xy'
+  if (barTypes.has(elementType)) return 'bar'
   return 'generic'
 }
 

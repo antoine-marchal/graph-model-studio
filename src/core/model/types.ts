@@ -20,6 +20,10 @@ export const NotationKindSchema = z.enum([
   'uml',
   'erd',
   'grid',
+  'sankey',
+  'radar',
+  'xy',
+  'bar',
   'generic',
 ])
 export type NotationKind = z.infer<typeof NotationKindSchema>
@@ -86,6 +90,10 @@ export const UmlElementTypes = ['umlClass', 'umlInterface', 'umlEnum', 'umlNote'
 export const ErdElementTypes = ['erdEntity'] as const
 
 export const GridElementTypes = ['gridGraph', 'gridItem'] as const
+export const SankeyElementTypes = ['sankeyGraph', 'sankeyNode'] as const
+export const RadarElementTypes = ['radarChart', 'radarSeries'] as const
+export const XyElementTypes = ['xyChart', 'xySeries', 'xyPoint'] as const
+export const BarElementTypes = ['barChart', 'barSeries'] as const
 
 export const GitGraphElementTypes = ['gitGraph', 'commit', 'mergeCommit'] as const
 
@@ -114,6 +122,10 @@ export type TimelineElementType = (typeof TimelineElementTypes)[number]
 export type UmlElementType = (typeof UmlElementTypes)[number]
 export type ErdElementType = (typeof ErdElementTypes)[number]
 export type GridElementType = (typeof GridElementTypes)[number]
+export type SankeyElementType = (typeof SankeyElementTypes)[number]
+export type RadarElementType = (typeof RadarElementTypes)[number]
+export type XyElementType = (typeof XyElementTypes)[number]
+export type BarElementType = (typeof BarElementTypes)[number]
 export type GenericElementType = (typeof GenericElementTypes)[number]
 
 export type ElementType =
@@ -134,6 +146,10 @@ export type ElementType =
   | UmlElementType
   | ErdElementType
   | GridElementType
+  | SankeyElementType
+  | RadarElementType
+  | XyElementType
+  | BarElementType
   | GenericElementType
 
 // ─── Relation types ──────────────────────────────────────────────────────────

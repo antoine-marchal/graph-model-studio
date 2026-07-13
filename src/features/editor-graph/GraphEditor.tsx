@@ -138,8 +138,15 @@ function GraphEditorInner() {
       if (!v?.startsWith('__treeanchor_')) return v
       return v.slice('__treeanchor_'.length).replace(/_[lr]$/, '')
     }
-    const source = unanchor(c.source)
-    const target = unanchor(c.target)
+    // Embedded Sankey nodes share their chart's React Flow node. Their handle
+    // carries the real model element id so relations still target the children.
+    const unsankey = (node: string | null | undefined, handle: string | null | undefined) => {
+      if (!handle?.startsWith('sankey:')) return node
+      const match = /^sankey:(.+):[lr]$/.exec(handle)
+      return match?.[1] ?? node
+    }
+    const source = unsankey(unanchor(c.source), c.sourceHandle)
+    const target = unsankey(unanchor(c.target), c.targetHandle)
     if (!source || !target || source === target) return
     const anchored = source !== c.source || target !== c.target
     const id = `rel_${source}_${target}_${nanoid(4)}`

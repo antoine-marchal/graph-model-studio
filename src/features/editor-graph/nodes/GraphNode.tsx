@@ -1,13 +1,14 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
-import type { PertNodeValues, ChartFrame, TreeRow, GridFrame } from '@/core/layout'
+import type { PertNodeValues, ChartFrame, TreeRow, GridFrame, AnalyticChartFrame } from '@/core/layout'
 import { GANTT_AXIS_H } from '@/core/layout'
 import type { IshikawaFrame, GanttFrame } from '../model-to-flow'
 import { TreeGraphView } from './TreeGraphView'
 import { GridGraphView } from './GridGraphView'
 import { UmlClassBody, ErdEntityBody, NoteBody } from './UmlErdBodies'
 import { NodeIcon } from './NodeIcons'
+import { AnalyticChartView } from './AnalyticChartView'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
 
@@ -50,6 +51,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   grid?: GridFrame
   /** Arrow endpoint relative to this item's centre, derived from its `projection`. */
   projection?: { dx: number; dy: number }
+  analyticChart?: AnalyticChartFrame
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -62,7 +64,8 @@ function Glyph({ iconSrc, icon, color, size }: { iconSrc?: string; icon: IconKin
 }
 
 function Handles({ stroke }: { stroke: string }) {
-  const cls = '!h-2 !w-2 !border-2 !bg-zinc-50 dark:!bg-zinc-900'
+  // Keep node-level handles above embedded SVG/chart interaction layers.
+  const cls = '!z-50 !h-2.5 !w-2.5 !border-2 !bg-zinc-50 dark:!bg-zinc-900'
   const style = { borderColor: stroke }
   return (
     <>
@@ -244,6 +247,16 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <div className="min-h-0 flex-1 px-1">
           <TreeGraphView roots={d.tree ?? []} accent={accent} />
         </div>
+      </div>
+    )
+  } else if (shape === 'analyticChart' && d.analyticChart) {
+    body = (
+      <div className={cn('relative h-full w-full overflow-visible rounded-lg', ring)} style={{ background: 'var(--surface-1)', border: `1.5px solid ${stroke}` }}>
+        <Handles stroke={stroke} />
+        <div className="relative z-10 flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--fg)]" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55` }}>
+          <span className="truncate">{d.label}</span>
+        </div>
+        <AnalyticChartView frame={d.analyticChart} />
       </div>
     )
   } else if (d.chartFrame) {
