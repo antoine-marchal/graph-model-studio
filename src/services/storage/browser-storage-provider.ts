@@ -21,7 +21,7 @@ export class BrowserStorageProvider implements StorageProvider {
           showOpenFilePicker(opts: unknown): Promise<FileSystemFileHandle[]>
         }).showOpenFilePicker({
           types: [
-            { description: 'Graph Model', accept: { 'text/plain': ['.gmc', '.graphmodel'] } },
+            { description: 'Graph Model Code (.gmc)', accept: { 'text/plain': ['.gmc', '.graphmodel'] } },
             { description: 'JSON', accept: { 'application/json': ['.json'] } },
           ],
           multiple: false,
@@ -72,7 +72,7 @@ export class BrowserStorageProvider implements StorageProvider {
         }).showSaveFilePicker({
           suggestedName,
           types: [
-            { description: 'Graph Model', accept: { 'text/plain': ['.gmc'] } },
+            { description: 'Graph Model Code (.gmc)', accept: { 'text/plain': ['.gmc'] } },
             { description: 'JSON', accept: { 'application/json': ['.json'] } },
           ],
         })

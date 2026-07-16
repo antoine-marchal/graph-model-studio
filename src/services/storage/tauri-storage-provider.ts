@@ -1,7 +1,8 @@
 import type { StorageProvider } from './storage-provider'
 
 const FILTERS = [
-  { name: 'Graph Model', extensions: ['gmc', 'json'] },
+  { name: 'Graph Model Code (.gmc)', extensions: ['gmc'] },
+  { name: 'JSON', extensions: ['json'] },
   { name: 'All Files', extensions: ['*'] },
 ]
 

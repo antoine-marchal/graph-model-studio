@@ -49,8 +49,8 @@
     "fileAssociations": [
       {
         "ext": ["gmc"],
-        "name": "Graph Model",
-        "description": "Graph Model Studio document",
+        "name": "Graph Model Code",
+        "description": "Graph Model Code document for Graph Model Studio",
         "role": "Editor"
       }
     ],

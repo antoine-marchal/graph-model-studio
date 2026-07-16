@@ -7,6 +7,9 @@ either side; they stay in sync. One model, many views, fifteen notations.
 > Code ⇄ Diagram. Everything you type becomes a graph; everything you drag,
 > rename, connect, or lay out is written back to the DSL.
 
+The native document format is **Graph Model Code (`.gmc`)**: a human-readable
+DSL file containing the model, its views, and the diagram layout.
+
 ```
 ┌──────────┬───────────────────────┬───────────────────────┬─────────────┐
 │ Explorer │ DSL (Monaco)          │ Graph (React Flow)    │ Properties  │
@@ -70,7 +73,8 @@ either side; they stay in sync. One model, many views, fifteen notations.
 - **Undo / redo** — full history for every model change (`Ctrl/Cmd+Z` /
   `Ctrl/Cmd+Shift+Z`).
 - **Duplicate, copy & paste** nodes, **snap-to-grid**, **minimap toggle**.
-- **Export** to JSON, DSL (`.gmc`), Mermaid, PlantUML, and **PNG** of the canvas.
+- **Export** to JSON, Graph Model Code (`.gmc`), Mermaid, PlantUML, and **PNG**
+  of the canvas.
 - **Local-first** — your work is auto-saved to the browser draft; open/save model
   files from disk.
 
