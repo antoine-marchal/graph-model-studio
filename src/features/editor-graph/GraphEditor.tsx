@@ -36,7 +36,7 @@ import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
-import { captureGraphPng } from './png-export'
+import { captureGraphPng, type GraphCaptureWorkspace } from './png-export'
 
 const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
 
@@ -87,7 +87,7 @@ function GraphEditorInner() {
   const addElementsToView = useModelStore(s => s.addElementsToView)
   const reorderSiblings = useModelStore(s => s.reorderSiblings)
 
-  const { screenToFlowPosition, fitView, getIntersectingNodes } = useReactFlow()
+  const { screenToFlowPosition, fitView, getIntersectingNodes, getNodes, getNodesBounds } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const clipboard = useRef<string[]>([])
 
@@ -97,6 +97,13 @@ function GraphEditorInner() {
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
+
+  useEffect(() => {
+    const workspace = wrapperRef.current as GraphCaptureWorkspace | null
+    if (!workspace) return
+    workspace.__gmsGetContentBounds = () => getNodesBounds(getNodes().filter(node => !node.hidden))
+    return () => { delete workspace.__gmsGetContentBounds }
+  }, [getNodes, getNodesBounds])
 
   const flow = useMemo(
     () => (activeView ? modelToFlow(model, activeView, { engine: layoutEngine }) : { nodes: [], edges: [] }),

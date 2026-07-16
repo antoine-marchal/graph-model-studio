@@ -45,7 +45,10 @@ function shadowCss(): string {
 }
 
 async function waitForGraphReady(shadow: ShadowRoot, generation: number, figure: DiagramElement): Promise<boolean> {
-  for (let attempt = 0; attempt < 20; attempt++) {
+  let fitRequested = false
+  let previousBounds = ''
+  let stableSamples = 0
+  for (let attempt = 0; attempt < 30; attempt++) {
     if (!isCurrent(generation, figure)) return false
     await delay(40)
     const workspace = shadow.querySelector('.gms-graph-workspace')
@@ -54,8 +57,34 @@ async function waitForGraphReady(shadow: ShadowRoot, generation: number, figure:
       const rect = node.getBoundingClientRect()
       return rect.width > 0 && rect.height > 0
     })) {
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      return isCurrent(generation, figure)
+      // React Flow's initial fit can run before custom nodes finish measuring,
+      // and GraphEditor also has an animated fit. Explicitly fit once after all
+      // nodes have dimensions so even content far below the viewport is inside
+      // the rasterized canvas rather than being cropped at its fixed height.
+      if (!fitRequested) {
+        const fitButton = shadow.querySelector<HTMLButtonElement>(
+          '.react-flow__controls-fitview, button[aria-label="fit view"]',
+        )
+        fitButton?.click()
+        fitRequested = true
+        previousBounds = ''
+        stableSamples = 0
+        continue
+      }
+
+      const rects = nodes.map(node => node.getBoundingClientRect())
+      const bounds = [
+        Math.min(...rects.map(rect => rect.left)),
+        Math.min(...rects.map(rect => rect.top)),
+        Math.max(...rects.map(rect => rect.right)),
+        Math.max(...rects.map(rect => rect.bottom)),
+      ].map(value => Math.round(value * 2) / 2).join(':')
+      stableSamples = bounds === previousBounds ? stableSamples + 1 : 0
+      previousBounds = bounds
+      if (stableSamples >= 3) {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+        return isCurrent(generation, figure)
+      }
     }
   }
   return isCurrent(generation, figure)
