@@ -125,6 +125,49 @@ export function layeredLayout(nodes: LayoutNodeInput[], edges: LayoutEdgeInput[]
     }
   }
 
+  // Barycentres are a good global heuristic but can leave avoidable local
+  // inversions. Adjacent transposition accepts only swaps that reduce the exact
+  // number of relation crossings for the rank pairs touching that layer.
+  const rankOf = new Map<string, number>()
+  layers.forEach((layer, rank) => layer.forEach(id => rankOf.set(id, rank)))
+  const layoutEdges = [...edgeKeys].map(key => {
+    const [source, target] = key.split('\u0000')
+    return { source, target }
+  })
+  const crossingsTouching = (layerIndex: number) => {
+    let crossings = 0
+    for (let i = 0; i < layoutEdges.length; i++) {
+      const a = layoutEdges[i]
+      const as = rankOf.get(a.source), at = rankOf.get(a.target)
+      if (as === undefined || at === undefined || (as !== layerIndex && at !== layerIndex)) continue
+      for (let j = i + 1; j < layoutEdges.length; j++) {
+        const b = layoutEdges[j]
+        if (rankOf.get(b.source) !== as || rankOf.get(b.target) !== at) continue
+        const sourceDelta = order.get(a.source)! - order.get(b.source)!
+        const targetDelta = order.get(a.target)! - order.get(b.target)!
+        if (sourceDelta * targetDelta < 0) crossings++
+      }
+    }
+    return crossings
+  }
+  for (let pass = 0; pass < 4; pass++) {
+    let improved = false
+    for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
+      const layer = layers[layerIndex]
+      for (let index = 0; index < layer.length - 1; index++) {
+        const before = crossingsTouching(layerIndex)
+        ;[layer[index], layer[index + 1]] = [layer[index + 1], layer[index]]
+        updateOrder(layer)
+        if (crossingsTouching(layerIndex) < before) improved = true
+        else {
+          ;[layer[index], layer[index + 1]] = [layer[index + 1], layer[index]]
+          updateOrder(layer)
+        }
+      }
+    }
+    if (!improved) break
+  }
+
   const horizontal = options.direction === 'lr' || options.direction === 'rl'
   const reverse = options.direction === 'rl' || options.direction === 'bt'
   const primarySize = (id: string) => horizontal ? nodeById.get(id)!.width : nodeById.get(id)!.height

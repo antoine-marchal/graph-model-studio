@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import type { GraphModel, GraphElement, GraphRelation, Position } from '@/core/model'
-import { createEmptyModel } from '@/core/model'
+import { createElementId, createEmptyModel } from '@/core/model'
 import type { ModelCommand } from '@/core/model/commands'
 import type { Diagnostic } from '@/core/model'
 import { parseDsl } from '@/core/dsl/parser'
@@ -481,8 +481,8 @@ export const useModelStore = create<ModelStore>()(
           for (const id of cloneIds) {
             const el = state.model.elements[id]
             if (!el) continue
-            const suffix = Math.random().toString(36).slice(2, 6)
-            const nid = `${el.type}_${suffix}`
+            let nid = createElementId(el.type)
+            while (state.model.elements[nid] || [...idMap.values()].includes(nid)) nid = createElementId(el.type)
             idMap.set(id, nid)
           }
           const explicitTarget = options !== undefined

@@ -1,4 +1,5 @@
 import { notationRegistry } from '../../notation'
+import { createElementId } from '../../model'
 import type { Token } from './lexer'
 import type {
   AstRoot,
@@ -229,7 +230,7 @@ export class Parser {
     } else {
       // type "label" — use generated id
       elementType = first.value
-      id = elementType + '_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)
+      id = createElementId(elementType)
     }
 
     // label

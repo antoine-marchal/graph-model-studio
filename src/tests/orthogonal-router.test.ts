@@ -79,13 +79,16 @@ describe('routeOrthogonal', () => {
     }
   })
 
-  it('does not penalise perpendicular crossings', () => {
-    // a vertical relation crosses the straight route — crossing is fine, so the
-    // route should stay a straight 2-point line
+  it('detours to avoid perpendicular relation crossings', () => {
     const occupied = polylineSegments([{ x: 50, y: -50 }, { x: 50, y: 50 }])
     const pts = routeOrthogonal({ x: 0, y: 0 }, { x: 100, y: 0 }, [], occupied)
     expect(pts).not.toBeNull()
-    expect(pts!.length).toBe(2)
+    expect(pts!.length).toBeGreaterThan(2)
+    const crosses = polylineSegments(pts!).some(segment =>
+      segment.a.y === segment.b.y
+      && segment.a.y > -50 && segment.a.y < 50
+      && Math.min(segment.a.x, segment.b.x) < 50 && Math.max(segment.a.x, segment.b.x) > 50)
+    expect(crosses).toBe(false)
   })
 
   it('ignores diagonal (non-orthogonal) segments in polylineSegments', () => {

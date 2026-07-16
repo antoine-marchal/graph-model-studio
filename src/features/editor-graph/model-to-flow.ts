@@ -1,6 +1,8 @@
 import type { Node, Edge } from '@xyflow/react'
+import type { CSSProperties } from 'react'
 import type { GraphModel, GraphView, Position } from '@/core/model'
 import { notationRegistry } from '@/core/notation'
+import { contrastTextColor, deriveAccentColors, normalizeHexColor } from '@/core/notation'
 import {
   runLayout, computeGanttChart, computePert,
   layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutTreeGraph,
@@ -633,7 +635,15 @@ export function modelToFlow(
   const nodes: GraphNode[] = ordered.filter(id => !consumed.has(id)).map(id => {
     const el = model.elements[id]
     const def = notationRegistry.getElementDef(el.type) ?? GENERIC_DEF
+    const customAccent = normalizeHexColor(el.properties?.accentColor)
+    const accentColors = customAccent ? deriveAccentColors(customAccent) : undefined
     const container = isVisibleContainer(model, id, visible)
+    const nodeColor = normalizeHexColor(el.properties?.backgroundColor)
+    const containerColor = normalizeHexColor(el.properties?.containerColor)
+    const fill = container
+      ? containerColor ?? nodeColor ?? accentColors?.container ?? def.fill
+      : nodeColor ?? accentColors?.tertiary ?? def.fill
+    const hasCustomColor = !!(accentColors || nodeColor || containerColor)
     // containers auto-size around children; chart-placed children are chart-sized;
     // other leaves honour a per-view manual size override
     const placed = !!hostOf[id]
@@ -651,7 +661,11 @@ export function modelToFlow(
       position: positions[id] ?? { x: 40, y: 40 },
       width: size.width,
       height: size.height,
-      style: { width: size.width, height: size.height },
+      style: {
+        width: size.width,
+        height: size.height,
+        '--node-selection': accentColors?.secondary ?? '#3B82F6',
+      } as CSSProperties,
       zIndex: d,
       data: {
         label: el.name,
@@ -661,10 +675,11 @@ export function modelToFlow(
         technology: el.technology,
         tags: el.tags,
         shape: def.shape,
-        fill: def.fill,
-        stroke: def.stroke,
-        text: def.text,
-        accent: def.accent,
+        fill,
+        stroke: accentColors?.primary ?? def.stroke,
+        text: hasCustomColor ? contrastTextColor(fill) : def.text,
+        accent: accentColors?.primary ?? def.accent,
+        customAccent: hasCustomColor,
         icon: def.icon,
         iconSrc: def.iconSrc,
         width: size.width,
@@ -804,6 +819,8 @@ export function modelToFlow(
       let label = rel.label
       if (!label && (rel.type === 'include' || rel.type === 'extend')) label = `«${rel.type}»`
       const critical = pert?.criticalRelations.has(rel.id) ?? false
+      const relationAccent = normalizeHexColor(rel.properties?.accentColor)
+      const relationColors = relationAccent ? deriveAccentColors(relationAccent) : undefined
       // a consumed treeNode endpoint is redirected to its frame-edge anchor
       const eSource = edgeEndpoint(rel.sourceId, rel.targetId)
       const eTarget = edgeEndpoint(rel.targetId, rel.sourceId)
@@ -816,11 +833,11 @@ export function modelToFlow(
         type: 'floating',
         sourceHandle: consumed.has(rel.sourceId) ? undefined : rel.sourceHandle,
         targetHandle: consumed.has(rel.targetId) ? undefined : rel.targetHandle,
-        data: { label, sourceLabel: rel.properties?.['sourceCard'], targetLabel: rel.properties?.['targetCard'] },
+        data: { label, sourceLabel: rel.properties?.['sourceCard'], targetLabel: rel.properties?.['targetCard'], selectedStroke: relationColors?.secondary },
         markerStart: markerStart || undefined,
         markerEnd: markerEnd || undefined,
         style: {
-          stroke: critical ? '#D32F2F' : 'var(--edge)',
+          stroke: relationColors?.primary ?? (critical ? '#D32F2F' : 'var(--edge)'),
           strokeWidth: critical ? 2.4 : 1.6,
           strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
         },
@@ -848,16 +865,18 @@ export function modelToFlow(
       const rel = model.relations[msg.relId]
       if (!rel) continue
       const rdef = notationRegistry.getRelationDef(rel.type)
+      const relationAccent = normalizeHexColor(rel.properties?.accentColor)
+      const relationColors = relationAccent ? deriveAccentColors(relationAccent) : undefined
       edges.push({
         id: rel.id,
         source: `__seqpt_${msg.relId}_s`,
         target: `__seqpt_${msg.relId}_t`,
         type: 'floating',
-        data: { label: rel.label },
+        data: { label: rel.label, selectedStroke: relationColors?.secondary },
         markerEnd: rdef?.markerEnd ?? 'gms-arrow-filled',
         markerStart: rdef?.markerStart,
         style: {
-          stroke: 'var(--edge)',
+          stroke: relationColors?.primary ?? 'var(--edge)',
           strokeWidth: 1.6,
           strokeDasharray: rdef?.lineStyle === 'dashed' ? '6 4' : rdef?.lineStyle === 'dotted' ? '2 3' : undefined,
         },

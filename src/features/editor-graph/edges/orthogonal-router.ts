@@ -20,6 +20,7 @@ const BEND_PENALTY = 18 // discourage corners (≈ favouring straighter routes)
 const MAX_OBSTACLES = 60 // above this, A* gets too heavy — caller should fall back
 const LANE_GAP = 5 // min separation between parallel segments of different edges
 const OVERLAP_COST = 2 // malus per px of parallel overlap closer than LANE_GAP
+const CROSSING_COST = 240 // prefer a modest detour to crossing another relation
 const MAX_LANES = 24 // cap on escape-lane grid lines per axis (keeps the grid small)
 const CORRIDOR = 140 // padding around the endpoints' bbox that routing cares about
 
@@ -82,6 +83,10 @@ function overlapPenalty(p: Point, q: Point, occH: Segment[], occV: Segment[]): n
       const o1 = Math.min(y1, Math.max(s.a.y, s.b.y))
       if (o1 > o0) pen += (o1 - o0) * OVERLAP_COST
     }
+    for (const s of occH) {
+      const sx0 = Math.min(s.a.x, s.b.x), sx1 = Math.max(s.a.x, s.b.x)
+      if (p.x > sx0 && p.x < sx1 && s.a.y > y0 && s.a.y < y1) pen += CROSSING_COST
+    }
   } else {
     const x0 = Math.min(p.x, q.x), x1 = Math.max(p.x, q.x)
     for (const s of occH) {
@@ -89,6 +94,10 @@ function overlapPenalty(p: Point, q: Point, occH: Segment[], occV: Segment[]): n
       const o0 = Math.max(x0, Math.min(s.a.x, s.b.x))
       const o1 = Math.min(x1, Math.max(s.a.x, s.b.x))
       if (o1 > o0) pen += (o1 - o0) * OVERLAP_COST
+    }
+    for (const s of occV) {
+      const sy0 = Math.min(s.a.y, s.b.y), sy1 = Math.max(s.a.y, s.b.y)
+      if (p.y > sy0 && p.y < sy1 && s.a.x > x0 && s.a.x < x1) pen += CROSSING_COST
     }
   }
   return pen
@@ -220,10 +229,14 @@ export function routeOrthogonal(source: Point, target: Point, obstacles: Rect[],
   // escape lanes just outside the LANE_GAP band of each occupied segment, so
   // the grid actually contains a parallel line the malus can push us onto —
   // deduped and capped, otherwise dense scenes blow the grid up quadratically
-  const laneXs = capLanes(
-    occV.flatMap(s => [s.a.x - LANE_GAP - 1, s.a.x + LANE_GAP + 1]), (source.x + target.x) / 2)
-  const laneYs = capLanes(
-    occH.flatMap(s => [s.a.y - LANE_GAP - 1, s.a.y + LANE_GAP + 1]), (source.y + target.y) / 2)
+  const laneXs = capLanes([
+    ...occV.flatMap(s => [s.a.x - LANE_GAP - 1, s.a.x + LANE_GAP + 1]),
+    ...occH.flatMap(s => [Math.min(s.a.x, s.b.x) - LANE_GAP - 1, Math.max(s.a.x, s.b.x) + LANE_GAP + 1]),
+  ], (source.x + target.x) / 2)
+  const laneYs = capLanes([
+    ...occH.flatMap(s => [s.a.y - LANE_GAP - 1, s.a.y + LANE_GAP + 1]),
+    ...occV.flatMap(s => [Math.min(s.a.y, s.b.y) - LANE_GAP - 1, Math.max(s.a.y, s.b.y) + LANE_GAP + 1]),
+  ], (source.y + target.y) / 2)
 
   // candidate grid lines: endpoints + inflated obstacle edges + escape lanes
   const xs = uniqSorted([source.x, target.x, ...inflated.flatMap(r => [r.x, r.x + r.width]), ...laneXs])

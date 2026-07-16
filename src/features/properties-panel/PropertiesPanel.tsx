@@ -4,6 +4,7 @@ import { Input } from '@/ui/components/Input'
 import { Select } from '@/ui/components/Select'
 import { Button } from '@/ui/components/Button'
 import { notationRegistry } from '@/core/notation'
+import { ACCENT_PALETTE, deriveAccentColors, normalizeHexColor } from '@/core/notation'
 import { NodeTypePicker, TypeSwatch } from '@/features/editor-graph/NodeTypePicker'
 
 /** Searchable element-type selector — same picker as the canvas add-node menu. */
@@ -48,6 +49,77 @@ function FieldRow({ label, children }: { label: string; children: React.ReactNod
     <div className="flex flex-col gap-1.5">
       <label className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--fg-subtle)]">{label}</label>
       {children}
+    </div>
+  )
+}
+
+function AccentColorField({ value, fallback, nodeColor, containerColor, onChange, onNodeColorChange, onContainerColorChange, onClear }: {
+  value?: string
+  fallback: string
+  nodeColor?: string
+  containerColor?: string
+  onChange: (value: string) => void
+  onNodeColorChange?: (value: string) => void
+  onContainerColorChange?: (value: string) => void
+  onClear: () => void
+}) {
+  const normalized = normalizeHexColor(value) ?? normalizeHexColor(fallback) ?? ACCENT_PALETTE[0]
+  const [draft, setDraft] = useState(normalized)
+  const colors = deriveAccentColors(normalized)
+  const resolvedNodeColor = normalizeHexColor(nodeColor) ?? colors.tertiary
+  const resolvedContainerColor = normalizeHexColor(containerColor) ?? colors.container
+
+  useEffect(() => setDraft(normalized), [normalized])
+
+  const commitDraft = () => {
+    const next = normalizeHexColor(draft)
+    if (next) onChange(next)
+    else setDraft(normalized)
+  }
+
+  return (
+    <div className="space-y-2 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 p-2">
+      <div className="grid grid-cols-5 gap-1.5" aria-label="Accent color palette">
+        {ACCENT_PALETTE.map(color => (
+          <button
+            key={color}
+            type="button"
+            aria-label={`Use accent ${color}`}
+            title={color}
+            onClick={() => onChange(color)}
+            className="h-6 rounded border transition-transform hover:scale-105"
+            style={{ background: color, borderColor: normalized === color ? 'var(--fg)' : 'transparent', boxShadow: normalized === color ? '0 0 0 1px var(--surface-1)' : undefined }}
+          />
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <input type="color" value={normalized} onChange={event => onChange(event.target.value.toUpperCase())} className="h-8 w-10 cursor-pointer rounded border border-[var(--border)] bg-transparent p-0.5" aria-label="Choose accent color" />
+        <Input
+          value={draft}
+          onChange={event => setDraft(event.target.value)}
+          onBlur={commitDraft}
+          onKeyDown={event => { if (event.key === 'Enter') commitDraft() }}
+          placeholder="#4F46E5"
+        />
+      </div>
+      <div className={`grid gap-1.5 text-center text-[9px] text-[var(--fg-subtle)] ${onNodeColorChange ? 'grid-cols-3' : 'grid-cols-1'}`}>
+        <div className="space-y-0.5"><span>Stroke</span><span className="block h-4 rounded border border-black/10" style={{ background: colors.primary }} title={colors.primary} /></div>
+        {onNodeColorChange && (
+          <label className="cursor-pointer space-y-0.5" title="Click to force the node background color">
+            <span>Node</span>
+            <span className="block h-4 rounded border border-black/10" style={{ background: resolvedNodeColor }} />
+            <input type="color" value={resolvedNodeColor} onChange={event => onNodeColorChange(event.target.value.toUpperCase())} className="sr-only" aria-label="Force node background color" />
+          </label>
+        )}
+        {onContainerColorChange && (
+          <label className="cursor-pointer space-y-0.5" title="Click to force the container background color">
+            <span>Container</span>
+            <span className="block h-4 rounded border border-black/10" style={{ background: resolvedContainerColor }} />
+            <input type="color" value={resolvedContainerColor} onChange={event => onContainerColorChange(event.target.value.toUpperCase())} className="sr-only" aria-label="Force container background color" />
+          </label>
+        )}
+      </div>
+      <Button type="button" size="sm" variant="ghost" className="w-full" onClick={onClear}>Clear colors</Button>
     </div>
   )
 }
@@ -219,6 +291,13 @@ function ElementProperties({ elementId }: { elementId: string }) {
     if (t) props[key] = t; else delete props[key]
     dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, properties: props } })
   }, [dispatch, elementId, properties])
+  const clearColors = useCallback(() => {
+    const props = { ...(properties ?? {}) }
+    delete props.accentColor
+    delete props.backgroundColor
+    delete props.containerColor
+    dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, properties: props } })
+  }, [dispatch, elementId, properties])
 
   const [name, onName, flushName] = useLiveField(element?.name ?? '', commitName)
   const [desc, onDesc, flushDesc] = useLiveField(element?.description ?? '', commitDesc)
@@ -279,6 +358,19 @@ function ElementProperties({ elementId }: { elementId: string }) {
         <Input value={tagsStr} onChange={e => onTags(e.target.value)} onBlur={flushTags} placeholder="domain, core" />
       </FieldRow>
 
+      <FieldRow label="Accent color">
+        <AccentColorField
+          value={properties?.accentColor}
+          fallback={notationRegistry.getElementDef(element.type)?.accent ?? '#4F46E5'}
+          nodeColor={properties?.backgroundColor}
+          containerColor={properties?.containerColor}
+          onChange={value => setProp('accentColor', value)}
+          onNodeColorChange={value => setProp('backgroundColor', value)}
+          onContainerColorChange={value => setProp('containerColor', value)}
+          onClear={clearColors}
+        />
+      </FieldRow>
+
       {custom && (
         <div className="flex flex-col gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 p-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">{custom.group}</span>
@@ -333,6 +425,15 @@ function RelationProperties({ relationId }: { relationId: string }) {
 
       <FieldRow label="Label">
         <Input value={label} onChange={e => onLabel(e.target.value)} onBlur={flushLabel} placeholder="Optional label" />
+      </FieldRow>
+
+      <FieldRow label="Accent color">
+        <AccentColorField
+          value={relation.properties?.accentColor}
+          fallback="#64748B"
+          onChange={value => setRelProp('accentColor', value)}
+          onClear={() => setRelProp('accentColor', '')}
+        />
       </FieldRow>
 
       <div className="grid grid-cols-2 gap-2">

@@ -24,6 +24,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   stroke: string
   text: string
   accent: string
+  customAccent?: boolean
   icon: IconKind
   iconSrc?: string
   width: number
@@ -118,6 +119,14 @@ function metaText(data: GraphNodeData): string | null {
   return null
 }
 
+function SpecialGraphHeader({ data, stroke, accent }: { data: GraphNodeData; stroke: string; accent: string }) {
+  const meta = metaText(data)
+  return <div className="flex min-h-8 flex-col justify-center px-2.5 py-1" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55`, color: data.text }}>
+    <span className="truncate text-[11px] font-bold uppercase tracking-wide">{data.label}</span>
+    {meta && <span className="truncate text-[9px] font-normal opacity-70">{meta}</span>}
+  </div>
+}
+
 function Label({ data, small }: { data: GraphNodeData; small?: boolean }) {
   const { label, text } = data
   const sub = metaText(data)
@@ -179,7 +188,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const editing = useModelStore(s => s.editingElementId === id)
   const dispatch = useModelStore(s => s.dispatch)
   const activeViewId = useModelStore(s => s.activeViewId)
-  const ring = selected ? 'ring-2 ring-offset-1 ring-blue-500 dark:ring-offset-zinc-900' : ''
+  const ring = selected ? 'ring-2 ring-offset-1 ring-[var(--node-selection)] dark:ring-offset-zinc-900' : ''
 
   let body: JSX.Element
 
@@ -210,27 +219,26 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     const root = depth === 0
     const primary = depth === 1
     const secondary = depth === 2
-    const background = root ? '#08A1DD' : primary ? '#087CB5' : secondary ? '#FFFFFF' : '#A3A7AA'
-    const border = root || primary ? background : secondary ? '#303234' : '#8A8E91'
-    const foreground = root || primary || depth >= 3 ? '#FFFFFF' : '#27292B'
+    const background = d.customAccent ? fill : root ? '#08A1DD' : primary ? '#087CB5' : secondary ? '#FFFFFF' : '#A3A7AA'
+    const border = d.customAccent ? stroke : root || primary ? background : secondary ? '#303234' : '#8A8E91'
+    const foreground = d.customAccent ? text : root || primary || depth >= 3 ? '#FFFFFF' : '#27292B'
     body = (
       <div
         className={cn('relative flex h-full w-full items-center justify-center rounded-full text-center', ring && 'rounded-full ' + ring)}
         style={{ background, border: `${root ? 3 : 2}px solid ${border}`, color: foreground }}
       >
         <Handles stroke={border} prominent />
-        <span className={cn('max-w-[82%] leading-tight', root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>
-          {d.label}
-        </span>
+        <div className="flex max-w-[82%] flex-col items-center leading-tight">
+          <span className={cn(root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>{d.label}</span>
+          {metaText(d) && <span className="mt-0.5 line-clamp-2 text-[9px] opacity-75">{metaText(d)}</span>}
+        </div>
       </div>
     )
   } else if (shape === 'gridGraph') {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--fg)]" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55` }}>
-          <span className="truncate">{d.label}</span>
-        </div>
+        <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         {d.grid && <GridGraphView frame={d.grid} stroke={stroke} text={text} accent={accent} />}
       </div>
     )
@@ -238,12 +246,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div
-          className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
-        >
-          <span className="truncate">{d.label}</span>
-        </div>
+        <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         <div className="min-h-0 flex-1 px-1">
           <TreeGraphView roots={d.tree ?? []} accent={accent} />
         </div>
@@ -251,11 +254,9 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (shape === 'analyticChart' && d.analyticChart) {
     body = (
-      <div className={cn('relative h-full w-full overflow-visible rounded-lg', ring)} style={{ background: 'var(--surface-1)', border: `1.5px solid ${stroke}` }}>
+      <div className={cn('relative h-full w-full overflow-visible rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div className="relative z-10 flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-[var(--fg)]" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55` }}>
-          <span className="truncate">{d.label}</span>
-        </div>
+        <div className="relative z-10"><SpecialGraphHeader data={d} stroke={stroke} accent={accent} /></div>
         <AnalyticChartView frame={d.analyticChart} />
       </div>
     )
@@ -264,26 +265,22 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = d.elementType === 'mindmapGraph' ? (
       // A mind map lives directly on the canvas. Its graph element is only an
       // invisible grouping/layout surface, not a titled chart container.
-      <div className="relative h-full w-full">
+      <div className="relative h-full w-full rounded-lg" style={d.customAccent ? { background: fill, border: `1.5px solid ${stroke}` } : undefined}>
         <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
           {cf.lines.map((l, i) => (
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
           ))}
         </svg>
-        <div className="pointer-events-none absolute left-4 top-1 text-xs font-bold uppercase tracking-[0.16em] text-[var(--fg-subtle)]">
-          {d.label}
+        <div className="pointer-events-none absolute left-4 top-1 flex flex-col" style={{ color: d.customAccent ? text : 'var(--fg-subtle)' }}>
+          <span className="text-xs font-bold uppercase tracking-[0.16em]">{d.label}</span>
+          {metaText(d) && <span className="text-[9px] font-normal normal-case tracking-normal opacity-75">{metaText(d)}</span>}
         </div>
         {selected && <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-blue-500/35" />}
       </div>
     ) : (
       <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div
-          className="flex items-center px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
-        >
-          <span className="truncate">{d.label}</span>
-        </div>
+        <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
           {cf.lines.map((l, i) => (
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
@@ -301,12 +298,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
-        <div
-          className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '22', color: 'var(--fg)', borderBottom: `1px solid ${stroke}55` }}
-        >
-          <span className="truncate">{d.label}</span>
-        </div>
+        <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
           <line x1={8} y1={axisBase} x2={width - 8} y2={axisBase} stroke={stroke} strokeWidth={1} strokeOpacity={0.6} />
           {fr.ticks.map((t, i) => (
@@ -340,7 +332,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             background: fill, border: `2px solid ${stroke}`, color: text,
           }}
         >
-          {d.label}
+          <div className="flex flex-col items-center">
+            <span>{d.label}</span>
+            {metaText(d) && <span className="mt-0.5 line-clamp-2 text-[9px] font-normal opacity-75">{metaText(d)}</span>}
+          </div>
         </div>
       </div>
     )
@@ -349,7 +344,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     const qLabel = (key: string, cls: string) =>
       p[key] ? <span className={cn('absolute z-0 text-[10px] font-bold uppercase tracking-wide text-[var(--fg-muted)]', cls)}>{p[key]}</span> : null
     body = (
-      <div className={cn('relative h-full w-full overflow-hidden rounded-md', ring)} style={{ background: 'var(--surface-1)', border: `1.5px solid ${stroke}` }}>
+      <div className={cn('relative h-full w-full overflow-hidden rounded-md', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
         <svg className="absolute inset-0" width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
           <rect x={width / 2} y={0} width={width / 2} height={height / 2} fill={accent} opacity="0.16" />
@@ -375,12 +370,12 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div
         className={cn('relative h-full w-full overflow-hidden rounded-sm', ring)}
-        style={{ background: accent + '10', border: `1.5px solid ${stroke}` }}
+        style={{ background: d.customAccent ? fill : accent + '10', border: `1.5px solid ${stroke}` }}
       >
         <Handles stroke={stroke} />
         <div
           className="absolute inset-y-0 left-0 flex w-7 items-center justify-center text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '24', color: 'var(--fg)', borderRight: `1px solid ${stroke}66` }}
+          style={{ background: accent + '24', color: text, borderRight: `1px solid ${stroke}66` }}
         >
           <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{d.label}</span>
         </div>
@@ -390,12 +385,12 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     body = (
       <div
         className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-lg', ring)}
-        style={{ background: accent + '12', border: `1.5px solid ${stroke}` }}
+        style={{ background: d.customAccent ? fill : accent + '12', border: `1.5px solid ${stroke}` }}
       >
         <Handles stroke={stroke} />
         <div
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '26', color: 'var(--fg)', borderBottom: `1px solid ${stroke}66` }}
+          style={{ background: accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
         >
           <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>
@@ -486,7 +481,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   } else if (shape === 'pertBox') {
     // CPM box: ES | duration | EF / label / LS | slack | LF
     const p = d.pert
-    const border = p?.critical ? '#D32F2F' : stroke
+    const border = p?.critical && !d.customAccent ? '#D32F2F' : stroke
     const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1))
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-md', ring)} style={{ background: fill, border: `2px solid ${border}` }}>
@@ -498,7 +493,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
               <span className="flex items-center justify-center border-x" style={{ borderColor: border + '55' }} title="Duration">{fmt(p.duration)}</span>
               <span className="flex items-center justify-center" title="Earliest finish">{fmt(p.ef)}</span>
             </div>
-            <div className="flex flex-[1.4] items-center justify-center px-1 text-center text-[11px] font-semibold" style={{ color: text }}>{d.label}</div>
+            <div className="flex flex-[1.4] flex-col items-center justify-center px-1 text-center text-[11px] font-semibold" style={{ color: text }}><span>{d.label}</span>{metaText(d) && <span className="text-[8px] font-normal opacity-75">{metaText(d)}</span>}</div>
             <div className="grid flex-1 grid-cols-3 text-center text-[9px] font-medium" style={{ color: text, borderTop: `1px solid ${border}55` }}>
               <span className="flex items-center justify-center" title="Latest start">{fmt(p.ls)}</span>
               <span className="flex items-center justify-center border-x" style={{ borderColor: border + '55' }} title="Slack">{fmt(p.slack)}</span>
@@ -549,8 +544,8 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             {d.badge}
           </span>
         )}
-        <span className="absolute left-1/2 top-full z-10 mt-1 -translate-x-1/2 whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>
-          {d.label}
+        <span className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 flex-col items-center whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>
+          <span>{d.label}</span>{metaText(d) && <span className="text-[8px] font-normal opacity-70">{metaText(d)}</span>}
         </span>
       </div>
     )

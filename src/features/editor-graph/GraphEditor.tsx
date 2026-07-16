@@ -36,6 +36,7 @@ import { notationRegistry } from '@/core/notation'
 import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layout'
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
+import { createElementId } from '@/core/model'
 
 const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
 
@@ -245,7 +246,8 @@ function GraphEditorInner() {
   // ── add node ──
   const addNodeAt = useCallback((elementType: string, flowX: number, flowY: number) => {
     const def = notationRegistry.getElementDef(elementType)
-    const id = `${elementType}_${nanoid(5)}`
+    let id = createElementId(elementType)
+    while (model.elements[id]) id = createElementId(elementType)
     dispatch({
       type: 'ADD_ELEMENT',
       payload: {
@@ -258,7 +260,7 @@ function GraphEditorInner() {
     })
     pushRecentType(elementType)
     setTimeout(() => { selectElements([id]); setEditingElement(id) }, 0)
-  }, [dispatch, selectElements, setEditingElement, pushRecentType])
+  }, [dispatch, model.elements, selectElements, setEditingElement, pushRecentType])
 
   // ── context menu ──
   const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {

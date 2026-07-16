@@ -70,7 +70,32 @@ describe('analytic charts', () => {
     const external = out.edges.find(e => e.target === 'external')
     expect(external).toBeTruthy()
     expect(String(external!.source)).toMatch(/^__sankeyanchor_c_[lr]$/)
-    expect(out.nodes.some(n => n.id === external!.source && n.parentId === 'chart')).toBe(true)
+    const anchor = out.nodes.find(n => n.id === external!.source && n.parentId === 'chart')
+    expect(anchor).toBeTruthy()
+    const f = frame(out.nodes, 'chart')
+    expect(f.kind).toBe('sankey')
+    if (f.kind !== 'sankey') return
+    const embedded = f.nodes.find(node => node.id === 'c')!
+    const side = String(external!.source).endsWith('_l') ? 'l' : 'r'
+    expect(anchor!.position.x + 1).toBe(side === 'l' ? embedded.x : embedded.x + embedded.width)
+    expect(anchor!.position.y + 1).toBe(embedded.y)
+  })
+
+  it('uses element accent colors for nodes and embedded chart items', () => {
+    const out = flow(`model { chart = sankeyGraph "Energy" { accentColor "#7c3aed"
+      source = sankeyNode "Source" { accentColor "#dc2626" backgroundColor "#112233" }
+      target = sankeyNode "Target"
+    } source -> target } views { view v { include * } }`)
+    const chartNode = out.nodes.find(node => node.id === 'chart')!
+    expect(chartNode.data.fill).toBe('#F7F3FE')
+    expect(chartNode.data.stroke).toBe('#7C3AED')
+    expect(chartNode.data.accent).toBe('#7C3AED')
+    const f = frame(out.nodes, 'chart')
+    expect(f.kind).toBe('sankey')
+    if (f.kind === 'sankey') {
+      expect(f.nodes.find(node => node.id === 'source')!.color).toBe('#112233')
+      expect(f.nodes.find(node => node.id === 'source')!.stroke).toBe('#DC2626')
+    }
   })
 
   it('builds multiple radar series over configured axes', () => {

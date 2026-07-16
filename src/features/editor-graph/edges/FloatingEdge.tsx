@@ -304,8 +304,11 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     })
   }
 
-  const d2 = data as { label?: string; sourceLabel?: string; targetLabel?: string } | undefined
+  const d2 = data as { label?: string; sourceLabel?: string; targetLabel?: string; selectedStroke?: string } | undefined
   const label = d2?.label
+  const renderedStyle = selected && d2?.selectedStroke
+    ? { ...style, stroke: d2.selectedStroke, strokeWidth: Math.max(Number(style?.strokeWidth) || 1.6, 2.4) }
+    : style
   // multiplicity labels sit just inside each endpoint (UML/ERD cardinality)
   const endLabel = (txt: string, x: number, y: number, key: string) => (
     <EdgeLabelRenderer key={key}>
@@ -319,7 +322,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
 
   return (
     <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={style} />
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={renderedStyle} />
       {d2?.sourceLabel && endLabel(d2.sourceLabel, lerp(sx, tx), lerp(sy, ty) - 8, 'sc')}
       {d2?.targetLabel && endLabel(d2.targetLabel, lerp(tx, sx), lerp(ty, sy) - 8, 'tc')}
       {label && (
@@ -330,7 +333,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
               transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
               background: 'var(--surface-1)',
               color: 'var(--edge-label)',
-              border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
+              border: selected ? `1px solid ${d2?.selectedStroke ?? 'var(--accent)'}` : '1px solid var(--border)',
               pointerEvents: 'all',
             }}
           >

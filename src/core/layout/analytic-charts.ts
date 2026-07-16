@@ -1,20 +1,31 @@
 import type { GraphModel } from '@/core/model'
+import { deriveAccentColors, normalizeHexColor } from '@/core/notation'
 
-export interface SankeyNodeFrame { id: string; label: string; x: number; y: number; width: number; height: number; color: string }
-export interface SankeyLinkFrame { id: string; source: string; target: string; value: number; color: string; sourceY: number; targetY: number; sourceThickness: number; targetThickness: number }
+export interface SankeyNodeFrame { id: string; label: string; x: number; y: number; width: number; height: number; color: string; stroke: string; selectedStroke: string }
+export interface SankeyLinkFrame { id: string; source: string; target: string; value: number; color: string; selectedColor?: string; sourceY: number; targetY: number; sourceThickness: number; targetThickness: number }
 export interface SankeyFrame { kind: 'sankey'; width: number; height: number; nodes: SankeyNodeFrame[]; links: SankeyLinkFrame[] }
-export interface RadarSeriesFrame { id: string; label: string; values: number[]; color: string }
+export interface RadarSeriesFrame { id: string; label: string; values: number[]; color: string; stroke: string }
 export interface RadarFrame { kind: 'radar'; width: number; height: number; axes: string[]; max: number; series: RadarSeriesFrame[] }
 export interface XyPointFrame { id: string; x: number; y: number; size: number; label?: string }
-export interface XySeriesFrame { id: string; label: string; color: string; points: XyPointFrame[] }
+export interface XySeriesFrame { id: string; label: string; color: string; stroke: string; points: XyPointFrame[] }
 export interface XyFrame { kind: 'xy'; width: number; height: number; xLabel?: string; yLabel?: string; xMin: number; xMax: number; yMin: number; yMax: number; connect: boolean; regression: boolean; series: XySeriesFrame[] }
-export interface BarSeriesFrame { id: string; label: string; values: number[]; color: string }
+export interface BarSeriesFrame { id: string; label: string; values: number[]; color: string; stroke: string }
 export interface BarFrame { kind: 'bar'; width: number; height: number; categories: string[]; xLabel?: string; yLabel?: string; stacked: boolean; series: BarSeriesFrame[] }
 export type AnalyticChartFrame = SankeyFrame | RadarFrame | XyFrame | BarFrame
 
 const COLORS = ['#3B82F6', '#EC4899', '#10B981', '#F59E0B', '#8B5CF6', '#06B6D4', '#EF4444']
 const list = (raw?: string) => (raw ?? '').split(';').map(s => s.trim()).filter(Boolean)
 const num = (raw: string | undefined, fallback = 0) => { const n = Number(raw); return Number.isFinite(n) ? n : fallback }
+const elementColors = (properties: Record<string, string>, fallback: string) => {
+  const customAccent = normalizeHexColor(properties.accentColor)
+  const backgroundColor = normalizeHexColor(properties.backgroundColor)
+  if (customAccent) {
+    const derived = deriveAccentColors(customAccent)
+    return { color: backgroundColor ?? derived.tertiary, stroke: derived.primary, selectedStroke: derived.secondary }
+  }
+  const color = backgroundColor ?? normalizeHexColor(properties.color) ?? fallback
+  return { color, stroke: color, selectedStroke: color }
+}
 
 const SANKEY_TOP = 58
 const SANKEY_BOTTOM = 48
@@ -25,9 +36,17 @@ function sankeyMetrics(model: GraphModel, id: string, visibleIds: ReadonlySet<st
   if (!chart || chart.type !== 'sankeyGraph') return undefined
   const items = chart.children.map(cid => model.elements[cid]).filter(e => e?.type === 'sankeyNode' && visibleIds.has(e.id))
   const ids = new Set(items.map(e => e.id))
-  const rawLinks = Object.values(model.relations).filter(r => ids.has(r.sourceId) && ids.has(r.targetId)).map((r, i) => ({
-    id: r.id, source: r.sourceId, target: r.targetId, value: Math.max(0.1, num(r.properties?.value, num(r.label, 1))), color: r.properties?.color ?? COLORS[i % COLORS.length],
-  }))
+  const rawLinks = Object.values(model.relations).filter(r => ids.has(r.sourceId) && ids.has(r.targetId)).map((r, i) => {
+    const customAccent = normalizeHexColor(r.properties?.accentColor)
+    return {
+      id: r.id,
+      source: r.sourceId,
+      target: r.targetId,
+      value: Math.max(0.1, num(r.properties?.value, num(r.label, 1))),
+      color: customAccent ?? normalizeHexColor(r.properties?.color) ?? COLORS[i % COLORS.length],
+      selectedColor: customAccent ? deriveAccentColors(customAccent).secondary : undefined,
+    }
+  })
   const incoming: Record<string, number> = {}, outgoing: Record<string, number> = {}, totals: Record<string, number> = {}
   for (const item of items) {
     incoming[item.id] = rawLinks.filter(l => l.target === item.id).reduce((a, l) => a + l.value, 0)
@@ -84,9 +103,10 @@ export function buildAnalyticChart(
       let cursor = SANKEY_TOP
       group.forEach((item, i) => {
         const nodeHeight = requested[i] * fit
+        const colors = elementColors(item.properties, COLORS[nodes.length % COLORS.length])
         nodes.push({
           id: item.id, label: item.name, x: 54 + d * (width - 108) / maxDepth, y: cursor + nodeHeight / 2,
-          width: 16, height: nodeHeight, color: item.properties?.color ?? COLORS[nodes.length % COLORS.length],
+          width: 16, height: nodeHeight, ...colors,
         })
         cursor += nodeHeight + gap
       })
@@ -106,14 +126,14 @@ export function buildAnalyticChart(
   }
   if (chart.type === 'radarChart') {
     const axes = list(chart.properties?.axes)
-    const series = children.filter(e => e.type === 'radarSeries').map((e, i) => ({ id: e.id, label: e.name, values: list(e.properties?.values).map(v => num(v)), color: e.properties?.color ?? COLORS[i % COLORS.length] }))
+    const series = children.filter(e => e.type === 'radarSeries').map((e, i) => ({ id: e.id, label: e.name, values: list(e.properties?.values).map(v => num(v)), ...elementColors(e.properties, COLORS[i % COLORS.length]) }))
     const observed = Math.max(1, ...series.flatMap(s => s.values))
     return { kind: 'radar', width, height, axes: axes.length >= 3 ? axes : ['A', 'B', 'C', 'D', 'E'], max: Math.max(1, num(chart.properties?.max, observed)), series }
   }
   if (chart.type === 'xyChart') {
     const seriesEls = children.filter(e => e.type === 'xySeries')
     const series = seriesEls.map((s, i) => ({
-      id: s.id, label: s.name, color: s.properties?.color ?? COLORS[i % COLORS.length],
+      id: s.id, label: s.name, ...elementColors(s.properties, COLORS[i % COLORS.length]),
       points: s.children.map(pid => model.elements[pid]).filter(p => p?.type === 'xyPoint' && visibleIds.has(p.id)).map(p => ({ id: p.id, x: num(p.properties?.x), y: num(p.properties?.y), size: Math.max(3, num(p.properties?.size, 6)), label: p.name })),
     }))
     const points = series.flatMap(s => s.points)
@@ -125,7 +145,7 @@ export function buildAnalyticChart(
   }
   if (chart.type === 'barChart') {
     const categories = list(chart.properties?.categories)
-    const series = children.filter(e => e.type === 'barSeries').map((e, i) => ({ id: e.id, label: e.name, values: list(e.properties?.values).map(v => num(v)), color: e.properties?.color ?? COLORS[i % COLORS.length] }))
+    const series = children.filter(e => e.type === 'barSeries').map((e, i) => ({ id: e.id, label: e.name, values: list(e.properties?.values).map(v => num(v)), ...elementColors(e.properties, COLORS[i % COLORS.length]) }))
     return { kind: 'bar', width, height, categories, xLabel: chart.properties?.xLabel, yLabel: chart.properties?.yLabel, stacked: chart.properties?.mode === 'stacked', series }
   }
 }

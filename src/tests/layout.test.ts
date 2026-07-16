@@ -61,6 +61,15 @@ describe('layeredLayout', () => {
     )
     expect(pos.lonely).toBeDefined()
   })
+
+  it('orders adjacent ranks to avoid relation crossings', () => {
+    const crossingNodes = ['a', 'b', 'c', 'd'].map(id => ({ id, width: 80, height: 40 }))
+    const pos = layeredLayout(crossingNodes, [
+      { source: 'a', target: 'd' },
+      { source: 'b', target: 'c' },
+    ], { direction: 'tb' })
+    expect(Math.sign(pos.a.x - pos.b.x)).toBe(Math.sign(pos.d.x - pos.c.x))
+  })
 })
 
 describe.each<LayoutEngine>(['layered', 'dagre'])('%s layout engine', engine => {
