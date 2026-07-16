@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { parseDsl } from '@/core/dsl/parser'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
+import { EdgeMarkers } from '@/features/editor-graph/edges/EdgeMarkers'
 
 function render(source: string) {
   const parsed = parseDsl(source)
@@ -68,5 +71,11 @@ describe('accent rendering', () => {
     expect(ordinary.data?.selectedStroke).toBe('#A71D1D')
     expect(sequence.style?.stroke).toBe('#059669')
     expect(sequence.data?.selectedStroke).toBe('#047250')
+  })
+
+  it('lets arrow markers inherit each relation stroke', () => {
+    const markup = renderToStaticMarkup(createElement(EdgeMarkers))
+    expect(markup).toContain('stroke="context-stroke"')
+    expect(markup).toContain('fill="context-stroke"')
   })
 })
