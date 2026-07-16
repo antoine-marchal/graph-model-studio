@@ -1,7 +1,12 @@
 import type { Config } from 'tailwindcss'
 
 const config: Config = {
-  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  // Resolve scans relative to this shared config even when Vite is invoked
+  // from the sibling VS Code extension project.
+  content: {
+    relative: true,
+    files: ['./index.html', './src/**/*.{ts,tsx}', './vscode-extension/webview/**/*.{html,ts,tsx}'],
+  },
   darkMode: 'class',
   theme: {
     extend: {

@@ -29,3 +29,10 @@ todo.md
 .codex/
 AGENTS.md
 graphify-out
+
+# generated VS Code extension package assets
+vscode-extension/media/icon.png
+vscode-extension/pnpm-workspace.yaml
+
+test.gmc
+test.md

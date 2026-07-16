@@ -7,9 +7,22 @@ export interface SaveOptions {
   filters?: { name: string; extensions: string[] }[]
 }
 
+export interface FileSaveAdapter {
+  saveText?(content: string, opts: SaveOptions): Promise<boolean>
+  saveBinary?(bytes: Uint8Array, opts: SaveOptions): Promise<boolean>
+}
+
+let fileSaveAdapter: FileSaveAdapter | undefined
+
+/** Install a host-specific save adapter, for example from a VS Code webview. */
+export function setFileSaveAdapter(adapter: FileSaveAdapter | undefined): void {
+  fileSaveAdapter = adapter
+}
+
 /** Save text content. In Tauri shows the native save dialog (file explorer);
  *  in a browser falls back to an anchor download. Returns false if cancelled. */
 export async function saveTextFile(content: string, opts: SaveOptions): Promise<boolean> {
+  if (fileSaveAdapter?.saveText) return fileSaveAdapter.saveText(content, opts)
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')
@@ -24,6 +37,7 @@ export async function saveTextFile(content: string, opts: SaveOptions): Promise<
 
 /** Save binary content (e.g. a PNG). Same Tauri/browser behaviour as saveTextFile. */
 export async function saveBinaryFile(bytes: Uint8Array, opts: SaveOptions): Promise<boolean> {
+  if (fileSaveAdapter?.saveBinary) return fileSaveAdapter.saveBinary(bytes, opts)
   if (isTauri()) {
     const { save } = await import('@tauri-apps/plugin-dialog')
     const { invoke } = await import('@tauri-apps/api/core')

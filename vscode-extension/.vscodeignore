@@ -1,0 +1,12 @@
+node_modules/**
+src/**
+webview/**
+markdown-preview/**
+*.mjs
+*.ts
+tsconfig.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+dist/**/*.map
+dist/webview/webview/**
+dist/markdown-preview/*.css

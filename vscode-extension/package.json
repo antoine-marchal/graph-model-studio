@@ -1,0 +1,159 @@
+{
+  "name": "graph-model-studio",
+  "displayName": "Graph Model Studio",
+  "description": "GMC language support, synchronized graph preview, Markdown diagrams, and PNG export.",
+  "version": "2.1.0",
+  "publisher": "graph-model-studio",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Visualization"
+  ],
+  "keywords": [
+    "gmc",
+    "graph",
+    "diagram",
+    "architecture",
+    "markdown"
+  ],
+  "icon": "media/icon.png",
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:gmc",
+    "onLanguage:markdown",
+    "onCommand:gmc.openPreview",
+    "onCommand:gmc.exportPng",
+    "onCommand:gmc.exportMarkdownDiagram",
+    "onCommand:gmc.exportAllMarkdownDiagrams"
+  ],
+  "contributes": {
+    "markdown.markdownItPlugins": true,
+    "markdown.previewScripts": [
+      "./dist/markdown-preview/preview.js"
+    ],
+    "languages": [
+      {
+        "id": "gmc",
+        "aliases": [
+          "Graph Model Code",
+          "GMC"
+        ],
+        "extensions": [
+          ".gmc",
+          ".graphmodel"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gmc",
+        "scopeName": "source.gmc",
+        "path": "./syntaxes/gmc.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.gmc.codeblock",
+        "path": "./syntaxes/markdown-gmc.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.gmc": "gmc"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "gmc.openPreview",
+        "title": "GMC: Open Graph Preview to the Side",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "gmc.exportPng",
+        "title": "GMC: Export Diagram as PNG",
+        "icon": "$(export)"
+      },
+      {
+        "command": "gmc.exportMarkdownDiagram",
+        "title": "GMC: Export Markdown Diagram as PNG"
+      },
+      {
+        "command": "gmc.exportAllMarkdownDiagrams",
+        "title": "GMC: Export All Markdown Diagrams as PNG"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "gmc.openPreview",
+          "when": "resourceLangId == gmc || resourceLangId == markdown",
+          "group": "navigation@10"
+        },
+        {
+          "command": "gmc.exportPng",
+          "when": "resourceLangId == gmc",
+          "group": "navigation@11"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Graph Model Studio",
+      "properties": {
+        "gmc.preview.autoOpen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open the graph preview when a GMC file becomes active."
+        },
+        "gmc.export.width": {
+          "type": "number",
+          "default": 1600,
+          "minimum": 320,
+          "maximum": 8192,
+          "description": "PNG export width in pixels."
+        },
+        "gmc.export.height": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 240,
+          "maximum": 8192,
+          "description": "PNG export height in pixels."
+        },
+        "gmc.export.theme": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "light",
+            "dark"
+          ],
+          "default": "auto",
+          "description": "Theme used for PNG export."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "sync": "node ./sync-from-root.mjs",
+    "clean": "node ./scripts.mjs clean",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "build:host": "node ./esbuild.mjs",
+    "build:webview": "vite build --config vite.webview.config.ts",
+    "build:markdown-preview": "vite build --config vite.markdown-preview.config.ts",
+    "build": "pnpm run sync && pnpm run clean && pnpm run check && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview",
+    "package": "node ./package-vsix.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@vscode/vsce": "^3.2.1",
+    "autoprefixer": "^10.4.20",
+    "esbuild": "^0.24.2",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useModelStore } from '@/store'
 
 /**
@@ -14,16 +14,19 @@ import { useModelStore } from '@/store'
 export function EdgeMarkers() {
   const theme = useModelStore(s => s.theme)
   const [{ stroke, bg }, setColors] = useState({ stroke: '#94a3b8', bg: '#0f1623' })
+  const svgRef = useRef<SVGSVGElement>(null)
 
   useEffect(() => {
-    const cs = getComputedStyle(document.documentElement)
+    const root = svgRef.current?.getRootNode()
+    const themeElement = root instanceof ShadowRoot ? root.host : document.documentElement
+    const cs = getComputedStyle(themeElement)
     const edge = cs.getPropertyValue('--edge').trim() || '#94a3b8'
     const surface = cs.getPropertyValue('--surface-0').trim() || '#0f1623'
     setColors({ stroke: edge, bg: surface })
   }, [theme])
 
   return (
-    <svg width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
+    <svg ref={svgRef} width="0" height="0" style={{ position: 'absolute' }} aria-hidden>
       <defs>
         {/* open V arrow */}
         <marker id="gms-arrow-open" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" orient="auto-start-reverse">

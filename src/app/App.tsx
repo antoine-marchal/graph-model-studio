@@ -3,13 +3,13 @@ import { Titlebar } from './layout/Titlebar'
 import { StatusBar } from './layout/StatusBar'
 import { Explorer } from '@/features/explorer/Explorer'
 import { CodeEditor } from '@/features/editor-code/CodeEditor'
-import { GraphEditor } from '@/features/editor-graph/GraphEditor'
 import { PropertiesPanel } from '@/features/properties-panel/PropertiesPanel'
 import { ResizeHandle } from '@/ui/components/Resizable'
 import { useModelStore } from '@/store'
 import { getCliFile } from '@/services/tauri'
 import { getStorageProvider } from '@/services/storage'
 import { parseDsl } from '@/core/dsl/parser'
+import { GraphPanel } from './GraphPanel'
 
 type ViewMode = 'split' | 'code' | 'graph'
 
@@ -161,10 +161,7 @@ export function App() {
           )}
 
           {showGraph && (
-            <div className="flex min-w-0 flex-1 flex-col">
-              <PanelHeader label="Graph"><ViewTabs /></PanelHeader>
-              <div className="flex-1 overflow-hidden"><GraphEditor /></div>
-            </div>
+            <GraphPanel />
           )}
         </main>
 
@@ -194,29 +191,6 @@ function PanelHeader({ label, children }: { label: string; children?: React.Reac
       <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)] shadow-[0_0_0_3px_var(--accent-soft)]" />
       <span className="text-[10px] font-bold uppercase tracking-[0.13em] text-[var(--fg-muted)]">{label}</span>
       {children}
-    </div>
-  )
-}
-
-function ViewTabs() {
-  const model = useModelStore(s => s.model)
-  const activeViewId = useModelStore(s => s.activeViewId)
-  const setActiveView = useModelStore(s => s.setActiveView)
-  const views = Object.values(model.views)
-  if (views.length <= 1) return null
-  return (
-    <div className="ml-2 flex gap-0.5 rounded-md bg-[var(--surface-2)] p-0.5">
-      {views.map(v => (
-        <button
-          key={v.id}
-          onClick={() => setActiveView(v.id)}
-          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
-            v.id === activeViewId ? 'bg-[var(--surface-raised)] text-[var(--accent)] shadow-[var(--shadow-sm)]' : 'text-[var(--fg-subtle)] hover:text-[var(--fg)]'
-          }`}
-        >
-          {v.name}
-        </button>
-      ))}
     </div>
   )
 }

@@ -146,6 +146,18 @@ Full grammar and every element/relation type: [`docs/DSL.md`](docs/DSL.md).
 
 ---
 
+## VS Code extension
+
+The `vscode-extension/` subproject imports the GMC parser, model, notation
+registry, layout engines, React Flow renderer, graph components, store, and
+styles directly from `src/`. The extension provides `.gmc` language support,
+an interactive graph editor beside the source document, bidirectional source
+synchronization, PNG export, and automatically rendered GMC diagrams in the
+built-in VS Code Markdown preview. See [`vscode-extension/README.md`](vscode-extension/README.md)
+for the complete feature and usage guide.
+
+---
+
 ## Tech stack
 
 | Concern        | Choice |

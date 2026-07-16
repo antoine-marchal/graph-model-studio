@@ -17,7 +17,6 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { toPng } from 'html-to-image'
 import { useModelStore } from '@/store'
 import {
   modelToFlow,
@@ -37,6 +36,7 @@ import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
+import { captureGraphPng } from './png-export'
 
 const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
 
@@ -49,14 +49,6 @@ const CHART_CHILD_AXIS: Record<string, 'x' | 'y' | undefined> = {
 const edgeTypes = { floating: FloatingEdge }
 
 /** Decode a "data:image/png;base64,…" URL into raw bytes. */
-function dataUrlToBytes(dataUrl: string): Uint8Array {
-  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
-  const bin = atob(base64)
-  const bytes = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
-  return bytes
-}
-
 function descendantIds(model: ReturnType<typeof useModelStore.getState>['model'], id: string): Set<string> {
   const out = new Set<string>()
   const stack = [...(model.elements[id]?.children ?? [])]
@@ -377,56 +369,8 @@ function GraphEditorInner() {
   const exportPng = useCallback(async () => {
     const wrapper = wrapperRef.current
     if (!wrapper) return
-    const wrect = wrapper.getBoundingClientRect()
-
-    // content pixel bbox (nodes + edge paths + edge labels), relative to wrapper
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    const expand = (r: DOMRect) => {
-      if (r.width === 0 && r.height === 0) return
-      minX = Math.min(minX, r.left); minY = Math.min(minY, r.top)
-      maxX = Math.max(maxX, r.right); maxY = Math.max(maxY, r.bottom)
-    }
-    wrapper.querySelectorAll('.react-flow__node').forEach(n => expand(n.getBoundingClientRect()))
-    wrapper.querySelectorAll('.react-flow__edge-path').forEach(p => expand((p as SVGGraphicsElement).getBoundingClientRect()))
-    wrapper.querySelectorAll('.react-flow__edgelabel-renderer > *').forEach(l => expand(l.getBoundingClientRect()))
-    if (!isFinite(minX)) return
-
-    const PAD = 24
-    const ratio = 2
-    const cropX = (minX - wrect.left - PAD) * ratio
-    const cropY = (minY - wrect.top - PAD) * ratio
-    const cropW = (maxX - minX + 2 * PAD) * ratio
-    const cropH = (maxY - minY + 2 * PAD) * ratio
-
-    // capture the whole wrapper (so the global <EdgeMarkers> defs are in scope),
-    // transparent, minus the editor chrome (grid, controls, minimap, toolbars)
-    const skip = ['react-flow__background', 'react-flow__controls', 'react-flow__minimap', 'react-flow__panel', 'react-flow__attribution']
-    // .react-flow paints an opaque pane background; null it out for a transparent PNG
-    const rf = wrapper.querySelector('.react-flow') as HTMLElement | null
-    const prevBg = rf?.style.backgroundColor
-    if (rf) rf.style.backgroundColor = 'transparent'
-    let fullUrl: string
-    try {
-      fullUrl = await toPng(wrapper, {
-        pixelRatio: ratio,
-        backgroundColor: undefined, // transparent
-        filter: (node) => !(node instanceof Element) || !skip.some(c => node.classList?.contains(c)),
-      })
-    } finally {
-      if (rf) rf.style.backgroundColor = prevBg ?? ''
-    }
-
-    // crop to the content bbox on a transparent canvas
-    const img = new Image()
-    await new Promise<void>((res, rej) => { img.onload = () => res(); img.onerror = rej; img.src = fullUrl })
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.max(1, Math.round(cropW))
-    canvas.height = Math.max(1, Math.round(cropH))
-    const ctx = canvas.getContext('2d')!
-    ctx.drawImage(img, cropX, cropY, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height)
-
     const base = model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'diagram'
-    const bytes = dataUrlToBytes(canvas.toDataURL('image/png'))
+    const bytes = await captureGraphPng(wrapper)
     await saveBinaryFile(bytes, { defaultName: `${base}.png`, filters: filtersForExt('png') })
   }, [model])
 

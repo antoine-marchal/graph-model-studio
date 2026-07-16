@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "sync:version": "node ./vscode-extension/sync-from-root.mjs",
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "pnpm run sync:version && tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
     "test:ui": "vitest --ui",
@@ -13,7 +14,7 @@
     "format": "prettier --write src",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "pnpm run sync:version && tauri build"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
