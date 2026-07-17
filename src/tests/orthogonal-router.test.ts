@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, filterRoutingObstacles, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
+import { END_LABEL_DISTANCE, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from '@/features/editor-graph/edges/edge-label-position'
+import { Position } from '@xyflow/react'
 
 function hitsAny(pts: Point[], obstacles: Rect[]): boolean {
   for (let i = 0; i < pts.length - 1; i++) {
@@ -107,6 +109,31 @@ describe('clipRouteInputs', () => {
     const clipped = clipRouteInputs({ x: 0, y: 0 }, { x: 100, y: 100 }, [near, far], [nearSeg, farSeg])
     expect(clipped.obstacles).toEqual([near])
     expect(clipped.occupied).toEqual([nearSeg])
+  })
+})
+
+describe('edge label positioning', () => {
+  it('places endpoint labels on the routed polyline by total path length', () => {
+    const route = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+    expect(pointOnPolyline(route, 0.25)).toEqual({ x: 50, y: 0 })
+    expect(pointOnPolyline(route, 0.75)).toEqual({ x: 100, y: 50 })
+  })
+
+  it('keeps endpoint labels at a fixed pixel distance on a routed polyline', () => {
+    const route = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]
+    expect(pointOnPolylineAtDistance(route, END_LABEL_DISTANCE)).toEqual({ x: 30, y: 0 })
+    expect(pointOnPolylineAtDistance(route, END_LABEL_DISTANCE, true)).toEqual({ x: 100, y: 70 })
+  })
+
+  it('keeps endpoint labels at a fixed pixel distance on the rendered Bezier curve', () => {
+    const source = { x: 0, y: 0 }
+    const target = { x: 100, y: 0 }
+    const sourceLabel = pointOnBezierAtDistance(source, target, Position.Right, Position.Left, END_LABEL_DISTANCE)
+    const targetLabel = pointOnBezierAtDistance(source, target, Position.Right, Position.Left, END_LABEL_DISTANCE, true)
+    expect(sourceLabel.x).toBeCloseTo(30, 1)
+    expect(sourceLabel.y).toBe(0)
+    expect(targetLabel.x).toBeCloseTo(70, 1)
+    expect(targetLabel.y).toBe(0)
   })
 })
 

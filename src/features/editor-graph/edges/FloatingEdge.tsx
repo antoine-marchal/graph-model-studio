@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react'
 import { useModelStore } from '@/store'
 import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
+import { END_LABEL_DISTANCE, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from './edge-label-position'
 
 // Routes of currently-mounted edges, so each edge can pay a malus for running
 // on the same pixel line as another relation (see overlapPenalty in the router).
@@ -166,22 +167,6 @@ function dedupeColinear(pts: Point[]): Point[] {
   return out
 }
 
-/** Point at half the total length of a poly-line (for label placement). */
-function polylineMidpoint(pts: Point[]): Point {
-  let total = 0
-  for (let i = 0; i < pts.length - 1; i++) total += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y)
-  let half = total / 2
-  for (let i = 0; i < pts.length - 1; i++) {
-    const seg = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y)
-    if (half <= seg) {
-      const t = seg === 0 ? 0 : half / seg
-      return { x: pts[i].x + (pts[i + 1].x - pts[i].x) * t, y: pts[i].y + (pts[i + 1].y - pts[i].y) * t }
-    }
-    half -= seg
-  }
-  return pts[pts.length - 1]
-}
-
 export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, style, data, selected, sourceHandleId, targetHandleId }: EdgeProps) => {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -214,6 +199,8 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   let path: string
   let labelX: number
   let labelY: number
+  let sourceLabelPoint: Point
+  let targetLabelPoint: Point
   let routed: Point[] | null = null
   if (routing === 'orthogonal') {
     const nodeRects: NodeRect[] = []
@@ -293,15 +280,19 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
 
   if (routed) {
     path = pointsToRoundedPath(routed)
-    const mid = polylineMidpoint(routed)
+    const mid = pointOnPolyline(routed, 0.5)
     labelX = mid.x
     labelY = mid.y
+    sourceLabelPoint = pointOnPolylineAtDistance(routed, END_LABEL_DISTANCE)
+    targetLabelPoint = pointOnPolylineAtDistance(routed, END_LABEL_DISTANCE, true)
   } else {
     [path, labelX, labelY] = getBezierPath({
       sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
       targetPosition: targetPos, targetX: tx, targetY: ty,
       curvature: 0.25,
     })
+    sourceLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE)
+    targetLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE, true)
   }
 
   const d2 = data as { label?: string; sourceLabel?: string; targetLabel?: string; selectedStroke?: string } | undefined
@@ -309,7 +300,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   const renderedStyle = selected && d2?.selectedStroke
     ? { ...style, stroke: d2.selectedStroke, strokeWidth: Math.max(Number(style?.strokeWidth) || 1.6, 2.4) }
     : style
-  // multiplicity labels sit just inside each endpoint (UML/ERD cardinality)
+  // Multiplicity labels sit directly on the relation, near their respective ends.
   const endLabel = (txt: string, x: number, y: number, key: string) => (
     <EdgeLabelRenderer key={key}>
       <div
@@ -318,13 +309,11 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       >{txt}</div>
     </EdgeLabelRenderer>
   )
-  const lerp = (a: number, b: number) => a + (b - a) * 0.16
-
   return (
     <>
       <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={renderedStyle} />
-      {d2?.sourceLabel && endLabel(d2.sourceLabel, lerp(sx, tx), lerp(sy, ty) - 8, 'sc')}
-      {d2?.targetLabel && endLabel(d2.targetLabel, lerp(tx, sx), lerp(ty, sy) - 8, 'tc')}
+      {d2?.sourceLabel && endLabel(d2.sourceLabel, sourceLabelPoint.x, sourceLabelPoint.y, 'sc')}
+      {d2?.targetLabel && endLabel(d2.targetLabel, targetLabelPoint.x, targetLabelPoint.y, 'tc')}
       {label && (
         <EdgeLabelRenderer>
           <div
