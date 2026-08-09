@@ -6,6 +6,15 @@ import { Button } from '@/ui/components/Button'
 import { notationRegistry } from '@/core/notation'
 import { ACCENT_PALETTE, deriveAccentColors, normalizeHexColor } from '@/core/notation'
 import { NodeTypePicker, TypeSwatch } from '@/features/editor-graph/NodeTypePicker'
+import {
+  copyElementFormat,
+  copyRelationFormat,
+  elementFormatFor,
+  hasElementFormat,
+  hasRelationFormat,
+  relationFormatFor,
+} from '@/features/editor-graph/style-clipboard'
+import { parseXyPointList } from './xy-series-points'
 
 /** Searchable element-type selector — same picker as the canvas add-node menu. */
 function TypeField({ value, onPick }: { value: string; onPick: (type: string) => void }) {
@@ -272,10 +281,63 @@ function useLiveField<T>(value: T, commit: (v: T) => void, delay = 250) {
   return [local, onChange, flush] as const
 }
 
+function XySeriesPointGenerator({ seriesId }: { seriesId: string }) {
+  const series = useModelStore(s => s.model.elements[seriesId])
+  const elements = useModelStore(s => s.model.elements)
+  const dispatch = useModelStore(s => s.dispatch)
+  const points = (series?.children ?? []).flatMap(id => {
+    const point = elements[id]
+    if (point?.type !== 'xyPoint') return []
+    const x = Number(point.properties.x)
+    const y = Number(point.properties.y)
+    const size = point.properties.size === undefined ? undefined : Number(point.properties.size)
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return []
+    return [[x, y, ...(Number.isFinite(size) ? [size] : [])]]
+  })
+  const serialized = JSON.stringify(points)
+  const [source, setSource] = useState(serialized)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSource(serialized)
+    setError(null)
+  }, [seriesId, serialized])
+
+  const generate = () => {
+    try {
+      const parsed = parseXyPointList(source)
+      dispatch({ type: 'REPLACE_XY_SERIES_POINTS', payload: { seriesId, points: parsed } })
+      setError(null)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not parse the point list.')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
+      <label className="text-[9px] font-bold uppercase tracking-[0.12em] text-[var(--fg-subtle)]">Generate points</label>
+      <textarea
+        value={source}
+        onChange={event => { setSource(event.target.value); setError(null) }}
+        rows={5}
+        spellCheck={false}
+        placeholder="[[0, 5], [10, 12], [20, 8, 10]]"
+        className="w-full resize-y rounded border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 font-mono text-[11px] text-[var(--fg)] placeholder-[var(--fg-subtle)] focus:border-[var(--accent)] focus:outline-none"
+      />
+      <span className="text-[9px] leading-snug text-[var(--fg-subtle)]">Rows are [x, y] or [x, y, bubble size]. Applying replaces this series’ existing points.</span>
+      {error && <span role="alert" className="text-[10px] leading-snug text-red-500">{error}</span>}
+      <Button type="button" size="sm" variant="outline" onClick={generate}>Generate / replace points</Button>
+    </div>
+  )
+}
+
 function ElementProperties({ elementId }: { elementId: string }) {
   const element = useModelStore(s => s.model.elements[elementId])
+  const views = useModelStore(s => s.model.views)
+  const activeViewId = useModelStore(s => s.activeViewId)
   const dispatch = useModelStore(s => s.dispatch)
   const focusNonce = useModelStore(s => s.focusPropertiesNonce)
+  const [, refreshFormatButtons] = useState(0)
   const nameRef = useRef<HTMLInputElement>(null)
 
   const commitName = useCallback((v: string) => dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, name: v } }), [dispatch, elementId])
@@ -325,6 +387,19 @@ function ElementProperties({ elementId }: { elementId: string }) {
         <code className="rounded bg-[var(--surface-2)] px-1.5 py-0.5 text-[10px] text-[var(--fg-muted)]">{element.id}</code>
       </div>
 
+      <div className="grid grid-cols-2 gap-2">
+        <Button size="sm" variant="outline" onClick={() => {
+          if (!activeViewId) return
+          copyElementFormat(useModelStore.getState().model, activeViewId, elementId)
+          refreshFormatButtons(value => value + 1)
+        }}>Copy style</Button>
+        <Button size="sm" variant="outline" disabled={!activeViewId || !hasElementFormat()} onClick={() => {
+          if (!activeViewId) return
+          const format = elementFormatFor(useModelStore.getState().model, elementId)
+          if (format) dispatch({ type: 'APPLY_ELEMENT_FORMAT', payload: { viewId: activeViewId, id: elementId, ...format } })
+        }}>Paste style</Button>
+      </div>
+
       <FieldRow label="Name">
         <Input ref={nameRef} value={name} onChange={e => onName(e.target.value)} onBlur={flushName} />
       </FieldRow>
@@ -358,6 +433,19 @@ function ElementProperties({ elementId }: { elementId: string }) {
         <Input value={tagsStr} onChange={e => onTags(e.target.value)} onBlur={flushTags} placeholder="domain, core" />
       </FieldRow>
 
+      <FieldRow label="Linked view">
+        <Select
+          value={properties?.linkedView ?? ''}
+          onChange={e => setProp('linkedView', e.target.value)}
+          title="Show a navigation button on this node"
+        >
+          <option value="">None</option>
+          {Object.values(views).map(view => (
+            <option key={view.id} value={view.id}>{view.name}</option>
+          ))}
+        </Select>
+      </FieldRow>
+
       <FieldRow label="Accent color">
         <AccentColorField
           value={properties?.accentColor}
@@ -384,6 +472,7 @@ function ElementProperties({ elementId }: { elementId: string }) {
               onCommit={v => setProp(f.key, v)}
             />
           ))}
+          {element.type === 'xySeries' && <XySeriesPointGenerator seriesId={elementId} />}
         </div>
       )}
 
@@ -398,6 +487,7 @@ function RelationProperties({ relationId }: { relationId: string }) {
   const relation = useModelStore(s => s.model.relations[relationId])
   const elements = useModelStore(s => s.model.elements)
   const dispatch = useModelStore(s => s.dispatch)
+  const [, refreshFormatButtons] = useState(0)
 
   const commitLabel = useCallback((v: string) => dispatch({ type: 'UPDATE_RELATION', payload: { id: relationId, label: v || undefined } }), [dispatch, relationId])
   const [label, onLabel, flushLabel] = useLiveField(relation?.label ?? '', commitLabel)
@@ -417,6 +507,16 @@ function RelationProperties({ relationId }: { relationId: string }) {
   return (
     <div className="flex flex-col gap-3 p-3">
       <span className="text-xs font-semibold text-[var(--fg)]">Relation</span>
+      <div className="grid grid-cols-2 gap-2">
+        <Button size="sm" variant="outline" onClick={() => {
+          copyRelationFormat(useModelStore.getState().model, relationId)
+          refreshFormatButtons(value => value + 1)
+        }}>Copy style</Button>
+        <Button size="sm" variant="outline" disabled={!hasRelationFormat()} onClick={() => {
+          const format = relationFormatFor(useModelStore.getState().model, relationId)
+          if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id: relationId, ...format } })
+        }}>Paste style</Button>
+      </div>
       <div className="rounded bg-[var(--surface-2)] p-2 text-xs text-[var(--fg-muted)]">
         <span className="text-[var(--fg)]">{src}</span>
         <span className="mx-1">→</span>
@@ -514,7 +614,7 @@ function MultiSelectionPanel({ ids }: { ids: string[] }) {
         Use “⤢ Selected” in the graph toolbar to arrange just these nodes, or
         Ctrl/Cmd+D to duplicate them.
       </p>
-      <Button size="sm" variant="danger" className="w-full" onClick={() => ids.forEach(id => dispatch({ type: 'DELETE_ELEMENT', payload: { id } }))}>
+      <Button size="sm" variant="danger" className="w-full" onClick={() => dispatch({ type: 'DELETE_ELEMENTS', payload: { ids } })}>
         Delete {ids.length} Elements
       </Button>
     </div>

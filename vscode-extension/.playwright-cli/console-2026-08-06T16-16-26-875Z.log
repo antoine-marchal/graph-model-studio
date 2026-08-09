@@ -1,0 +1,3 @@
+[   26219ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:4177/assets/webview.js:0
+[   26219ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:4177/assets/webview.css:0
+[   26221ms] [ERROR] Failed to load resource: the server responded with a status of 404 (File not found) @ http://127.0.0.1:4177/favicon.ico:0

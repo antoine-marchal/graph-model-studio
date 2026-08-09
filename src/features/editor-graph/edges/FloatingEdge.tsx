@@ -102,6 +102,74 @@ function getEdgeParams(
 
 const SPREAD = 12 // gap between attachment points of edges sharing a node side
 
+interface RoutingScene {
+  nodeLookup: Map<string, InternalNode<Node>>
+  edges: Array<{ id: string; source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }>
+  nodeRects: NodeRect[]
+  spreadSlots: Map<string, { index: number; count: number }>
+}
+
+let routingScene: RoutingScene | undefined
+let routingSceneReset = 0
+
+/** Build geometry shared by every edge once per animation frame. */
+function sceneFor(
+  nodeLookup: RoutingScene['nodeLookup'],
+  edges: RoutingScene['edges'],
+): RoutingScene {
+  if (routingScene?.nodeLookup === nodeLookup && routingScene.edges === edges) return routingScene
+  const nodeRects: NodeRect[] = []
+  for (const [, node] of nodeLookup) {
+    nodeRects.push({
+      id: node.id,
+      rect: {
+        x: node.internals.positionAbsolute.x,
+        y: node.internals.positionAbsolute.y,
+        width: node.measured.width ?? 0,
+        height: node.measured.height ?? 0,
+      },
+    })
+  }
+
+  const groups = new Map<string, Array<{ id: string; coord: number }>>()
+  const addEndpoint = (edge: RoutingScene['edges'][number], isSource: boolean) => {
+    const nodeId = isSource ? edge.source : edge.target
+    const otherId = isSource ? edge.target : edge.source
+    const handle = isSource ? edge.sourceHandle : edge.targetHandle
+    if (nodeId === otherId || handle) return
+    const node = nodeLookup.get(nodeId)
+    const other = nodeLookup.get(otherId)
+    if (!node || !other) return
+    const side = getEdgePosition(node, getNodeIntersection(node, other))
+    const horizontal = side === Position.Top || side === Position.Bottom
+    const coord = horizontal
+      ? other.internals.positionAbsolute.x + (other.measured.width ?? 1) / 2
+      : other.internals.positionAbsolute.y + (other.measured.height ?? 1) / 2
+    const key = `${nodeId}|${side}`
+    const group = groups.get(key)
+    if (group) group.push({ id: edge.id, coord })
+    else groups.set(key, [{ id: edge.id, coord }])
+  }
+  for (const edge of edges) {
+    addEndpoint(edge, true)
+    addEndpoint(edge, false)
+  }
+  const spreadSlots = new Map<string, { index: number; count: number }>()
+  for (const [groupKey, group] of groups) {
+    group.sort((left, right) => left.coord - right.coord || left.id.localeCompare(right.id))
+    group.forEach((item, index) => spreadSlots.set(`${groupKey}|${item.id}`, { index, count: group.length }))
+  }
+
+  routingScene = { nodeLookup, edges, nodeRects, spreadSlots }
+  if (!routingSceneReset) {
+    routingSceneReset = requestAnimationFrame(() => {
+      routingScene = undefined
+      routingSceneReset = 0
+    })
+  }
+  return routingScene
+}
+
 /**
  * Distribute the attachment points of floating edges that share a node side,
  * so two relations never leave/enter a node on the same pixel line. Siblings
@@ -112,34 +180,14 @@ function spreadPoint(
   node: InternalNode<Node>,
   side: Position,
   point: Point,
-  edges: Array<{ id: string; source: string; target: string; sourceHandle?: string | null; targetHandle?: string | null }>,
-  nodeLookup: Map<string, InternalNode<Node>>,
+  spreadSlots: RoutingScene['spreadSlots'],
 ): Point {
   const horizontalSide = side === Position.Top || side === Position.Bottom
-  const sibs: Array<{ id: string; coord: number }> = []
-  for (const e of edges) {
-    if (e.source === e.target) continue
-    const isSrc = e.source === node.id
-    const isTgt = e.target === node.id
-    if (!isSrc && !isTgt) continue
-    if (isSrc && e.sourceHandle) continue // pinned ends don't float
-    if (isTgt && e.targetHandle) continue
-    const other = nodeLookup.get(isSrc ? e.target : e.source)
-    if (!other) continue
-    if (getEdgePosition(node, getNodeIntersection(node, other)) !== side) continue
-    const oc = {
-      x: other.internals.positionAbsolute.x + (other.measured.width ?? 1) / 2,
-      y: other.internals.positionAbsolute.y + (other.measured.height ?? 1) / 2,
-    }
-    sibs.push({ id: e.id, coord: horizontalSide ? oc.x : oc.y })
-  }
-  if (sibs.length <= 1) return point
-  sibs.sort((p, q) => p.coord - q.coord || (p.id < q.id ? -1 : p.id > q.id ? 1 : 0))
-  const k = sibs.findIndex(s => s.id === edgeId)
-  if (k < 0) return point
+  const slot = spreadSlots.get(`${node.id}|${side}|${edgeId}`)
+  if (!slot || slot.count <= 1) return point
   // anchor the fan at the side's midpoint (not at each edge's own intersection
   // point — those differ per target and would cancel the offsets out)
-  const off = (k - (sibs.length - 1) / 2) * SPREAD
+  const off = (slot.index - (slot.count - 1) / 2) * SPREAD
   const nx = node.internals.positionAbsolute.x
   const ny = node.internals.positionAbsolute.y
   const nw = node.measured.width ?? 1
@@ -173,6 +221,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   const routing = useModelStore(s => s.edgeRouting)
   const nodeLookup = useStore(s => s.nodeLookup)
   const rfEdges = useStore(s => s.edges)
+  const scene = sceneFor(nodeLookup, rfEdges)
   useEffect(() => () => { routedEdges.delete(id); routeCache.delete(id) }, [id])
   // settle pass: the first render of each edge happens before later edges are
   // in the registry, so re-route once after mount when the registry is full
@@ -188,11 +237,11 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
 
   let { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
   if (!sourceHandleId) {
-    const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, rfEdges, nodeLookup)
+    const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
     sx = p.x; sy = p.y
   }
   if (!targetHandleId) {
-    const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, rfEdges, nodeLookup)
+    const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, scene.spreadSlots)
     tx = p.x; ty = p.y
   }
 
@@ -203,18 +252,10 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   let targetLabelPoint: Point
   let routed: Point[] | null = null
   if (routing === 'orthogonal') {
-    const nodeRects: NodeRect[] = []
-    for (const [, n] of nodeLookup) {
-      const x = n.internals.positionAbsolute.x
-      const y = n.internals.positionAbsolute.y
-      const w = n.measured.width ?? 0
-      const h = n.measured.height ?? 0
-      nodeRects.push({ id: n.id, rect: { x, y, width: w, height: h } })
-    }
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
-      nodeRects, source, target, { x: sx, y: sy }, { x: tx, y: ty },
+      scene.nodeRects, source, target, { x: sx, y: sy }, { x: tx, y: ty },
     )
     // segments of every other already-routed relation — soft-avoided so two
     // relations never sit on the same pixel line (staggered by ≥ 5px)

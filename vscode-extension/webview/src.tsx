@@ -1,5 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import '../bundled-icons'
 import '@fontsource/jetbrains-mono/400.css'
 import '@fontsource/jetbrains-mono/500.css'
 import '../../src/styles/global.css'
@@ -11,7 +12,7 @@ import { Button } from '../../src/ui/components/Button'
 import { ResizeHandle } from '../../src/ui/components/Resizable'
 import { parseDsl } from '../../src/core/dsl/parser'
 import { createDefaultView } from '../../src/core/model'
-import { captureGraphPng, pngBytesToDataUrl } from '../../src/features/editor-graph/png-export'
+import { captureGraphPng, pngBytesToDataUrl, type GraphCaptureWorkspace } from '../../src/features/editor-graph/png-export'
 import { setFileSaveAdapter, type SaveOptions } from '../../src/services/file-save'
 import { useModelStore } from '../../src/store'
 
@@ -32,6 +33,12 @@ const initialUiState = (vscode.getState() as WebviewUiState | undefined) ?? {}
 
 function saveUiState(patch: Partial<WebviewUiState>) {
   vscode.setState({ ...((vscode.getState() as WebviewUiState | undefined) ?? {}), ...patch })
+}
+
+function isTextEditingTarget(target: EventTarget | null): boolean {
+  const element = target instanceof HTMLElement ? target : document.activeElement
+  return element instanceof HTMLElement
+    && element.closest('input, textarea, select, [contenteditable="true"], .inputarea') !== null
 }
 
 interface RenderMessage {
@@ -91,6 +98,10 @@ function StudioGraph({ message }: { message: RenderMessage }) {
   const [explorerWidth, setExplorerWidth] = useState(initialUiState.explorerWidth ?? 220)
   const theme = useModelStore(state => state.theme)
   const toggleTheme = useModelStore(state => state.toggleTheme)
+  const undo = useModelStore(state => state.undo)
+  const redo = useModelStore(state => state.redo)
+  const canUndo = useModelStore(state => state.past.length > 0)
+  const canRedo = useModelStore(state => state.future.length > 0)
   const syncTimer = useRef<number | undefined>(undefined)
 
   const handleToggleTheme = () => {
@@ -142,6 +153,27 @@ function StudioGraph({ message }: { message: RenderMessage }) {
   }, [theme])
 
   useEffect(() => {
+    if (!message.editable) return
+
+    const handleHistoryShortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || isTextEditingTarget(event.target)) return
+
+      const key = event.key.toLowerCase()
+      const state = useModelStore.getState()
+      if (key === 'z' && !event.shiftKey && state.past.length > 0) {
+        event.preventDefault()
+        state.undo()
+      } else if ((key === 'y' || (key === 'z' && event.shiftKey)) && state.future.length > 0) {
+        event.preventDefault()
+        state.redo()
+      }
+    }
+
+    window.addEventListener('keydown', handleHistoryShortcut)
+    return () => window.removeEventListener('keydown', handleHistoryShortcut)
+  }, [message.editable])
+
+  useEffect(() => {
     if (hydratedRenderId !== message.renderId || !message.editable) return
     let previousSource = useModelStore.getState().dslSource
     const unsubscribe = useModelStore.subscribe(state => {
@@ -164,10 +196,28 @@ function StudioGraph({ message }: { message: RenderMessage }) {
 
   useEffect(() => {
     if (hydratedRenderId !== message.renderId) return
-    const timer = window.setTimeout(() => {
-      requestAnimationFrame(() => vscode.postMessage({ type: 'rendered', renderId: message.renderId }))
-    }, parsed.model ? 250 : 0)
-    return () => window.clearTimeout(timer)
+    if (!parsed.model) {
+      vscode.postMessage({ type: 'rendered', renderId: message.renderId })
+      return
+    }
+    let cancelled = false
+    let frame = 0
+    let attempts = 0
+    const reportWhenMeasured = () => {
+      if (cancelled) return
+      const workspace = document.querySelector('.gms-graph-workspace') as GraphCaptureWorkspace | null
+      const bounds = workspace?.__gmsGetContentBounds?.()
+      if ((bounds && bounds.width > 0 && bounds.height > 0) || attempts++ >= 30) {
+        vscode.postMessage({ type: 'rendered', renderId: message.renderId })
+        return
+      }
+      frame = requestAnimationFrame(reportWhenMeasured)
+    }
+    frame = requestAnimationFrame(reportWhenMeasured)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(frame)
+    }
   }, [hydratedRenderId, message.renderId, parsed.model])
 
   useEffect(() => {
@@ -232,6 +282,26 @@ function StudioGraph({ message }: { message: RenderMessage }) {
             >
               v{message.version}
             </span>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={undo}
+              disabled={!message.editable || !canUndo}
+              title="Undo (Ctrl/Cmd+Z)"
+              aria-label="Undo"
+            >
+              <span className="text-base leading-none">↶</span>
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={redo}
+              disabled={!message.editable || !canRedo}
+              title="Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)"
+              aria-label="Redo"
+            >
+              <span className="text-base leading-none">↷</span>
+            </Button>
             <Button
               size="icon"
               variant="ghost"

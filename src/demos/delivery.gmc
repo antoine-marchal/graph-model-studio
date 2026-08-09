@@ -1,0 +1,113 @@
+model {
+  orderPool = pool "Order Handling" {
+    salesLane = lane "Sales" {
+      received = startEvent "Order received"
+      validate = userTask "Validate order"
+      stockCheck = exclusiveGateway "In stock?"
+      rejected = endEvent "Rejected"
+    }
+    fulfilmentLane = lane "Fulfilment" {
+      reserve = serviceTask "Reserve stock"
+      parallel = parallelGateway "Prepare delivery"
+      pick = task "Pick and pack"
+      invoice = serviceTask "Create invoice"
+      shipped = intermediateEvent "Carrier collected"
+      complete = endEvent "Completed"
+    }
+  }
+  orderDocument = dataObjectBpmn "Order"
+  carrierPool = pool "Carrier" { carrierTask = task "Deliver parcel" }
+
+  flowStart = start "Start"
+  readOrder = inputOutput "Read order"
+  validDecision = decision "Valid?"
+  enrichOrder = process "Enrich order"
+  manualReview = process "Manual review"
+  joinPoint = connector "A"
+  flowEnd = end "Persist result"
+
+  kickoff = pertMilestone "Kickoff"
+  design = pertTask "Design" { duration "3" }
+  buildApi = pertTask "Build API" { duration "6" }
+  buildUi = pertTask "Build UI" { duration "4" }
+  docs = pertTask "Documentation" { duration "2" }
+  integration = pertTask "Integration test" { duration "3" }
+  releaseMilestone = pertMilestone "Release"
+
+  releasePlan = ganttGraph "Release Plan" {
+    discoverPhase = ganttSection "Discover" {
+      researchTask = ganttTask "Research" { start "2026-08-03" duration "4d" progress "100" }
+      specTask = ganttTask "Write specification" { duration "3d" progress "80" }
+    }
+    buildPhase = ganttSection "Build" {
+      implementationTask = ganttTask "Implementation" { duration "2w" progress "35" }
+      qaTask = ganttTask "Quality assurance" { duration "5d" }
+      launchTask = ganttMilestone "Launch"
+    }
+  }
+
+  roadmap = timelineGraph "Product Journey" {
+    foundedEvent = timelineEvent "Platform founded" { date "2023-01" }
+    betaEvent = timelineEvent "Private beta" { date "2024-04" }
+    launchEvent = timelineEvent "Public launch" { date "2025-02" }
+    scaleEvent = timelineEvent "International scale" { date "2026-09" }
+  }
+
+  received -> validate : sequenceFlow
+  validate -> stockCheck : sequenceFlow
+  orderDocument -> validate : association
+  stockCheck -> rejected : sequenceFlow "no" anchor b t
+  stockCheck -> reserve : sequenceFlow "yes" anchor r l
+  reserve -> parallel : sequenceFlow
+  parallel -> pick : sequenceFlow
+  parallel -> invoice : sequenceFlow
+  pick -> shipped : sequenceFlow
+  invoice -> shipped : sequenceFlow
+  shipped -> complete : sequenceFlow
+  shipped -> carrierTask : messageFlow "dispatch"
+
+  flowStart -> readOrder : flowArrow
+  readOrder -> validDecision : flowArrow
+  validDecision -> enrichOrder : flowArrow "yes" anchor r l
+  validDecision -> manualReview : flowArrow "no" anchor b t
+  enrichOrder -> joinPoint : flowArrow
+  manualReview -> joinPoint : flowArrow
+  joinPoint -> flowEnd : flowArrow
+
+  kickoff -> design : dependsOn
+  design -> buildApi : dependsOn
+  design -> buildUi : dependsOn
+  design -> docs : dependsOn
+  buildApi -> integration : dependsOn
+  buildUi -> integration : dependsOn
+  docs -> integration : dependsOn
+  integration -> releaseMilestone : dependsOn
+
+  researchTask -> specTask : dependsOn
+  specTask -> implementationTask : dependsOn
+  implementationTask -> qaTask : dependsOn
+  qaTask -> launchTask : dependsOn
+}
+
+views {
+  view bpmn "01 · BPMN with Swimlanes" {
+    include orderPool, orderPool.*, orderDocument, carrierPool, carrierPool.*
+    autolayout lr
+  }
+  view flowchart "02 · Decision Flowchart" {
+    include flowStart, readOrder, validDecision, enrichOrder, manualReview, joinPoint, flowEnd
+    autolayout tb
+  }
+  view criticalPath "03 · PERT Critical Path" {
+    include kickoff, design, buildApi, buildUi, docs, integration, releaseMilestone
+    autolayout lr
+  }
+  view schedule "04 · Date-based Gantt" {
+    include releasePlan, releasePlan.*
+    autolayout lr
+  }
+  view history "05 · Timeline" {
+    include roadmap, roadmap.*
+    autolayout lr
+  }
+}

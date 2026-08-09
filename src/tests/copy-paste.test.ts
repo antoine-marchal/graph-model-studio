@@ -36,4 +36,16 @@ describe('model clipboard duplication', () => {
     const copy = useModelStore.getState().model.elements[copyId]
     expect(copy.parentId).toBeUndefined()
   })
+
+  it('deletes a selection as one undoable transaction', () => {
+    const before = useModelStore.getState().past.length
+    useModelStore.getState().dispatch({ type: 'DELETE_ELEMENTS', payload: { ids: ['child', 'nested'] } })
+    expect(useModelStore.getState().model.elements.child).toBeUndefined()
+    expect(useModelStore.getState().model.elements.nested).toBeUndefined()
+    expect(useModelStore.getState().past).toHaveLength(before + 1)
+
+    useModelStore.getState().undo()
+    expect(useModelStore.getState().model.elements.child).toBeTruthy()
+    expect(useModelStore.getState().model.elements.nested).toBeTruthy()
+  })
 })

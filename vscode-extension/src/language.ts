@@ -2,10 +2,49 @@ import * as vscode from 'vscode'
 import { parseDsl } from '../../src/core/dsl/parser'
 import { notationRegistry } from '../../src/core/notation'
 import type { GraphModel } from '../../src/core/model'
-import { gmcBlockAtPosition, scanGmcMarkdownBlocks, type GmcMarkdownBlock } from './markdown'
+import { scanGmcMarkdownBlocks, type GmcMarkdownBlock } from './markdown'
+
+type ParsedDsl = ReturnType<typeof parseDsl>
+
+interface DocumentAnalysis {
+  version: number
+  blocks: GmcMarkdownBlock[]
+  documentParse?: ParsedDsl
+  blockParses: Map<number, ParsedDsl>
+}
+
+const analysisCache = new Map<string, DocumentAnalysis>()
+
+function analysisFor(document: vscode.TextDocument): DocumentAnalysis {
+  const key = document.uri.toString()
+  const cached = analysisCache.get(key)
+  if (cached?.version === document.version) return cached
+  const analysis: DocumentAnalysis = {
+    version: document.version,
+    blocks: document.languageId === 'markdown' ? scanGmcMarkdownBlocks(document) : [],
+    blockParses: new Map(),
+  }
+  analysisCache.set(key, analysis)
+  return analysis
+}
+
+function parsedDocument(document: vscode.TextDocument): ParsedDsl {
+  const analysis = analysisFor(document)
+  return analysis.documentParse ??= parseDsl(document.getText())
+}
+
+function parsedBlock(document: vscode.TextDocument, block: GmcMarkdownBlock): ParsedDsl {
+  const analysis = analysisFor(document)
+  const cached = analysis.blockParses.get(block.index)
+  if (cached) return cached
+  const parsed = parseDsl(block.source)
+  analysis.blockParses.set(block.index, parsed)
+  return parsed
+}
 
 interface SourceContext {
   source: string
+  parsed: ParsedDsl
   block?: GmcMarkdownBlock
   toDocumentPosition(line: number, column: number): vscode.Position
 }
@@ -14,14 +53,16 @@ function contextAt(document: vscode.TextDocument, position: vscode.Position): So
   if (document.languageId === 'gmc') {
     return {
       source: document.getText(),
+      parsed: parsedDocument(document),
       toDocumentPosition: (line, column) => new vscode.Position(Math.max(0, line - 1), Math.max(0, column - 1)),
     }
   }
   if (document.languageId === 'markdown') {
-    const block = gmcBlockAtPosition(document, position)
+    const block = analysisFor(document).blocks.find(candidate => candidate.fenceRange.contains(position))
     if (!block) return undefined
     return {
       source: block.source,
+      parsed: parsedBlock(document, block),
       block,
       toDocumentPosition: (line, column) => new vscode.Position(
         block.contentStartLine + Math.max(0, line - 1),
@@ -63,12 +104,11 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
     if (document.languageId !== 'gmc' && document.languageId !== 'markdown') return
     const results: vscode.Diagnostic[] = []
     const sources = document.languageId === 'gmc'
-      ? [{ source: document.getText(), contentStartLine: 0 }]
-      : scanGmcMarkdownBlocks(document)
+      ? [{ source: document.getText(), contentStartLine: 0, parsed: parsedDocument(document) }]
+      : analysisFor(document).blocks.map(block => ({ ...block, parsed: parsedBlock(document, block) }))
 
     for (const source of sources) {
-      const parsed = parseDsl(source.source)
-      for (const item of parsed.diagnostics) {
+      for (const item of source.parsed.diagnostics) {
         const line = source.contentStartLine + Math.max(0, (item.line ?? 1) - 1)
         const column = Math.max(0, (item.column ?? 1) - 1)
         const start = new vscode.Position(Math.min(line, document.lineCount - 1), column)
@@ -105,6 +145,7 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
       if (timer) clearTimeout(timer)
       diagnosticTimers.delete(key)
       diagnostics.delete(document.uri)
+      analysisCache.delete(key)
     }),
   )
 
@@ -113,7 +154,7 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
     provideCompletionItems(document, position) {
       const sourceContext = contextAt(document, position)
       if (!sourceContext) return undefined
-      const parsed = parseDsl(sourceContext.source)
+      const parsed = sourceContext.parsed
       const items: vscode.CompletionItem[] = []
 
       for (const type of notationRegistry.getAllElementTypes()) {
@@ -157,7 +198,7 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
           `**${relationType.label} relation**  \n\`${relationType.type}\` · ${relationType.notation}`,
         ), range)
       }
-      const model = parseDsl(sourceContext.source).model
+      const model = sourceContext.parsed.model
       const element = model?.elements[word]
       if (element) {
         return new vscode.Hover(new vscode.MarkdownString(
@@ -183,10 +224,10 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
     provideDocumentSymbols(document) {
       const symbols: vscode.DocumentSymbol[] = []
       const sources = document.languageId === 'gmc'
-        ? [{ source: document.getText(), block: undefined }]
-        : scanGmcMarkdownBlocks(document).map(block => ({ source: block.source, block }))
+        ? [{ source: document.getText(), block: undefined, parsed: parsedDocument(document) }]
+        : analysisFor(document).blocks.map(block => ({ source: block.source, block, parsed: parsedBlock(document, block) }))
       for (const source of sources) {
-        const model = parseDsl(source.source).model
+        const model = source.parsed.model
         if (!model) continue
         for (const element of Object.values(model.elements)) {
           const range = findDeclaration(document, element.id, source.block)
@@ -205,7 +246,7 @@ export function registerLanguageFeatures(context: vscode.ExtensionContext): vsco
 
   context.subscriptions.push(vscode.languages.registerCodeLensProvider({ language: 'markdown' }, {
     provideCodeLenses(document) {
-      return scanGmcMarkdownBlocks(document).map(block => new vscode.CodeLens(
+      return analysisFor(document).blocks.map(block => new vscode.CodeLens(
         new vscode.Range(block.fenceRange.start, block.fenceRange.start),
         {
           title: '$(export) Export GMC diagram as PNG',

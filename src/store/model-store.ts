@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
+import { current } from 'immer'
 import type { GraphModel, GraphElement, GraphRelation, Position } from '@/core/model'
 import { createElementId, createEmptyModel } from '@/core/model'
 import type { ModelCommand } from '@/core/model/commands'
@@ -135,9 +136,21 @@ const PREFS_KEY = 'gms:prefs'
 function loadDraft(): string | null {
   try { return localStorage.getItem(DRAFT_KEY) } catch { return null }
 }
-function saveDraft(dsl: string) {
-  try { localStorage.setItem(DRAFT_KEY, dsl) } catch { /* ignore */ }
+let draftTimer: ReturnType<typeof setTimeout> | undefined
+let pendingDraft: string | undefined
+function flushDraft() {
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = undefined
+  if (pendingDraft === undefined) return
+  try { localStorage.setItem(DRAFT_KEY, pendingDraft) } catch { /* ignore */ }
+  pendingDraft = undefined
 }
+function saveDraft(dsl: string) {
+  pendingDraft = dsl
+  if (draftTimer) clearTimeout(draftTimer)
+  draftTimer = setTimeout(flushDraft, 400)
+}
+if (typeof window !== 'undefined') window.addEventListener('beforeunload', flushDraft)
 function loadTheme(): Theme {
   try {
     const t = localStorage.getItem(THEME_KEY)
@@ -295,6 +308,12 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
       }
       break
     }
+    case 'DELETE_ELEMENTS': {
+      for (const id of new Set(command.payload.ids)) {
+        applyCommand(model, { type: 'DELETE_ELEMENT', payload: { id } }, activeViewId)
+      }
+      break
+    }
     case 'ADD_RELATION': {
       const rel: GraphRelation = {
         type: 'rel', direction: 'directed', tags: [], properties: {}, ...command.payload,
@@ -309,6 +328,10 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
     }
     case 'DELETE_RELATION': {
       delete model.relations[command.payload.id]
+      break
+    }
+    case 'DELETE_RELATIONS': {
+      for (const id of new Set(command.payload.ids)) delete model.relations[id]
       break
     }
     case 'ADD_VIEW': {
@@ -339,6 +362,74 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
         if (!view.nodeSizes) view.nodeSizes = {}
         view.nodeSizes[command.payload.id] = command.payload.size
       }
+      break
+    }
+    case 'RESIZE_NODES': {
+      const view = model.views[command.payload.viewId]
+      if (view) {
+        if (!view.nodeSizes) view.nodeSizes = {}
+        Object.assign(view.nodeSizes, command.payload.sizes)
+        Object.assign(view.layoutPositions, command.payload.positions)
+      }
+      break
+    }
+    case 'REPARENT_ELEMENT': {
+      const element = model.elements[command.payload.id]
+      if (!element || element.parentId === command.payload.parentId) break
+      const oldParent = element.parentId
+      if (oldParent && model.elements[oldParent]) {
+        model.elements[oldParent].children = model.elements[oldParent].children.filter(id => id !== element.id)
+      }
+      element.parentId = command.payload.parentId
+      if (element.parentId && model.elements[element.parentId] && !model.elements[element.parentId].children.includes(element.id)) {
+        model.elements[element.parentId].children.push(element.id)
+      }
+      // Positions use parent-local coordinates. Only the active view has a
+      // meaningful drop position; other views must recompute this node.
+      for (const view of Object.values(model.views)) delete view.layoutPositions[element.id]
+      const view = model.views[command.payload.viewId]
+      if (view) view.layoutPositions[element.id] = command.payload.position
+      break
+    }
+    case 'APPLY_ELEMENT_FORMAT': {
+      const element = model.elements[command.payload.id]
+      const view = model.views[command.payload.viewId]
+      if (element) element.properties = command.payload.properties
+      if (view) {
+        if (!view.nodeSizes) view.nodeSizes = {}
+        view.nodeSizes[command.payload.id] = command.payload.size
+      }
+      break
+    }
+    case 'APPLY_RELATION_FORMAT': {
+      const relation = model.relations[command.payload.id]
+      if (relation) Object.assign(relation, command.payload)
+      break
+    }
+    case 'REPLACE_XY_SERIES_POINTS': {
+      const series = model.elements[command.payload.seriesId]
+      if (!series || series.type !== 'xySeries') break
+      const previousPointIds = series.children.filter(id => model.elements[id]?.type === 'xyPoint')
+      for (const id of previousPointIds) {
+        applyCommand(model, { type: 'DELETE_ELEMENT', payload: { id } }, activeViewId)
+      }
+      command.payload.points.forEach((point, index) => {
+        let id = createElementId('xyPoint')
+        while (model.elements[id]) id = createElementId('xyPoint')
+        const properties: Record<string, string> = { x: String(point.x), y: String(point.y) }
+        if (point.size !== undefined) properties.size = String(point.size)
+        applyCommand(model, {
+          type: 'ADD_ELEMENT',
+          payload: {
+            id,
+            name: `Point ${index + 1}`,
+            type: 'xyPoint',
+            notation: 'xy',
+            parentId: series.id,
+            properties,
+          },
+        }, activeViewId)
+      })
       break
     }
     case 'REPLACE_MODEL': {
@@ -391,7 +482,7 @@ export const useModelStore = create<ModelStore>()(
         set(state => {
           // snapshot for undo (skip pure layout nudges to avoid flooding history)
           if (command.type !== 'APPLY_LAYOUT') {
-            state.past.push({ model: state.model, dslSource: state.dslSource, activeViewId: state.activeViewId })
+            state.past.push({ model: current(state.model), dslSource: state.dslSource, activeViewId: state.activeViewId })
             if (state.past.length > HISTORY_LIMIT) state.past.shift()
             state.future = []
           }
@@ -414,7 +505,7 @@ export const useModelStore = create<ModelStore>()(
         set(state => {
           const prev = state.past.pop()
           if (!prev) return
-          state.future.push({ model: state.model, dslSource: state.dslSource, activeViewId: state.activeViewId })
+          state.future.push({ model: current(state.model), dslSource: state.dslSource, activeViewId: state.activeViewId })
           state.model = prev.model
           state.dslSource = prev.dslSource
           state.activeViewId = prev.activeViewId
@@ -432,7 +523,7 @@ export const useModelStore = create<ModelStore>()(
         set(state => {
           const next = state.future.pop()
           if (!next) return
-          state.past.push({ model: state.model, dslSource: state.dslSource, activeViewId: state.activeViewId })
+          state.past.push({ model: current(state.model), dslSource: state.dslSource, activeViewId: state.activeViewId })
           state.model = next.model
           state.dslSource = next.dslSource
           state.activeViewId = next.activeViewId
@@ -455,7 +546,7 @@ export const useModelStore = create<ModelStore>()(
       duplicateElements(ids, options) {
         const newIds: string[] = []
         set(state => {
-          state.past.push({ model: state.model, dslSource: state.dslSource, activeViewId: state.activeViewId })
+          state.past.push({ model: current(state.model), dslSource: state.dslSource, activeViewId: state.activeViewId })
           state.future = []
           const view = state.activeViewId ? state.model.views[state.activeViewId] : undefined
           const requested = [...new Set(ids)].filter(id => !!state.model.elements[id])
@@ -470,27 +561,32 @@ export const useModelStore = create<ModelStore>()(
           }
           const roots = requested.filter(id => !hasRequestedAncestor(id))
           const cloneIds: string[] = []
+          const cloneIdSet = new Set<string>()
           const collect = (id: string) => {
-            if (cloneIds.includes(id)) return
+            if (cloneIdSet.has(id)) return
+            cloneIdSet.add(id)
             cloneIds.push(id)
             for (const child of state.model.elements[id]?.children ?? []) collect(child)
           }
           roots.forEach(collect)
 
           const idMap = new Map<string, string>()
+          const allocatedIds = new Set<string>()
           for (const id of cloneIds) {
             const el = state.model.elements[id]
             if (!el) continue
             let nid = createElementId(el.type)
-            while (state.model.elements[nid] || [...idMap.values()].includes(nid)) nid = createElementId(el.type)
+            while (state.model.elements[nid] || allocatedIds.has(nid)) nid = createElementId(el.type)
             idMap.set(id, nid)
+            allocatedIds.add(nid)
           }
           const explicitTarget = options !== undefined
+          const rootSet = new Set(roots)
           for (const id of cloneIds) {
             const el = state.model.elements[id]
             const nid = idMap.get(id)
             if (!el || !nid) continue
-            const isRoot = roots.includes(id)
+            const isRoot = rootSet.has(id)
             const parentId = idMap.get(el.parentId ?? '') ?? (isRoot && explicitTarget ? options.parentId ?? undefined : el.parentId)
             state.model.elements[nid] = {
               ...el,
@@ -569,6 +665,9 @@ export const useModelStore = create<ModelStore>()(
 
       selectElements(ids) {
         set(state => {
+          const sameSelection = ids.length === state.selectedElementIds.length
+            && ids.every((id, index) => id === state.selectedElementIds[index])
+          if (sameSelection && (!ids.length || state.selectedRelationId === null)) return
           state.selectedElementIds = ids
           state.selectedElementId = ids.length ? ids[ids.length - 1] : null
           if (ids.length) state.selectedRelationId = null

@@ -111,6 +111,12 @@ describe('analytic charts', () => {
     expect(f.series).toHaveLength(2)
     expect(f.series.map(s => s.id)).toEqual(['a', 'b'])
     expect(f.max).toBe(100)
+    expect(out.nodes.find(n => n.id === 'a')).toMatchObject({
+      parentId: 'chart', position: { x: 5, y: 38 }, data: { embeddedSeries: true },
+    })
+    expect(out.nodes.find(n => n.id === 'b')).toMatchObject({
+      parentId: 'chart', position: { x: 115, y: 38 }, data: { embeddedSeries: true },
+    })
   })
 
   it('fills both sides of an intermediate Sankey node independently', () => {
@@ -135,7 +141,7 @@ describe('analytic charts', () => {
     const out = flow(`model { chart = xyChart "Portfolio" {
       xLabel "Revenue" yLabel "Growth" regression "true" connect "false"
       a = xySeries "Core" { color "#10b981"
-        p1 = xyPoint "One" { x "2" y "4" size "12" }
+        p1 = xyPoint "One" { description "Primary point" x "2" y "4" size "12" }
         p2 = xyPoint "Two" { x "4" y "8" size "20" }
       }
       b = xySeries "New" { p3 = xyPoint "Three" { x "3" y "7" size "8" } }
@@ -147,6 +153,7 @@ describe('analytic charts', () => {
     expect(f.series.map(s => s.id)).toEqual(['a', 'b'])
     expect(f.series[0].points[1].size).toBe(20)
     expect(f.series[0].points.map(p => p.id)).toEqual(['p1', 'p2'])
+    expect(f.series[0].points[0].description).toBe('Primary point')
     expect(f.regression).toBe(true)
     expect(f.connect).toBe(false)
   })
@@ -164,6 +171,37 @@ describe('analytic charts', () => {
     expect(f.series).toHaveLength(2)
     expect(f.series.map(s => s.id)).toEqual(['actual', 'plan'])
     expect(f.stacked).toBe(true)
+    expect(out.nodes.find(n => n.id === 'actual')).toMatchObject({
+      parentId: 'chart', position: { x: 5, y: 38 }, data: { embeddedSeries: true },
+    })
+    expect(out.nodes.find(n => n.id === 'plan')).toMatchObject({
+      parentId: 'chart', position: { x: 115, y: 38 }, data: { embeddedSeries: true },
+    })
+  })
+
+  it('keeps an ordinary node freely positioned inside a quadrant chart', () => {
+    const out = flow(`model { chart = quadrantChart "Portfolio" {
+      marker = quadrantItem "Risk" { x "0.8" y "0.7" }
+      note = group "Movable note"
+    } } views { view v { include * note at 230 180 } }`)
+    expect(out.nodes.find(n => n.id === 'note')).toMatchObject({
+      parentId: 'chart', position: { x: 230, y: 180 },
+    })
+    expect(out.nodes.find(n => n.id === 'marker')?.position).not.toEqual({ x: 230, y: 180 })
+  })
+
+  it('keeps a node dropped into a bar or radar series as its child', () => {
+    for (const [chartType, seriesType] of [['barChart', 'barSeries'], ['radarChart', 'radarSeries']] as const) {
+      const out = flow(`model { chart = ${chartType} "Chart" {
+        series = ${seriesType} "Series" { child = group "Specific node" }
+      } } views { view v { include * child at 18 26 } }`)
+      expect(out.nodes.find(n => n.id === 'series')).toMatchObject({
+        parentId: 'chart', data: { embeddedSeries: true },
+      })
+      expect(out.nodes.find(n => n.id === 'child')).toMatchObject({
+        parentId: 'series', position: { x: 18, y: 26 },
+      })
+    }
   })
 
   it('excludes hidden Sankey nodes and their links from the chart frame', () => {

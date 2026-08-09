@@ -1,0 +1,184 @@
+model {
+  priority = quadrantChart "Feature Prioritisation" {
+    q1 "Do first"
+    q2 "Plan"
+    q3 "Reconsider"
+    q4 "Quick wins"
+    xLabel "Effort"
+    yLabel "Impact"
+    passkeys = quadrantItem "Passkeys" {
+      x "0.72"
+      y "0.92"
+      projection "-0.08 -0.05"
+    }
+    darkMode = quadrantItem "Dark mode" {
+      x "0.22"
+      y "0.55"
+    }
+    marketplace = quadrantItem "Marketplace" {
+      x "0.88"
+      y "0.68"
+    }
+    csvExport = quadrantItem "CSV export" {
+      x "0.16"
+      y "0.28"
+    }
+  }
+  riskMatrix = gridGraph "Risk Matrix" {
+    cols "5"
+    rows "5"
+    xLabel "Severity"
+    yLabel "Likelihood"
+    xHeaders "Negligible; Minor; Moderate; Major; Critical"
+    yHeaders "Rare; Unlikely; Possible; Likely; Almost certain"
+    cellBg "1,1=#dcfce7; 2,2=#dcfce7; 3,3=#fef3c7; 4,4=#fed7aa; 5,5=#fecaca"
+    outageRisk = gridItem "Region outage" {
+      row "3"
+      col "5"
+      projection "-1 1"
+    }
+    fraudRisk = gridItem "Payment fraud" {
+      row "4"
+      col "4"
+    }
+    typoRisk = gridItem "Content typo" {
+      row "2"
+      col "1"
+    }
+    vendorRisk = gridItem "Vendor lock-in" {
+      row "3"
+      col "3"
+    }
+  }
+  conversion = sankeyGraph "Checkout Conversion" {
+    visitors = sankeyNode "Visitors" {
+      accentColor "#0284c7"
+    }
+    cart = sankeyNode "Cart"
+    checkout = sankeyNode "Checkout"
+    purchased = sankeyNode "Purchased" {
+      accentColor "#16a34a"
+    }
+    abandoned = sankeyNode "Abandoned" {
+      backgroundColor "#fee2e2"
+      accentColor "#dc2626"
+    }
+  }
+  crm = external "CRM" {
+    accentColor "#7c3aed"
+  }
+  capabilityRadar = radarChart "Platform Capabilities" {
+    axes "Speed; Reliability; Security; Usability; Extensibility"
+    max "100"
+    current = radarSeries "Current" {
+      values "72;88;91;68;60"
+      color "#2563eb"
+    }
+    target = radarSeries "Target" {
+      values "90;95;96;88;85"
+      color "#16a34a"
+    }
+  }
+  portfolio = xyChart "Product Portfolio" {
+    xLabel "Annual revenue"
+    yLabel "Growth rate"
+    regression "true"
+    connect "false"
+    coreSeries = xySeries "Core" {
+      checkoutPoint = xyPoint "Checkout" {
+        x "8"
+        y "6"
+        size "28"
+      }
+      catalogPoint = xyPoint "Catalog" {
+        x "6"
+        y "4"
+        size "22"
+      }
+    }
+    betsSeries = xySeries "Strategic bets" {
+      color "#8b5cf6"
+      aiPoint = xyPoint "AI assistant" {
+        x "2"
+        y "9"
+        size "14"
+      }
+      marketplacePoint = xyPoint "Marketplace" {
+        x "4"
+        y "8"
+        size "20"
+      }
+    }
+  }
+  revenue = barChart "Quarterly Revenue" {
+    categories "Q1; Q2; Q3; Q4"
+    mode "grouped"
+    xLabel "Quarter"
+    yLabel "EUR millions"
+    actualSeries = barSeries "Actual" {
+      values "8; 11; 14; 17"
+      color "#f59e0b"
+    }
+    planSeries = barSeries "Plan" {
+      values "9; 12; 15; 18"
+      color "#6366f1"
+    }
+  }
+
+  visitors -> cart {
+    value "72"
+  }
+  visitors -> abandoned {
+    value "28"
+    color "#ef4444"
+  }
+  cart -> checkout {
+    value "54"
+  }
+  cart -> abandoned {
+    value "18"
+    color "#f97316"
+  }
+  checkout -> purchased {
+    value "43"
+    color "#22c55e"
+  }
+  checkout -> abandoned {
+    value "11"
+    color "#ef4444"
+  }
+  purchased -> crm "syncs customer" anchor r l
+}
+
+views {
+  view quadrant "01 · Priority Quadrant" {
+    include priority, priority.*
+    autolayout lr
+  }
+  view matrix "02 · Interactive Risk Matrix" {
+    include riskMatrix, riskMatrix.*
+    autolayout lr
+    vendorRisk at 278 254
+    outageRisk at 498 254
+    fraudRisk at 388 338
+    vendorRisk size 99 45
+    outageRisk size 98 43
+    fraudRisk size 101 39
+  }
+  view sankey "03 · Weighted Sankey Flow" {
+    include conversion, conversion.*, crm
+    autolayout lr
+  }
+  view radar "04 · Radar Comparison" {
+    include capabilityRadar, capabilityRadar.*
+    autolayout lr
+  }
+  view bubble "05 · XY and Bubble Portfolio" {
+    include portfolio, portfolio.*
+    autolayout lr
+  }
+  view bars "06 · Grouped Bar Chart" {
+    include revenue, revenue.*
+    autolayout lr
+  }
+}

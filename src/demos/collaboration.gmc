@@ -1,0 +1,108 @@
+model {
+  loginFlow = seqGraph "Sign-in Sequence" {
+    endUser = seqActor "User"
+    browser = participant "Browser"
+    identityApi = participant "Identity API"
+    identityDb = participant "Identity DB"
+  }
+
+  sourceTree = treeGraph "Repository Explorer" {
+    repositoryRoot = treeNode "commerce-app" {
+      sourceFolder = treeNode "src" {
+        appFile = treeNode "App.tsx"
+        apiFolder = treeNode "api" {
+          authFile = treeNode "auth.ts"
+          orderFile = treeNode "orders.ts"
+        }
+      }
+      testsFolder = treeNode "tests" {
+        loginTest = treeNode "login.spec.ts"
+      }
+      packageFile = treeNode "package.json"
+    }
+  }
+  authService = node "Authentication Service" { accentColor "#2563eb" }
+
+  productMap = mindmapGraph "Product Strategy" {
+    productRoot = mindmapRoot "Loved Commerce Product" {
+      experienceBranch = mindmapNode "Experience" {
+        onboardingTopic = mindmapNode "Fast onboarding"
+        accessibilityTopic = mindmapNode "Accessible by default"
+      }
+      platformBranch = mindmapNode "Platform" {
+        performanceTopic = mindmapNode "Performance"
+        reliabilityTopic = mindmapNode "Reliability"
+      }
+      growthBranch = mindmapNode "Growth" {
+        internationalTopic = mindmapNode "Internationalisation"
+        partnersTopic = mindmapNode "Partner ecosystem"
+      }
+    }
+  }
+
+  historyGraph = gitGraph "Feature Delivery" {
+    initCommit = commit "initial commit"
+    featureStart = commit "start passkeys" { branch "feature/passkeys" }
+    featureTest = commit "add browser tests" { branch "feature/passkeys" }
+    hotfixCommit = commit "security hotfix" { branch "hotfix/security" }
+    mergeFeature = mergeCommit "merge passkeys" { tag "v2.2.0" }
+  }
+
+  slowDelivery = problem "Slow feature delivery" {
+    peopleCause = cause "People" {
+      ownership = subCause "Unclear ownership"
+      skills = subCause "Skill bottlenecks"
+    }
+    processCause = cause "Process" {
+      handoffs = subCause "Too many handoffs"
+      reviews = subCause "Long review queues"
+    }
+    toolingCause = cause "Tooling" {
+      builds = subCause "Slow builds"
+      flaky = subCause "Flaky tests"
+    }
+    scopeCause = cause "Scope" {
+      batches = subCause "Large batches"
+      changes = subCause "Late changes"
+    }
+  }
+
+  endUser -> browser : message "choose passkey"
+  browser -> identityApi : asyncMessage "POST /challenge"
+  identityApi -> identityDb : message "load credential"
+  identityDb -> identityApi : replyMessage "credential"
+  identityApi -> browser : replyMessage "signed token"
+  browser -> endUser : replyMessage "dashboard"
+
+  authFile -> authService "implements" anchor r l
+  loginTest -> authService "verifies" anchor r l
+
+  initCommit -> featureStart
+  featureStart -> featureTest
+  initCommit -> hotfixCommit
+  hotfixCommit -> mergeFeature
+  featureTest -> mergeFeature
+}
+
+views {
+  view sequence "01 · UML Sequence" {
+    include loginFlow, loginFlow.*
+    autolayout lr
+  }
+  view repository "02 · Interactive File Tree" {
+    include sourceTree, sourceTree.*, authService
+    autolayout lr
+  }
+  view mindmap "03 · Radial Mindmap" {
+    include productMap, productMap.*
+    autolayout lr
+  }
+  view git "04 · Git Branch History" {
+    include historyGraph, historyGraph.*
+    autolayout lr
+  }
+  view fishbone "05 · Ishikawa Root Causes" {
+    include slowDelivery, slowDelivery.*
+    autolayout lr
+  }
+}

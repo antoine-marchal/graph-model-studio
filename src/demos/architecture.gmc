@@ -1,0 +1,134 @@
+model {
+  customer = person "Customer" {
+    description "Buys products and tracks deliveries"
+    tags "external" "primary"
+  }
+
+  commerce = softwareSystem "Commerce Platform" {
+    description "A multi-channel retail platform"
+    web = container "Storefront" {
+      technology "React"
+      checkout = component "Checkout UI" {
+        technology "TypeScript"
+        checkoutCode = codeElement "CheckoutForm"
+      }
+    }
+    api = container "Commerce API" {
+      technology "Node.js"
+      orders = component "Order Service" { technology "TypeScript" }
+      catalog = component "Catalog Service" { technology "TypeScript" }
+    }
+    database = container "Commerce Database" { technology "PostgreSQL" }
+  }
+  payments = softwareSystem "Payment Provider" { tags "external" }
+
+  sponsor = stakeholder "Product Sponsor"
+  growth = driver "Revenue Growth"
+  fastCheckout = goal "Frictionless Checkout"
+  buyer = businessActor "Buyer"
+  orderProcess = businessProcess "Fulfil Order"
+  orderService = applicationService "Order API"
+  commerceApp = applicationComponent "Commerce Application"
+  cluster = technologyNode "Kubernetes Cluster"
+  release = workPackage "Composable Commerce Release"
+  releaseArtifact = deliverable "Production Release"
+
+  shopper = actor "Shopper"
+  support = actor "Support Agent"
+  shopBoundary = systemBoundary "Commerce System" {
+    browseUseCase = useCase "Browse Products"
+    buyUseCase = useCase "Place Order"
+    payUseCase = useCase "Pay"
+    refundUseCase = useCase "Refund Order"
+  }
+
+  aggregate = umlClass "Order" {
+    attributes "- id: UUID; - status: OrderStatus; - total: Money"
+    methods "+ addItem(): void; + confirm(): void"
+  }
+  line = umlClass "OrderLine" {
+    attributes "- quantity: int; - unitPrice: Money"
+    methods "+ subtotal(): Money"
+  }
+  repository = umlInterface "OrderRepository" {
+    methods "+ save(order): void; + find(id): Order"
+  }
+  status = umlEnum "OrderStatus" { values "Draft; Confirmed; Shipped; Cancelled" }
+  invariant = umlNote "An order needs at least one line"
+
+  usersTable = erdEntity "users" { attributes "id: uuid PK; email: varchar; name: varchar" }
+  ordersTable = erdEntity "orders" { attributes "id: uuid PK; user_id: uuid FK; status: varchar; total: decimal" }
+  linesTable = erdEntity "order_lines" { attributes "id: uuid PK; order_id: uuid FK; sku: varchar; quantity: int" }
+  productsTable = erdEntity "products" { attributes "id: uuid PK; sku: varchar; name: varchar; price: decimal" }
+
+  ecosystem = group "Partner Ecosystem" {
+    fraud = external "Fraud Scoring"
+    shipping = external "Shipping Carrier"
+  }
+  webhook = node "Order Webhook" { accentColor "#7c3aed" }
+
+  customer -> web "Shops with" anchor r l
+  web -> api "HTTPS / JSON"
+  api -> database "Reads and writes"
+  api -> payments "Authorises payments"
+  checkout -> orders "Places orders"
+  orders -> catalog "Checks availability"
+
+  sponsor -> growth : influence
+  growth -> fastCheckout : influence
+  buyer -> orderProcess : assignment
+  orderService -> orderProcess : serving
+  commerceApp -> orderService : realization
+  cluster -> commerceApp : serving
+  release -> releaseArtifact : realization
+
+  shopper -> browseUseCase
+  shopper -> buyUseCase
+  buyUseCase -> payUseCase : include
+  support -> refundUseCase
+  refundUseCase -> buyUseCase : extend
+
+  aggregate -> line : composition { sourceCard "1" targetCard "1..*" }
+  aggregate -> repository : dependency
+  aggregate -> status : association
+  invariant -> aggregate : association
+
+  usersTable -> ordersTable : erdOneToMany
+  ordersTable -> linesTable : erdOneToMany
+  productsTable -> linesTable : erdZeroToMany
+
+  orders -> webhook "Publishes" bidirectional
+  webhook -> fraud "Scores"
+  webhook -> shipping "Dispatches"
+}
+
+views {
+  view context "01 · C4 System Context" {
+    include customer, commerce, payments
+    autolayout lr
+  }
+  view containers "02 · C4 Containers and Components" {
+    include customer, commerce, commerce.*, payments
+    autolayout lr
+  }
+  view enterprise "03 · ArchiMate Layers" {
+    include sponsor, growth, fastCheckout, buyer, orderProcess, orderService, commerceApp, cluster, release, releaseArtifact
+    autolayout bt
+  }
+  view useCases "04 · UML Use Cases" {
+    include shopper, support, shopBoundary, shopBoundary.*
+    autolayout lr
+  }
+  view domain "05 · UML Domain Model" {
+    include aggregate, line, repository, status, invariant
+    autolayout lr
+  }
+  view data "06 · Entity Relationship Model" {
+    include usersTable, ordersTable, linesTable, productsTable
+    autolayout lr
+  }
+  view integrations "07 · Generic Integration Map" {
+    include orders, ecosystem, ecosystem.*, webhook
+    autolayout lr
+  }
+}

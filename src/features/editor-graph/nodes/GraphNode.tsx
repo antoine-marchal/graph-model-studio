@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react'
+import { Handle, Position, NodeResizer, useReactFlow, type NodeProps, type ResizeParams } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
 import type { PertNodeValues, ChartFrame, TreeRow, GridFrame, AnalyticChartFrame } from '@/core/layout'
 import { GANTT_AXIS_H } from '@/core/layout'
@@ -11,6 +11,7 @@ import { NodeIcon } from './NodeIcons'
 import { AnalyticChartView } from './AnalyticChartView'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
+import { resizeSelection, type ResizeSnapshot } from '../graph-interactions'
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string
@@ -53,6 +54,13 @@ export interface GraphNodeData extends Record<string, unknown> {
   /** Arrow endpoint relative to this item's centre, derived from its `projection`. */
   projection?: { dx: number; dy: number }
   analyticChart?: AnalyticChartFrame
+  /** Optional view opened from the navigation button on this node. */
+  linkedViewId?: string
+  linkedViewName?: string
+  /** Compact draggable legend/drop-target for a series embedded in an analytic chart. */
+  embeddedSeries?: boolean
+  seriesColor?: string
+  seriesStroke?: string
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -142,6 +150,10 @@ function Label({ data, small }: { data: GraphNodeData; small?: boolean }) {
   )
 }
 
+export function BpmnGatewayName({ data }: { data: GraphNodeData }) {
+  return <span className="block max-w-[180px] text-center text-[10px] font-semibold leading-tight" style={{ color: data.text }}>{data.label}</span>
+}
+
 /** Inline rename overlay shown when this node is being edited. */
 function NameEditor({ id, initial, atTop }: { id: string; initial: string; atTop?: boolean }) {
   const dispatch = useModelStore(s => s.dispatch)
@@ -188,6 +200,9 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const editing = useModelStore(s => s.editingElementId === id)
   const dispatch = useModelStore(s => s.dispatch)
   const activeViewId = useModelStore(s => s.activeViewId)
+  const setActiveView = useModelStore(s => s.setActiveView)
+  const { getNodes, setNodes } = useReactFlow()
+  const resizeSession = useRef<{ start: ResizeParams; selected: ResizeSnapshot[]; all: ResizeSnapshot[] } | null>(null)
   const ring = selected ? 'ring-2 ring-offset-1 ring-[var(--node-selection)] dark:ring-offset-zinc-900' : ''
 
   let body: JSX.Element
@@ -381,6 +396,17 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         </div>
       </div>
     )
+  } else if (d.embeddedSeries) {
+    body = (
+      <div
+        className={cn('relative flex h-full w-full items-center gap-1.5 overflow-hidden rounded border px-1.5 text-[9px]', ring)}
+        style={{ background: 'var(--surface-1)', borderColor: d.seriesStroke ?? stroke, color: 'var(--fg)' }}
+        title="Drag the series out of the chart, or drop a node here"
+      >
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: d.seriesColor ?? accent }} />
+        <span className="truncate font-semibold">{d.label}</span>
+      </div>
+    )
   } else if (d.isContainer || shape === 'container') {
     body = (
       <div
@@ -429,17 +455,28 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (shape === 'diamond') {
     const isGateway = d.notation === 'bpmn'
-    body = (
+    if (isGateway) {
+      body = (
+        <div className={cn('relative flex h-full w-full items-center justify-center', ring && 'rounded ' + ring)}>
+          <Handles stroke={stroke} />
+          <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
+            <polygon points={`${width / 2},2 ${width - 2},${height / 2} ${width / 2},${height - 2} 2,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="2" />
+          </svg>
+          {icon !== 'none' && (
+            <div className="relative z-10"><NodeIcon kind={icon} color={accent} size={Math.min(width, height) * 0.4} /></div>
+          )}
+          <div className="pointer-events-none absolute left-1/2 top-full z-10 mt-1 w-max -translate-x-1/2">
+            <BpmnGatewayName data={d} />
+          </div>
+        </div>
+      )
+    } else body = (
       <div className={cn('relative flex h-full w-full items-center justify-center', ring && 'rounded ' + ring)}>
         <Handles stroke={stroke} />
         <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
           <polygon points={`${width / 2},2 ${width - 2},${height / 2} ${width / 2},${height - 2} 2,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="2" />
         </svg>
-        {isGateway && icon !== 'none' ? (
-          <div className="relative z-10"><NodeIcon kind={icon} color={accent} size={Math.min(width, height) * 0.4} /></div>
-        ) : (
-          <span className="relative z-10 max-w-[80%] text-center text-[9px] font-semibold" style={{ color: text }}>{d.label}</span>
-        )}
+        <span className="relative z-10 max-w-[80%] text-center text-[9px] font-semibold" style={{ color: text }}>{d.label}</span>
       </div>
     )
   } else if (shape === 'parallelogram') {
@@ -580,6 +617,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   // gantt geometry derives from dates/durations — resizing it would be undone on the next layout
   const resizable = shape !== 'person' && shape !== 'stickFigure'
     && shape !== 'ganttBar' && shape !== 'ganttMilestone' && shape !== 'ganttSection'
+    && !d.embeddedXySeries
   const resizer = resizable && (
     <NodeResizer
       isVisible={selected}
@@ -587,21 +625,78 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       minHeight={32}
       lineClassName="!border-[var(--accent)]"
       handleClassName="!h-2 !w-2 !rounded-sm !border !border-[var(--accent)] !bg-[var(--surface-1)]"
+      onResizeStart={(_, p) => {
+        const modelElements = useModelStore.getState().model.elements
+        const graphNodes = getNodes()
+        const selectedIds = new Set(graphNodes.filter(node => node.selected).map(node => node.id))
+        const all = graphNodes.filter(node => !!modelElements[node.id]).map(node => ({
+          id: node.id,
+          parentId: node.parentId,
+          position: { ...node.position },
+          size: {
+            width: node.measured?.width ?? node.width ?? 150,
+            height: node.measured?.height ?? node.height ?? 70,
+          },
+        }))
+        const selectedNodes = all.filter(node => selectedIds.has(node.id))
+        resizeSession.current = { start: p, selected: selectedNodes.length ? selectedNodes : all.filter(node => node.id === id), all }
+      }}
+      onResize={(_, p) => {
+        const session = resizeSession.current
+        if (!session) return
+        const mutation = resizeSelection(id, session.start, p, session.selected, session.all)
+        setNodes(current => current.map(node => {
+          const size = mutation.sizes[node.id]
+          const position = mutation.positions[node.id]
+          if (!size && !position) return node
+          return {
+            ...node,
+            ...(position ? { position } : {}),
+            ...(size ? {
+              width: size.width,
+              height: size.height,
+              style: { ...node.style, width: size.width, height: size.height },
+              data: { ...node.data, width: size.width, height: size.height },
+            } : {}),
+          }
+        }))
+      }}
       onResizeEnd={(_, p) => {
-        if (activeViewId) {
-          // size belongs to the view, not the element
-          dispatch({ type: 'SET_NODE_SIZE', payload: { viewId: activeViewId, id, size: { width: Math.round(p.width), height: Math.round(p.height) } } })
-          dispatch({ type: 'APPLY_LAYOUT', payload: { viewId: activeViewId, positions: { [id]: { x: p.x, y: p.y } } } })
+        const session = resizeSession.current
+        resizeSession.current = null
+        if (activeViewId && session) {
+          const mutation = resizeSelection(id, session.start, p, session.selected, session.all)
+          dispatch({ type: 'RESIZE_NODES', payload: { viewId: activeViewId, ...mutation } })
         }
       }}
     />
   )
 
-  if (!editing && !resizer) return body
+  const viewLink = d.linkedViewId && (
+    <button
+      type="button"
+      className="nodrag nopan absolute left-1 top-1 z-[60] flex h-5 w-5 items-center justify-center rounded border border-[var(--border-strong)] bg-[var(--surface-1)] text-[var(--accent)] shadow-sm transition-colors hover:bg-[var(--accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/40"
+      title={`Open view: ${d.linkedViewName ?? d.linkedViewId}`}
+      aria-label={`Open view ${d.linkedViewName ?? d.linkedViewId}`}
+      onMouseDown={event => event.stopPropagation()}
+      onClick={event => {
+        event.stopPropagation()
+        setActiveView(d.linkedViewId!)
+      }}
+    >
+      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+        <path d="M6 3H3.75A1.75 1.75 0 0 0 2 4.75v7.5C2 13.22 2.78 14 3.75 14h7.5A1.75 1.75 0 0 0 13 12.25V10h-1.5v2.25a.25.25 0 0 1-.25.25h-7.5a.25.25 0 0 1-.25-.25v-7.5a.25.25 0 0 1 .25-.25H6V3Z" fill="currentColor" />
+        <path d="M8 2h6v6h-1.5V4.56L7.53 9.53 6.47 8.47l4.97-4.97H8V2Z" fill="currentColor" />
+      </svg>
+    </button>
+  )
+
+  if (!editing && !resizer && !viewLink) return body
   return (
     <>
       {resizer}
       {body}
+      {viewLink}
       {editing && <NameEditor id={id} initial={d.label} atTop={isContainer} />}
     </>
   )

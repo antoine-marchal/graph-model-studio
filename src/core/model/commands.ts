@@ -27,16 +27,57 @@ export type SetNodeSizePayload = {
   size: Size
 }
 
+export type ResizeNodesPayload = {
+  viewId: string
+  sizes: Record<string, Size>
+  positions: Record<string, Position>
+}
+
+export type ReparentElementPayload = {
+  viewId: string
+  id: string
+  parentId?: string
+  position: Position
+}
+
+export type ApplyElementFormatPayload = {
+  viewId: string
+  id: string
+  properties: Record<string, string>
+  size: Size
+}
+
+export type ApplyRelationFormatPayload = {
+  id: string
+  type: string
+  direction: GraphRelation['direction']
+  sourceHandle?: GraphRelation['sourceHandle']
+  targetHandle?: GraphRelation['targetHandle']
+  properties: Record<string, string>
+}
+
+export type ReplaceXySeriesPointsPayload = {
+  seriesId: string
+  points: { x: number; y: number; size?: number }[]
+}
+
 export type ModelCommand =
   | { type: 'ADD_ELEMENT'; payload: AddElementPayload }
   | { type: 'UPDATE_ELEMENT'; payload: UpdateElementPayload }
   | { type: 'DELETE_ELEMENT'; payload: DeleteElementPayload }
+  | { type: 'DELETE_ELEMENTS'; payload: { ids: string[] } }
   | { type: 'ADD_RELATION'; payload: AddRelationPayload }
   | { type: 'UPDATE_RELATION'; payload: UpdateRelationPayload }
   | { type: 'DELETE_RELATION'; payload: DeleteRelationPayload }
+  | { type: 'DELETE_RELATIONS'; payload: { ids: string[] } }
   | { type: 'ADD_VIEW'; payload: GraphView }
   | { type: 'UPDATE_VIEW'; payload: UpdateViewPayload }
   | { type: 'DELETE_VIEW'; payload: { id: string } }
   | { type: 'APPLY_LAYOUT'; payload: ApplyLayoutPayload }
   | { type: 'SET_NODE_SIZE'; payload: SetNodeSizePayload }
+  | { type: 'RESIZE_NODES'; payload: ResizeNodesPayload }
+  | { type: 'REPARENT_ELEMENT'; payload: ReparentElementPayload }
+  | { type: 'APPLY_ELEMENT_FORMAT'; payload: ApplyElementFormatPayload }
+  | { type: 'APPLY_RELATION_FORMAT'; payload: ApplyRelationFormatPayload }
+  | { type: 'REPLACE_XY_SERIES_POINTS'; payload: ReplaceXySeriesPointsPayload }
   | { type: 'REPLACE_MODEL'; payload: import('./types').GraphModel }

@@ -228,8 +228,8 @@ export class PreviewManager implements vscode.Disposable {
     await this.show(input, true)
   }
 
-  async exportPng(input: PreviewInput, width: number, height: number): Promise<string> {
-    await this.show(input, false)
+  async exportPng(input: PreviewInput, width: number, height: number, preserveFocus = false): Promise<string> {
+    await this.show(input, preserveFocus)
     const requestId = `export-${++this.sequence}`
     const result = new Promise<string>((resolve, reject) => this.exports.set(requestId, { resolve, reject }))
     this.panel!.webview.postMessage({

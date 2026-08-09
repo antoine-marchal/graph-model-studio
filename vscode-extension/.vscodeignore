@@ -1,5 +1,8 @@
 node_modules/**
+.playwright-cli/**
+output/**
 src/**
+tests/**
 webview/**
 markdown-preview/**
 *.mjs
@@ -10,3 +13,5 @@ pnpm-workspace.yaml
 dist/**/*.map
 dist/webview/webview/**
 dist/markdown-preview/*.css
+integrations/markdown-toolkit/source/**
+integrations/paste-as-markdown/extension.js

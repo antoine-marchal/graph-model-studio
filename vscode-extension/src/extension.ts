@@ -1,5 +1,6 @@
 import * as path from 'node:path'
 import * as vscode from 'vscode'
+import { registerEmbedFolding } from './embed-folding'
 import { registerLanguageFeatures } from './language'
 import { gmcBlockAtPosition, scanGmcMarkdownBlocks, type GmcMarkdownBlock } from './markdown'
 import { PreviewManager, type PreviewInput } from './preview'
@@ -113,9 +114,25 @@ async function writePng(dataUrl: string, target: vscode.Uri): Promise<void> {
 
 export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(md: MarkdownItLike): MarkdownItLike } {
   registerLanguageFeatures(context)
+  registerEmbedFolding(context)
   const extensionVersion = String(context.extension.packageJSON.version ?? '0.0.0')
   const preview = new PreviewManager(context.extensionUri, context.globalState, extensionVersion)
   context.subscriptions.push(preview)
+
+  context.subscriptions.push(vscode.commands.registerCommand(
+    'gmc.renderFilePng',
+    async (sourceUri: vscode.Uri, targetUri: vscode.Uri) => {
+      const document = await vscode.workspace.openTextDocument(sourceUri)
+      const size = dimensions()
+      const dataUrl = await preview.exportPng({
+        source: document.getText(),
+        name: path.basename(document.fileName),
+        theme: configuredTheme(),
+      }, size.width, size.height, true)
+      await writePng(dataUrl, targetUri)
+      return targetUri
+    },
+  ))
 
   context.subscriptions.push(vscode.commands.registerCommand('gmc.openPreview', async () => {
     const input = inputFromEditor()

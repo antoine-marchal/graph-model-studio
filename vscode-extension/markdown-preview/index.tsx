@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import '../bundled-icons'
 import studioCss from '../../src/styles/global.css?inline'
 import reactFlowCss from '@xyflow/react/dist/style.css?inline'
 import { GraphPanel } from '../../src/app/GraphPanel'
@@ -22,6 +23,9 @@ interface DiagramElement extends HTMLElement {
 let requestedGeneration = 0
 let renderTimer: number | undefined
 let renderQueue = Promise.resolve()
+const renderedPngCache = new Map<string, { dataUrl: string; chars: number }>()
+const MAX_CACHE_ENTRIES = 24
+const MAX_CACHE_CHARS = 48 * 1024 * 1024
 
 const delay = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds))
 const isCurrent = (generation: number, figure?: DiagramElement) => (
@@ -42,6 +46,46 @@ function shadowCss(): string {
   return `${reactFlowCss}\n${studioCss}`
     .replace(/:root\s*\{/g, ':host {')
     .replace(/\.dark\s*\{/g, ':host(.dark) {')
+}
+
+const sharedShadowCss = shadowCss()
+
+async function cacheKey(parts: string[]): Promise<string> {
+  const source = parts.join('\u0000')
+  if (!globalThis.crypto?.subtle) return source
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(source))
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function cachedPng(key: string): string | undefined {
+  const entry = renderedPngCache.get(key)
+  if (!entry) return undefined
+  // Refresh insertion order so Map acts as a small LRU.
+  renderedPngCache.delete(key)
+  renderedPngCache.set(key, entry)
+  return entry.dataUrl
+}
+
+function rememberPng(key: string, dataUrl: string): void {
+  const previous = renderedPngCache.get(key)
+  if (previous) renderedPngCache.delete(key)
+  renderedPngCache.set(key, { dataUrl, chars: dataUrl.length })
+  let chars = 0
+  for (const entry of renderedPngCache.values()) chars += entry.chars
+  while (renderedPngCache.size > MAX_CACHE_ENTRIES || chars > MAX_CACHE_CHARS) {
+    const oldest = renderedPngCache.entries().next().value as [string, { dataUrl: string; chars: number }] | undefined
+    if (!oldest) break
+    renderedPngCache.delete(oldest[0])
+    chars -= oldest[1].chars
+  }
+}
+
+function showPng(figure: DiagramElement, id: string, dataUrl: string): void {
+  const image = document.createElement('img')
+  image.className = 'gmc-markdown-png'
+  image.src = dataUrl
+  image.alt = `Graph Model Studio diagram: ${id}`
+  figure.replaceChildren(image)
 }
 
 async function waitForGraphReady(shadow: ShadowRoot, generation: number, figure: DiagramElement): Promise<boolean> {
@@ -99,6 +143,18 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
   let root: ReturnType<typeof ReactDOM.createRoot> | undefined
   try {
     const source = sourceFromBase64(figure.dataset.gmcSource ?? '')
+    const requestedTheme = figure.dataset.gmcTheme
+    const theme = requestedTheme === 'light' || requestedTheme === 'dark'
+      ? requestedTheme
+      : document.body.classList.contains('vscode-light') ? 'light' : 'dark'
+    const width = dimension(figure.dataset.gmcWidth, 1600, 320)
+    const height = dimension(figure.dataset.gmcHeight, 1000, 240)
+    const key = await cacheKey([source, figure.dataset.gmcView ?? '', theme, String(width), String(height)])
+    const cached = cachedPng(key)
+    if (cached) {
+      showPng(figure, id, cached)
+      return
+    }
     const parsed = parseDsl(source)
     if (!parsed.model) throw new Error(parsed.diagnostics[0]?.message ?? 'Unable to parse GMC')
 
@@ -111,11 +167,6 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
       ? Object.values(model.views).find(view => view.id === figure.dataset.gmcView || view.name === figure.dataset.gmcView)
       : undefined
     const activeViewId = preferredView?.id ?? Object.keys(model.views)[0] ?? null
-    const requestedTheme = figure.dataset.gmcTheme
-    const theme = requestedTheme === 'light' || requestedTheme === 'dark'
-      ? requestedTheme
-      : document.body.classList.contains('vscode-light') ? 'light' : 'dark'
-
     useModelStore.setState({
       model,
       dslSource: source,
@@ -136,10 +187,10 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
     host.style.cssText = 'position:fixed;left:-10000px;top:0;z-index:-1;display:block;'
     const shadow = host.attachShadow({ mode: 'open' })
     const style = document.createElement('style')
-    style.textContent = shadowCss()
+    style.textContent = sharedShadowCss
     const mount = document.createElement('div')
-    mount.style.width = `${dimension(figure.dataset.gmcWidth, 1600, 320)}px`
-    mount.style.height = `${dimension(figure.dataset.gmcHeight, 1000, 240)}px`
+    mount.style.width = `${width}px`
+    mount.style.height = `${height}px`
     mount.style.display = 'flex'
     shadow.append(style, mount)
     document.body.append(host)
@@ -154,12 +205,8 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
     if (!workspace) throw new Error('Graph canvas did not initialize')
     const dataUrl = await pngBytesToDataUrl(await captureGraphPng(workspace))
     if (!isCurrent(generation, figure)) return
-
-    const image = document.createElement('img')
-    image.className = 'gmc-markdown-png'
-    image.src = dataUrl
-    image.alt = `Graph Model Studio diagram: ${id}`
-    figure.replaceChildren(image)
+    rememberPng(key, dataUrl)
+    showPng(figure, id, dataUrl)
   } catch (error) {
     if (isCurrent(generation, figure)) {
       figure.classList.add('gmc-markdown-error')

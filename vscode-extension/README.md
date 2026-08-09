@@ -29,6 +29,10 @@ the Graph Model Studio application.
   rendered automatically as PNG images whenever VS Code displays the Markdown
   preview.
 - Single-diagram and batch PNG export for Markdown documents.
+- External file embeds with line/region selection, locking, stale indicators,
+  diagnostics, completion, hover, source navigation, and workspace updates.
+- Native `.gmc`/`.graphmodel` embeds and recursive Markdown-file embeds.
+- Rich HTML paste-to-Markdown plus copy-Markdown-as-rich-HTML.
 
 ## Opening the interactive graph
 
@@ -126,6 +130,62 @@ For `.gmc` documents and GMC fences inside Markdown, the extension provides:
 - Dedicated syntax highlighting for `.gmc` and injected highlighting in
   Markdown fences.
 
+## External code and Markdown embeds
+
+Insert an embed directive in a Markdown document, then run **Update Code
+Embeds** (or use the CodeLens above the directive):
+
+```markdown
+<!-- embed:file="./model.gmc" -->
+```
+
+Generated embed content is inserted directly without an additional visible
+`Source: filename` link. Source navigation remains available from CodeLens.
+
+The generated fence uses `gmc`, so it is rendered by the GMC Markdown preview.
+The original embed options are supported, including `line="1-20"`,
+`region="name"`, `lock="true"`, `indent="1"`, `new="3,5-7"`,
+`withLineNumbers="true"`, and `strip-comments="false"`.
+
+For code embeds, `indent="N"` adds `N` leading spaces. For embedded Markdown,
+it increases ATX heading depth instead: `# Chapter` becomes `## Chapter` when
+`indent="1"`. Headings inside fenced code blocks are left unchanged.
+
+Embedding a `.md` or `.markdown` file inserts Markdown directly rather than
+placing it inside a code fence. Embed directives inside that file are resolved
+recursively relative to their containing Markdown file. Circular includes are
+detected and rejected instead of recursing indefinitely.
+
+### Generated table of contents
+
+Add this marker where the table of contents should appear:
+
+```markdown
+<!-- embed:toc -->
+```
+
+**Update Code Embeds**, the TOC CodeLens, and saving the Markdown document all
+regenerate the TOC. Headings inside fenced code blocks are ignored, duplicate
+heading anchors are numbered consistently, and nested heading levels become
+nested lists. Optional attributes include `min-level="2"`, `max-level="4"`,
+or `depth="3"`; `lock="true"` prevents updates.
+
+## Paste as Markdown
+
+Rich HTML copied from browsers, Word, Google Docs, Notion, and similar tools is
+converted automatically when pasted into Markdown. Conversion is skipped in
+fenced code, inline code, math blocks, plain-text-only clipboard data, and VS
+Code editor copies. GFM tables, task lists, strikethrough, code language hints,
+and common Office/Google Docs cleanup are supported.
+
+Excel and other spreadsheet tables are normalized to GFM pipe tables and
+aligned automatically. Run **Markdown Toolkit: Format Markdown Table** or use
+`Ctrl+Alt+T` (`Cmd+Alt+T` on macOS) to reformat the table under the cursor or
+all tables in a selection.
+
+Use **Paste as Markdown: Copy as HTML** to copy a Markdown selection (or file
+from the Explorer) with both rich HTML and plain Markdown clipboard formats.
+
 ## Commands
 
 | Command | Description |
@@ -134,6 +194,16 @@ For `.gmc` documents and GMC fences inside Markdown, the extension provides:
 | **GMC: Export Diagram as PNG** | Exports the active GMC diagram to a chosen PNG file. |
 | **GMC: Export Markdown Diagram as PNG** | Exports the GMC fence under the cursor. |
 | **GMC: Export All Markdown Diagrams as PNG** | Batch-renders all GMC fences in the active Markdown document. |
+| **Update Code Embeds** | Refreshes embeds in the active Markdown document. |
+| **Update All Embeds in Workspace** | Refreshes all Markdown embeds in the workspace. |
+| **Copy Embed Tag** | Copies an embed directive for the selected source file, lines, or region. |
+| **Paste as Markdown: Copy as HTML** | Copies Markdown as rich HTML and plain text. |
+| **Markdown Toolkit: Format Markdown Table** | Aligns the selected Markdown tables or the table under the cursor. |
+| **Markdown Toolkit: Export Preview as HTML** | Exports styled Markdown with GMC diagrams embedded as images. |
+| **Markdown Toolkit: Export Preview as PDF** | Exports through a local Chromium, Edge, or Chrome headless browser. |
+| **Markdown Toolkit: Export Preview as PNG** | Captures the styled preview using the configured PNG viewport. |
+| **Markdown Toolkit: Export Preview...** | Preview-title button that opens the HTML/PDF/PNG/DOCX format picker. |
+| **Markdown Toolkit: Export as DOCX with Pandoc** | Generates DOCX and lets you select an optional reference DOCX template. |
 
 ## Settings
 
@@ -143,6 +213,23 @@ For `.gmc` documents and GMC fences inside Markdown, the extension provides:
 | `gmc.export.width` | `1600` | Default PNG render width, from 320 to 8192 pixels. |
 | `gmc.export.height` | `1000` | Default PNG render height, from 240 to 8192 pixels. |
 | `gmc.export.theme` | `auto` | PNG theme: `auto`, `light`, or `dark`. Fence attributes can override it. |
+| `markdownEmbedder.autoUpdate` | `false` | Refresh embeds when a referenced source file is saved. |
+| `markdownEmbedder.collapseGeneratedContent` | `true` | Automatically fold generated content between embed directives. |
+
+Named regions such as `<!-- embed:example --> … <!-- embed:example:end -->`
+are recognized as foldable blocks and collapse automatically after updates.
+| `pasteAsMarkdown.enabled` | `true` | Convert rich HTML clipboard content when pasting into Markdown. |
+| `pasteAsMarkdown.copyAsHtmlOnCopy` | `false` | Override copy in Markdown to provide rich HTML as well as plain text. |
+| `markdownToolkit.export.browserPath` | empty | Optional Chromium/Chrome/Edge executable for PDF and PNG export. |
+| `markdownToolkit.export.pngWidth` | `1440` | PNG export viewport width. |
+| `markdownToolkit.export.pngHeight` | `10000` | PNG export capture height (increase for very long documents). |
+| `markdownToolkit.pandoc.path` | empty | Optional path to the Pandoc executable. |
+| `markdownToolkit.pandoc.referenceDoc` | empty | Optional default reference DOCX template offered during export. |
+
+PDF and PNG export require Edge, Chrome, or Chromium. DOCX export requires
+[Pandoc](https://pandoc.org/). GMC fences are rendered to PNG before Pandoc is
+run, and the Markdown document directory is included in Pandoc's resource path
+so relative images remain available.
 
 The theme button in the interactive graph stores an explicit extension-level
 theme preference. That choice survives document refreshes, reopened previews,

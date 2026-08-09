@@ -11,6 +11,7 @@ import {
   type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart, measureSankeyHeight,
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
+import { quadrantItemPosition } from './quadrant-position'
 
 export interface LayoutSettings {
   engine: LayoutEngine
@@ -112,6 +113,11 @@ export function computeNestedLayout(
 ): NestedLayout {
   const engine = settings.engine
   const visible = getVisibleElementIds(model, view)
+  // These collections and indexes are shared by every nested layout level.
+  // Building them once avoids repeated Object.keys/filter/indexOf scans for
+  // charts and deeply nested groups.
+  const elements = Object.values(model.elements)
+  const relations = Object.values(model.relations)
 
   // A chart child (gantt row, sequence participant, commit, timeline event)
   // always lays out inside its enclosing chart container — never at the top
@@ -129,22 +135,29 @@ export function computeNestedLayout(
     return undefined
   }
   const hostOf: Record<string, string> = {}
-  for (const el of Object.values(model.elements)) {
+  for (const el of elements) {
     if (!visible.has(el.id)) continue
     const host = nearestContainer(el.id)
     if (host) hostOf[el.id] = host
   }
 
   const childrenOf = new Map<string, string[]>()
+  const hostedByContainer = new Map<string, string[]>()
   const ROOT = '__root__'
   childrenOf.set(ROOT, [])
-  for (const el of Object.values(model.elements)) {
+  for (const el of elements) {
     if (!visible.has(el.id)) continue
     // hosted chart children are re-parented onto their container (flattening any
     // intermediate nesting); everything else follows its DSL parent
     const key = hostOf[el.id] ?? (el.parentId && visible.has(el.parentId) ? el.parentId : ROOT)
     if (!childrenOf.has(key)) childrenOf.set(key, [])
     childrenOf.get(key)!.push(el.id)
+    const host = hostOf[el.id]
+    if (host) {
+      const hosted = hostedByContainer.get(host)
+      if (hosted) hosted.push(el.id)
+      else hostedByContainer.set(host, [el.id])
+    }
   }
 
   const positions: Record<string, Position> = {}
@@ -161,10 +174,8 @@ export function computeNestedLayout(
   const suppressedRelations = new Set<string>()
   const stored = view.layoutPositions ?? {}
 
-  const hostedChildren = (containerId: string) =>
-    Object.keys(hostOf).filter(cid => hostOf[cid] === containerId)
-      .map(cid => model.elements[cid])
-      .sort((a, b) => Object.keys(model.elements).indexOf(a.id) - Object.keys(model.elements).indexOf(b.id))
+  const hostedIds = (containerId: string) => hostedByContainer.get(containerId) ?? []
+  const hostedChildren = (containerId: string) => hostedIds(containerId).map(cid => model.elements[cid])
 
   // one gantt chart per ganttGraph, scheduled over just that graph's rows
   const ganttCharts: Record<string, GanttChart> = {}
@@ -173,21 +184,21 @@ export function computeNestedLayout(
   const chartPlacement: Record<string, { x: number; y: number; width: number; height: number }> = {}
   const containerSize: Record<string, { width: number; height: number }> = {}
 
-  for (const el of Object.values(model.elements)) {
+  for (const el of elements) {
     if (!visible.has(el.id)) continue
     if (el.type === 'ganttGraph') {
-      const hosted = new Set(Object.keys(hostOf).filter(rid => hostOf[rid] === el.id))
+      const hosted = new Set(hostedIds(el.id))
       const chart = computeGanttChart(model, hosted)
       if (!chart) continue
       ganttCharts[el.id] = chart
       for (const rid of Object.keys(chart.placements)) chartPlacement[rid] = chart.placements[rid]
       Object.assign(ganttProgress, chart.progress)
     } else if (CHART_FRAME_TYPES.has(el.type)) {
-      const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
+      const hosted = new Set(hostedIds(el.id))
       const kids = hostedChildren(el.id)
       let layout: ChartLayout
       if (el.type === 'seqGraph') {
-        layout = layoutSequenceGraph(kids, Object.values(model.relations))
+        layout = layoutSequenceGraph(kids, relations)
         seqMessagesByHost[el.id] = layout.messages
         for (const rid of layout.suppressed) suppressedRelations.add(rid)
       } else if (el.type === 'gitGraph') {
@@ -201,7 +212,7 @@ export function computeNestedLayout(
       containerSize[el.id] = { width: layout.width, height: layout.height }
       for (const cid of Object.keys(layout.placements)) chartPlacement[cid] = layout.placements[cid]
     } else if (el.type === 'gridGraph') {
-      const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
+      const hosted = new Set(hostedIds(el.id))
       const gl = layoutGridGraph(model, el.id, hosted, (view.nodeSizes ?? {})[el.id], view.nodeSizes ?? {})
       gridFrames[el.id] = gl.frame
       containerSize[el.id] = { width: gl.frame.width, height: gl.frame.height }
@@ -209,7 +220,7 @@ export function computeNestedLayout(
     } else if (el.type === 'treeGraph') {
       // tree elements are consumed by the widget: they render as file-tree rows
       // inside the container, not as separate nodes, and their relations are hidden
-      const hosted = new Set(Object.keys(hostOf).filter(id => hostOf[id] === el.id))
+      const hosted = new Set(hostedIds(el.id))
       const tl = layoutTreeGraph(model, el.id, hosted)
       treeRoots[el.id] = tl.roots
       containerSize[el.id] = { width: tl.width, height: tl.height }
@@ -231,15 +242,31 @@ export function computeNestedLayout(
       const frame = buildAnalyticChart(model, el.id, width, height, visible)
       if (frame) analyticCharts[el.id] = frame
       containerSize[el.id] = { width, height }
-      const hosted = Object.keys(hostOf).filter(cid => hostOf[cid] === el.id)
-      for (const cid of hosted) { consumed.add(cid); chartPlacement[cid] = { x: 0, y: 0, width: 0, height: 0 } }
-      if (el.type === 'sankeyGraph') for (const rel of Object.values(model.relations)) if (hosted.includes(rel.sourceId) && hosted.includes(rel.targetId)) suppressedRelations.add(rel.id)
+      const hosted = hostedIds(el.id)
+      for (const cid of hosted) {
+        const child = model.elements[cid]
+        const isEmbeddedSeries =
+          (frame?.kind === 'radar' && child?.type === 'radarSeries') ||
+          (frame?.kind === 'xy' && child?.type === 'xySeries') ||
+          (frame?.kind === 'bar' && child?.type === 'barSeries')
+        if (isEmbeddedSeries) {
+          const seriesIndex = frame.series.findIndex(series => series.id === cid)
+          chartPlacement[cid] = { x: 5 + Math.max(0, seriesIndex) * 110, y: 38, width: 104, height: 20 }
+        } else {
+          consumed.add(cid)
+          chartPlacement[cid] = { x: 0, y: 0, width: 0, height: 0 }
+        }
+      }
+      if (el.type === 'sankeyGraph') {
+        const hostedSet = new Set(hosted)
+        for (const rel of relations) if (hostedSet.has(rel.sourceId) && hostedSet.has(rel.targetId)) suppressedRelations.add(rel.id)
+      }
     }
   }
   // Relations within the same file-tree widget carry no additional meaning;
   // cross-tree relations must remain visible through both row anchors.
   if (consumed.size) {
-    for (const rel of Object.values(model.relations)) {
+    for (const rel of relations) {
       if (
         consumed.has(rel.sourceId) && consumed.has(rel.targetId) &&
         hostOf[rel.sourceId] === hostOf[rel.targetId]
@@ -260,6 +287,9 @@ export function computeNestedLayout(
     for (const kid of kids) {
       const fp = fixedPlacement(kid)
       if (fp) {
+        // A draggable embedded series can itself receive ordinary children.
+        // Populate their positions while retaining the series' fixed legend size.
+        if (isVisibleContainer(model, kid, visible)) layoutLevel(kid)
         sizes[kid] = { width: fp.width, height: fp.height }
       } else if (isVisibleContainer(model, kid, visible)) {
         sizes[kid] = layoutLevel(kid)
@@ -277,15 +307,15 @@ export function computeNestedLayout(
       const manual = (view.nodeSizes ?? {})[parentKey]
       const W = Math.max(manual?.width ?? 0, def.defaultWidth)
       const H = Math.max(manual?.height ?? 0, def.defaultHeight)
-      const INSET = 26
       for (const kid of kids) {
-        const props = model.elements[kid].properties ?? {}
-        const px = Math.max(0, Math.min(1, parseFloat(props['x'] ?? '0.5') || 0.5))
-        const py = Math.max(0, Math.min(1, parseFloat(props['y'] ?? '0.5') || 0.5))
-        const s = sizes[kid]
-        positions[kid] = {
-          x: INSET + px * (W - 2 * INSET) - s.width / 2,
-          y: H - INSET - py * (H - 2 * INSET) - s.height / 2,
+        if (model.elements[kid].type === 'quadrantItem') {
+          const props = model.elements[kid].properties ?? {}
+          const px = Math.max(0, Math.min(1, parseFloat(props['x'] ?? '0.5') || 0.5))
+          const py = Math.max(0, Math.min(1, parseFloat(props['y'] ?? '0.5') || 0.5))
+          positions[kid] = quadrantItemPosition(px, py, { width: W, height: H }, sizes[kid])
+        } else {
+          positions[kid] = (!settings.ignoreStored ? stored[kid] : undefined)
+            ?? { x: CONTAINER_PAD, y: CONTAINER_TITLE_H + CONTAINER_PAD }
         }
       }
       return { width: W, height: H }
@@ -310,10 +340,16 @@ export function computeNestedLayout(
       return { width: W, height: H }
     }
 
-    // seq / git / timeline / tree containers: children already have
-    // container-local placements; just apply them and size the frame
+    // Native chart children use computed container-local placements. Ordinary
+    // nodes/groups may also be nested in a chart; keep their stored coordinates
+    // so they can be freely placed like children of any generic container.
     if (parentKey !== ROOT && PREPLACED_CONTAINERS.has(model.elements[parentKey]?.type ?? '')) {
-      for (const kid of kids) positions[kid] = chartPlacement[kid] ?? { x: CONTAINER_PAD, y: CONTAINER_TITLE_H }
+      for (const kid of kids) {
+        const placement = chartPlacement[kid]
+        positions[kid] = placement
+          ? { x: placement.x, y: placement.y }
+          : (!settings.ignoreStored ? stored[kid] : undefined) ?? { x: CONTAINER_PAD, y: CONTAINER_TITLE_H + CONTAINER_PAD }
+      }
       const manual = (view.nodeSizes ?? {})[parentKey]
       const cs = containerSize[parentKey] ?? { width: 240, height: 160 }
       return { width: Math.max(cs.width, manual?.width ?? 0), height: Math.max(cs.height, manual?.height ?? 0) }
@@ -367,7 +403,7 @@ export function computeNestedLayout(
     }
     const ledges: LayoutEdgeInput[] = []
     const seenEdge = new Set<string>()
-    for (const rel of Object.values(model.relations)) {
+    for (const rel of relations) {
       if (!isRelationIncluded(view, rel.sourceId, rel.targetId)) continue
       const a = liftToKid(rel.sourceId)
       const b = liftToKid(rel.targetId)
@@ -378,7 +414,8 @@ export function computeNestedLayout(
       seenEdge.add(k)
       ledges.push({ source: a, target: b })
     }
-    const laid = runLayout(engine, lnodes, ledges, {
+    const allGraphKidsStored = !settings.ignoreStored && graphKids.every(id => !!stored[id])
+    const laid = allGraphKidsStored ? {} : runLayout(engine, lnodes, ledges, {
       direction: view.layoutDirection,
       layerGap: view.layoutDirection === 'lr' || view.layoutDirection === 'rl' ? 100 : 70,
       nodeGap: 44,
@@ -635,6 +672,10 @@ export function modelToFlow(
   const nodes: GraphNode[] = ordered.filter(id => !consumed.has(id)).map(id => {
     const el = model.elements[id]
     const def = notationRegistry.getElementDef(el.type) ?? GENERIC_DEF
+    const analyticHost = hostOf[id] ? analyticCharts[hostOf[id]] : undefined
+    const embeddedSeries = analyticHost && analyticHost.kind !== 'sankey'
+      ? analyticHost.series.find(series => series.id === id)
+      : undefined
     const customAccent = normalizeHexColor(el.properties?.accentColor)
     const accentColors = customAccent ? deriveAccentColors(customAccent) : undefined
     const container = isVisibleContainer(model, id, visible)
@@ -700,6 +741,11 @@ export function modelToFlow(
         analyticChart: analyticCharts[id],
         tree: treeRoots[id],
         projection: projectionFor(id),
+        linkedViewId: model.views[el.properties?.linkedView]?.id,
+        linkedViewName: model.views[el.properties?.linkedView]?.name,
+        embeddedSeries: !!embeddedSeries,
+        seriesColor: embeddedSeries?.color,
+        seriesStroke: embeddedSeries?.stroke,
       },
       ...(useParent ? { parentId: rfParent } : {}),
     }

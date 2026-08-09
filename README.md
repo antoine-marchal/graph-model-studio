@@ -90,7 +90,9 @@ pnpm test         # run the unit tests (Vitest)
 ```
 
 Open the printed local URL. The app loads with an example C4 model so you can
-start exploring immediately.
+start exploring immediately. Use **Demos** in the title bar to open four
+multi-view showcases covering every registered notation: architecture and data,
+processes and delivery, knowledge and collaboration, and portfolio analytics.
 
 ---
 

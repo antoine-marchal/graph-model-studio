@@ -1,6 +1,6 @@
 [package]
 name = "graph-model-studio"
-version = "2.2.0"
+version = "3.3.0"
 description = "Graph Model Studio - visual graph & model editor with DSL"
 authors = ["Antoine Marchal"]
 edition = "2021"

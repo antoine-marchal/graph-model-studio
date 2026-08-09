@@ -3,6 +3,24 @@ import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
 
 describe('DSL Serializer', () => {
+  it('round-trips a node link to a view through element properties', () => {
+    const dsl = `model {
+  portal = component "Portal" {
+    linkedView "details"
+  }
+}
+views {
+  view overview { include * }
+  view details "Details" { include portal }
+}`
+
+    const model = parseDsl(dsl).model!
+    expect(model.elements.portal.properties.linkedView).toBe('details')
+
+    const reparsed = parseDsl(serializeModel(model)).model!
+    expect(reparsed.elements.portal.properties.linkedView).toBe('details')
+  })
+
   it('round-trips a simple model', () => {
     const original = `model {
   user = person "User"

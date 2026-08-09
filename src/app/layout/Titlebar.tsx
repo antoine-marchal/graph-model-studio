@@ -1,17 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react'
 import { useModelStore } from '@/store'
 import { Button } from '@/ui/components/Button'
 import { getStorageProvider } from '@/services/storage'
 import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
-import { ExportDialog } from '@/features/model-import-export/ExportDialog'
 import { isTauri, minimizeWindow, toggleMaximizeWindow, closeWindow } from '@/services/tauri'
+import { demoGraphs } from '@/demos/catalog'
 import appIcon from '../../../icon.png'
 
 type ViewMode = 'split' | 'code' | 'graph'
 
 const APP_VERSION = __APP_VERSION__
 const TAURI = isTauri()
+const ExportDialog = lazy(() => import('@/features/model-import-export/ExportDialog').then(module => ({ default: module.ExportDialog })))
 
 export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolean; propsOpen: boolean } }) {
   const isDirty = useModelStore(s => s.isDirty)
@@ -88,6 +89,22 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
     setFilePath(null)
   }
 
+  const handleDemo = (demoId: string) => {
+    if (!demoId) return
+    if (isDirty && !confirm('Discard unsaved changes and open the demo?')) return
+    const demo = demoGraphs.find(item => item.id === demoId)
+    if (!demo) return
+    const result = parseDsl(demo.source)
+    if (!result.model) {
+      alert(`Failed to parse the ${demo.title} demo`)
+      return
+    }
+    loadModel(result.model, demo.source)
+    // A demo is a template, not an opened file: Save must prompt for a new path.
+    setFileName(null)
+    setFilePath(null)
+  }
+
   return (
     <header
       data-tauri-drag-region
@@ -112,6 +129,21 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
       <nav className="flex items-center gap-0.5 rounded-lg bg-[var(--surface-2)] p-0.5" aria-label="File actions">
         <Button size="sm" variant="ghost" onClick={handleNew}>New</Button>
         <Button size="sm" variant="ghost" onClick={handleOpen}>Open</Button>
+        <select
+          aria-label="Open a demo graph"
+          defaultValue=""
+          onChange={event => {
+            handleDemo(event.currentTarget.value)
+            event.currentTarget.value = ''
+          }}
+          className="h-7 max-w-[104px] cursor-pointer rounded-md border-0 bg-transparent px-1.5 text-[11px] font-medium text-[var(--fg-muted)] outline-none hover:bg-[var(--surface-raised)] hover:text-[var(--fg)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          title="Open a built-in demo graph"
+        >
+          <option value="">Demos</option>
+          {demoGraphs.map(demo => (
+            <option key={demo.id} value={demo.id} title={demo.description}>{demo.title}</option>
+          ))}
+        </select>
         <Button size="sm" variant={isDirty ? 'default' : 'ghost'} onClick={handleSave} title="Save (Ctrl/Cmd+S)">Save</Button>
         <Button size="sm" variant="ghost" onClick={() => setShowExport(true)}>Export</Button>
       </nav>
@@ -180,7 +212,7 @@ export function Titlebar({ layoutFlags }: { layoutFlags?: { explorerOpen: boolea
         )}
       </div>
 
-      {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
+      {showExport && <Suspense fallback={null}><ExportDialog onClose={() => setShowExport(false)} /></Suspense>}
     </header>
   )
 }

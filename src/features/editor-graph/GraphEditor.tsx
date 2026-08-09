@@ -8,7 +8,6 @@ import {
   type Connection,
   type NodeChange,
   type EdgeChange,
-  type Node,
   applyNodeChanges,
   applyEdgeChanges,
   BackgroundVariant,
@@ -36,7 +35,22 @@ import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
-import { captureGraphPng, type GraphCaptureWorkspace } from './png-export'
+import type { GraphCaptureWorkspace } from './png-export'
+import {
+  absoluteNodePosition,
+  constrainDragPosition,
+  droppedPosition,
+  positionsCenteredAt,
+  relationEndpoints,
+  type DragAxis,
+} from './graph-interactions'
+import {
+  copyElementFormat,
+  copyRelationFormat,
+  elementFormatFor,
+  relationFormatFor,
+} from './style-clipboard'
+import { quadrantValuesFromPosition } from './quadrant-position'
 
 const nodeTypes = { graphNode: GraphNodeComponent, ganttAxis: GanttAxisNode, seqPoint: SeqPointNode, treeAnchor: TreeAnchorNode }
 
@@ -87,9 +101,16 @@ function GraphEditorInner() {
   const addElementsToView = useModelStore(s => s.addElementsToView)
   const reorderSiblings = useModelStore(s => s.reorderSiblings)
 
-  const { screenToFlowPosition, fitView, getIntersectingNodes, getNodes, getNodesBounds } = useReactFlow()
+  const { screenToFlowPosition, fitView, getNodes, getEdges, getNodesBounds } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const clipboard = useRef<string[]>([])
+  const mouseScreenPosition = useRef<{ x: number; y: number } | null>(null)
+  const shiftPressed = useRef(false)
+  const dragGesture = useRef<{
+    primaryId: string
+    starts: Map<string, { x: number; y: number }>
+  } | null>(null)
+  const rectangularSelectionInProgress = useRef(false)
 
   const activeView = activeViewId ? model.views[activeViewId] : Object.values(model.views)[0]
   const viewId = activeView?.id ?? 'default'
@@ -116,6 +137,13 @@ function GraphEditorInner() {
     setNodes(flow.nodes.map(n => (selEl.has(n.id) ? { ...n, selected: true } : n)))
     setEdges(flow.edges.map(e => (e.id === selRel ? { ...e, selected: true } : e)))
   }, [flow])
+  // A view switch replaces the canvas contents. Wait for React Flow to measure
+  // the new nodes, then frame that view just like the toolbar's Fit action.
+  useEffect(() => {
+    if (!activeViewId) return
+    const timer = window.setTimeout(() => fitView({ duration: 300, padding: 0.2 }), 50)
+    return () => window.clearTimeout(timer)
+  }, [activeViewId, fitView])
   // mirror store selection (e.g. explorer clicks) into React Flow so Delete works there too
   useEffect(() => {
     const selEl = new Set(selectedElementIds)
@@ -124,7 +152,23 @@ function GraphEditorInner() {
   }, [selectedElementIds, selectedRelationId])
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    setNodes(nds => applyNodeChanges(changes, nds) as GraphNode[])
+    const gesture = dragGesture.current
+    let effectiveChanges = changes
+    if (gesture && shiftPressed.current) {
+      const primary = changes.find(change => change.type === 'position' && change.id === gesture.primaryId)
+      const primaryStart = gesture.starts.get(gesture.primaryId)
+      if (primary?.type === 'position' && primary.position && primaryStart) {
+        const axis: DragAxis = Math.abs(primary.position.x - primaryStart.x) >= Math.abs(primary.position.y - primaryStart.y)
+          ? 'horizontal'
+          : 'vertical'
+        effectiveChanges = changes.map(change => {
+          if (change.type !== 'position' || !change.position) return change
+          const start = gesture.starts.get(change.id)
+          return start ? { ...change, position: constrainDragPosition(start, change.position, axis) } : change
+        })
+      }
+    }
+    setNodes(nds => applyNodeChanges(effectiveChanges, nds) as GraphNode[])
   }, [])
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     setEdges(eds => applyEdgeChanges(changes, eds) as GraphEdge[])
@@ -133,29 +177,19 @@ function GraphEditorInner() {
   const onConnect = useCallback((c: Connection) => {
     // a connection from a treeNode's dot carries the anchor id — map back to the
     // real treeNode so the relation is stored against it
-    const unanchor = (v: string | null | undefined) => {
-      if (!v?.startsWith('__treeanchor_')) return v
-      return v.slice('__treeanchor_'.length).replace(/_[lr]$/, '')
-    }
     // Embedded Sankey nodes share their chart's React Flow node. Their handle
     // carries the real model element id so relations still target the children.
-    const unsankey = (node: string | null | undefined, handle: string | null | undefined) => {
-      if (!handle?.startsWith('sankey:')) return node
-      const match = /^sankey:(.+):[lr]$/.exec(handle)
-      return match?.[1] ?? node
-    }
-    const source = unsankey(unanchor(c.source), c.sourceHandle)
-    const target = unsankey(unanchor(c.target), c.targetHandle)
-    if (!source || !target || source === target) return
-    const anchored = source !== c.source || target !== c.target
-    const id = `rel_${source}_${target}_${nanoid(4)}`
-    const sh = (anchored ? undefined : c.sourceHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
-    const th = (anchored ? undefined : c.targetHandle ?? undefined) as 't' | 'b' | 'l' | 'r' | undefined
-    dispatch({ type: 'ADD_RELATION', payload: { id, sourceId: source, targetId: target, notation: 'generic', sourceHandle: sh, targetHandle: th } })
+    const endpoints = relationEndpoints(c)
+    if (!endpoints) return
+    const id = `rel_${endpoints.sourceId}_${endpoints.targetId}_${nanoid(4)}`
+    // A connection point is only an interaction affordance. New relations stay
+    // floating so routing may choose the best side as nodes move; users can pin
+    // anchors explicitly from the relation properties afterwards.
+    dispatch({ type: 'ADD_RELATION', payload: { id, ...endpoints, notation: 'generic' } })
   }, [dispatch])
 
   // ── selection → highlight code (no focus) ──
-  const onSelectionChange = useCallback(
+  const commitSelection = useCallback(
     ({ nodes: selNodes, edges: selEdges }: { nodes: { id: string }[]; edges: { id: string }[] }) => {
       if (selEdges.length === 1 && selNodes.length === 0) {
         selectRelation(selEdges[selEdges.length - 1].id)
@@ -171,6 +205,32 @@ function GraphEditorInner() {
     [selectElements, selectRelation, requestHighlight],
   )
 
+  const onSelectionChange = useCallback(
+    (selection: { nodes: { id: string }[]; edges: { id: string }[] }) => {
+      // React Flow updates the marquee selection on every crossed node. Keep
+      // those visual updates inside its local canvas state and synchronize the
+      // global store only once on pointer-up; otherwise Explorer, Inspector and
+      // embedded charts all rerender repeatedly during a single gesture.
+      if (rectangularSelectionInProgress.current) return
+      commitSelection(selection)
+    },
+    [commitSelection],
+  )
+
+  const onSelectionStart = useCallback(() => {
+    rectangularSelectionInProgress.current = true
+  }, [])
+
+  const onSelectionEnd = useCallback(() => {
+    rectangularSelectionInProgress.current = false
+    requestAnimationFrame(() => {
+      commitSelection({
+        nodes: getNodes().filter(candidate => candidate.selected),
+        edges: getEdges().filter(candidate => candidate.selected),
+      })
+    })
+  }, [commitSelection, getEdges, getNodes])
+
   // double-click a node → inline rename on the canvas
   const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: { id: string }) => {
     selectElements([node.id])
@@ -183,15 +243,44 @@ function GraphEditorInner() {
   }, [selectRelation, requestHighlight, requestFocusProperties])
 
   const onNodesDelete = useCallback((deleted: { id: string }[]) => {
-    for (const n of deleted) dispatch({ type: 'DELETE_ELEMENT', payload: { id: n.id } })
+    dispatch({ type: 'DELETE_ELEMENTS', payload: { ids: deleted.map(node => node.id) } })
   }, [dispatch])
   const onEdgesDelete = useCallback((deleted: { id: string }[]) => {
-    for (const e of deleted) dispatch({ type: 'DELETE_RELATION', payload: { id: e.id } })
+    dispatch({ type: 'DELETE_RELATIONS', payload: { ids: deleted.map(edge => edge.id) } })
   }, [dispatch])
 
   // ── drag commit + drop-to-reparent + drag-to-sort ──
+  const onNodeDragStart = useCallback(
+    (event: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
+      shiftPressed.current = event.shiftKey
+      const moving = dragged.some(candidate => candidate.id === node.id) ? dragged : [node, ...dragged]
+      dragGesture.current = {
+        primaryId: node.id,
+        starts: new Map(moving.map(candidate => [candidate.id, { ...candidate.position }])),
+      }
+    },
+    [],
+  )
+
   const onNodeDragStop = useCallback(
-    (_: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
+    (event: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
+      const gesture = dragGesture.current
+      dragGesture.current = null
+      if (gesture && shiftPressed.current) {
+        const primaryStart = gesture.starts.get(gesture.primaryId)
+        const primary = dragged.find(candidate => candidate.id === gesture.primaryId) ?? node
+        if (primaryStart) {
+          const axis: DragAxis = Math.abs(primary.position.x - primaryStart.x) >= Math.abs(primary.position.y - primaryStart.y)
+            ? 'horizontal'
+            : 'vertical'
+          dragged = dragged.map(candidate => {
+            const start = gesture.starts.get(candidate.id)
+            return start ? { ...candidate, position: constrainDragPosition(start, candidate.position, axis) } : candidate
+          })
+          node = dragged.find(candidate => candidate.id === node.id)
+            ?? { ...node, position: constrainDragPosition(primaryStart, node.position, axis) }
+        }
+      }
       if (dragged.length === 1) {
         const el = model.elements[node.id]
         // gridItem dropped into the matrix → snap to the cell under it (row/col)
@@ -208,6 +297,30 @@ function GraphEditorInner() {
             return
           }
         }
+        // Quadrant items are positioned by normalized x/y properties rather
+        // than stored layout coordinates. Convert the visual drop back into
+        // that coordinate system so the model and DSL follow the drag.
+        if (el?.type === 'quadrantItem' && el.parentId && model.elements[el.parentId]?.type === 'quadrantChart') {
+          const parent = nodes.find(candidate => candidate.id === el.parentId)
+          if (parent) {
+            const values = quadrantValuesFromPosition(
+              node.position,
+              {
+                width: parent.measured?.width ?? parent.width ?? 480,
+                height: parent.measured?.height ?? parent.height ?? 380,
+              },
+              {
+                width: node.measured?.width ?? node.width ?? 16,
+                height: node.measured?.height ?? node.height ?? 16,
+              },
+            )
+            dispatch({
+              type: 'UPDATE_ELEMENT',
+              payload: { id: node.id, properties: { ...el.properties, x: String(values.x), y: String(values.y) } },
+            })
+            return
+          }
+        }
         // chart children (gantt/seq/git/timeline rows) reorder among their model
         // siblings by drop position instead of moving freely
         const axis = el ? CHART_CHILD_AXIS[el.type] : undefined
@@ -220,18 +333,29 @@ function GraphEditorInner() {
           return
         }
         const desc = descendantIds(model, node.id)
-        // any overlapping model node (not self / not a descendant / not synthetic) can become the new parent
-        const inter = (getIntersectingNodes(node) as Node[])
-          .filter(n => n.id !== node.id && !desc.has(n.id) && !!model.elements[n.id])
-        let target: Node | null = null
-        for (const n of inter) {
+        const draggedById = new Map(dragged.map(candidate => [candidate.id, candidate]))
+        const liveNodes = nodes.map(candidate => draggedById.get(candidate.id) ?? candidate)
+        const drop = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+        // The pointer, rather than an arbitrary amount of node overlap, decides
+        // the destination. Any model node may receive a child and thereby become
+        // a container; nested targets still prefer the smallest node.
+        const candidates = liveNodes.filter(candidate => {
+          if (candidate.id === node.id || desc.has(candidate.id) || !model.elements[candidate.id]) return false
+          const origin = absoluteNodePosition(candidate, liveNodes)
+          const width = candidate.measured?.width ?? candidate.width ?? 0
+          const height = candidate.measured?.height ?? candidate.height ?? 0
+          return drop.x >= origin.x && drop.x <= origin.x + width && drop.y >= origin.y && drop.y <= origin.y + height
+        })
+        let target: GraphNode | undefined
+        for (const n of candidates) {
           const a = (n.width ?? 1) * (n.height ?? 1)
           const ta = target ? (target.width ?? 1) * (target.height ?? 1) : Infinity
           if (a < ta) target = n
         }
         const newParent = target?.id
         if (newParent !== el?.parentId) {
-          dispatch({ type: 'UPDATE_ELEMENT', payload: { id: node.id, parentId: newParent } })
+          const position = droppedPosition(node, target, liveNodes)
+          dispatch({ type: 'REPARENT_ELEMENT', payload: { viewId, id: node.id, parentId: newParent, position } })
           return
         }
       }
@@ -239,8 +363,21 @@ function GraphEditorInner() {
       for (const n of dragged) positions[n.id] = n.position
       if (Object.keys(positions).length) dispatch({ type: 'APPLY_LAYOUT', payload: { viewId, positions } })
     },
-    [dispatch, viewId, model, getIntersectingNodes, nodes, reorderSiblings],
+    [dispatch, viewId, model, nodes, reorderSiblings, screenToFlowPosition],
   )
+
+  useEffect(() => {
+    const updateShift = (event: KeyboardEvent) => { shiftPressed.current = event.shiftKey }
+    const clearShift = () => { shiftPressed.current = false }
+    window.addEventListener('keydown', updateShift)
+    window.addEventListener('keyup', updateShift)
+    window.addEventListener('blur', clearShift)
+    return () => {
+      window.removeEventListener('keydown', updateShift)
+      window.removeEventListener('keyup', updateShift)
+      window.removeEventListener('blur', clearShift)
+    }
+  }, [])
 
   // ── add node ──
   const addNodeAt = useCallback((elementType: string, flowX: number, flowY: number) => {
@@ -377,6 +514,7 @@ function GraphEditorInner() {
     const wrapper = wrapperRef.current
     if (!wrapper) return
     const base = model.metadata.title.replace(/\s+/g, '-').toLowerCase() || 'diagram'
+    const { captureGraphPng } = await import('./png-export')
     const bytes = await captureGraphPng(wrapper)
     await saveBinaryFile(bytes, { defaultName: `${base}.png`, filters: filtersForExt('png') })
   }, [model])
@@ -388,14 +526,64 @@ function GraphEditorInner() {
       const typing = tag === 'input' || tag === 'textarea' || document.activeElement?.classList.contains('inputarea')
       if (typing) return
       const mod = e.ctrlKey || e.metaKey
-      if (mod && e.key.toLowerCase() === 'd') {
+      const key = e.key.toLowerCase()
+      if (mod && e.shiftKey && key === 'c') {
+        e.preventDefault()
+        const state = useModelStore.getState()
+        if (state.selectedRelationId) copyRelationFormat(state.model, state.selectedRelationId)
+        else if (state.activeViewId && state.selectedElementId) copyElementFormat(state.model, state.activeViewId, state.selectedElementId)
+      } else if (mod && e.shiftKey && key === 'v') {
+        e.preventDefault()
+        const state = useModelStore.getState()
+        if (state.selectedRelationId) {
+          const format = relationFormatFor(state.model, state.selectedRelationId)
+          if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id: state.selectedRelationId, ...format } })
+        } else if (state.activeViewId && state.selectedElementId) {
+          const format = elementFormatFor(state.model, state.selectedElementId)
+          if (format) dispatch({ type: 'APPLY_ELEMENT_FORMAT', payload: { viewId: state.activeViewId, id: state.selectedElementId, ...format } })
+        }
+      } else if (mod && key === 'd') {
         e.preventDefault(); duplicateSelection()
-      } else if (mod && e.key.toLowerCase() === 'c') {
+      } else if (mod && key === 'c') {
+        e.preventDefault()
         clipboard.current = [...useModelStore.getState().selectedElementIds]
-      } else if (mod && e.key.toLowerCase() === 'v') {
+      } else if (mod && key === 'v') {
+        e.preventDefault()
         if (clipboard.current.length) {
-          const selectedTarget = useModelStore.getState().selectedElementId
-          const created = duplicateElements(clipboard.current, { parentId: selectedTarget })
+          const state = useModelStore.getState()
+          const copied = clipboard.current.filter(id => !!state.model.elements[id])
+          const copiedSet = new Set(copied)
+          const roots = copied.filter(id => {
+            let parent = state.model.elements[id]?.parentId
+            while (parent) {
+              if (copiedSet.has(parent)) return false
+              parent = state.model.elements[parent]?.parentId
+            }
+            return true
+          })
+          const created = duplicateElements(copied, { parentId: null })
+          const point = mouseScreenPosition.current
+            ? screenToFlowPosition(mouseScreenPosition.current)
+            : (() => {
+            const rect = wrapperRef.current?.getBoundingClientRect()
+            return screenToFlowPosition({ x: (rect?.left ?? 0) + (rect?.width ?? 0) / 2, y: (rect?.top ?? 0) + (rect?.height ?? 0) / 2 })
+          })()
+          const liveNodes = getNodes()
+          const sourceGeometry = roots.flatMap((sourceId, index) => {
+            const source = liveNodes.find(node => node.id === sourceId)
+            const createdId = created[index]
+            if (!source || !createdId) return []
+            return [{
+              id: createdId,
+              position: absoluteNodePosition(source, liveNodes),
+              size: {
+                width: source.measured?.width ?? source.width ?? 150,
+                height: source.measured?.height ?? source.height ?? 70,
+              },
+            }]
+          })
+          const positions = positionsCenteredAt(point, sourceGeometry)
+          if (state.activeViewId && Object.keys(positions).length) setViewPositions(state.activeViewId, positions, true)
           setTimeout(() => selectElements(created), 0)
         }
       } else if (e.key === 'F2') {
@@ -405,7 +593,7 @@ function GraphEditorInner() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [nodes, duplicateSelection, duplicateElements, selectElements, setEditingElement])
+  }, [nodes, dispatch, duplicateSelection, duplicateElements, getNodes, screenToFlowPosition, selectElements, setEditingElement, setViewPositions])
 
   const toggleBtn = (active: boolean) =>
     active ? 'bg-[var(--accent)] text-[var(--accent-fg)] border-[var(--accent)]' : ''
@@ -436,7 +624,13 @@ function GraphEditorInner() {
   }, [activeView, addElementsToView, screenToFlowPosition, setViewPositions])
 
   return (
-    <div ref={wrapperRef} className="gms-graph-workspace h-full w-full" onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
+    <div
+      ref={wrapperRef}
+      className="gms-graph-workspace h-full w-full"
+      onPointerMove={event => { mouseScreenPosition.current = { x: event.clientX, y: event.clientY } }}
+      onDragOver={onCanvasDragOver}
+      onDrop={onCanvasDrop}
+    >
       <EdgeMarkers />
       <ReactFlow
         nodes={nodes}
@@ -445,10 +639,13 @@ function GraphEditorInner() {
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onSelectionChange={onSelectionChange}
+        onSelectionStart={onSelectionStart}
+        onSelectionEnd={onSelectionEnd}
         onNodeDoubleClick={onNodeDoubleClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodesDelete={onNodesDelete}
         onEdgesDelete={onEdgesDelete}
+        onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
         onPaneClick={() => { selectElements([]); selectRelation(null); setMenu(null); setEditingElement(null) }}
@@ -456,7 +653,7 @@ function GraphEditorInner() {
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}
         multiSelectionKeyCode={['Meta', 'Control']}
-        selectionKeyCode="Shift"
+        selectionKeyCode={['Meta', 'Control']}
         deleteKeyCode={['Delete', 'Backspace']}
         // don't let the canvas swallow Space (pan) or grab focused-node keys —
         // in the Tauri webview this otherwise blocks typing a space

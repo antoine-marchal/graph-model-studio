@@ -217,20 +217,35 @@ export function CodeEditor() {
     const visible = getVisibleElementIds(model, view)
     const text = m.getValue()
     const decos: editor.IModelDeltaDecoration[] = []
+    const elementOffsets = new Map<string, number>()
+    const relationOffsets = new Map<string, number>()
+    // Index declarations once. The previous implementation rescanned the full
+    // DSL with a new RegExp for every element and relation.
+    const lineRegex = /^\s*([a-zA-Z_][\w.]*)\s*(?:=|->\s*([a-zA-Z_][\w.]*))/gm
+    let declaration: RegExpExecArray | null
+    while ((declaration = lineRegex.exec(text))) {
+      const lineStart = declaration.index
+      if (declaration[2]) {
+        const key = `${declaration[1]}\u0000${declaration[2]}`
+        if (!relationOffsets.has(key)) relationOffsets.set(key, lineStart)
+      } else if (!elementOffsets.has(declaration[1])) {
+        elementOffsets.set(declaration[1], lineStart)
+      }
+    }
     const dim = (offset: number) => {
       const line = m.getPositionAt(offset).lineNumber
       decos.push({ range: new monaco.Range(line, 1, line, 1), options: { isWholeLine: true, className: 'gms-line-dim' } })
     }
     for (const el of Object.values(model.elements)) {
       if (visible.has(el.id)) continue
-      const match = new RegExp(`(^|\\n)\\s*${escapeRegExp(el.id)}\\s*=`, 'm').exec(text)
-      if (match) dim(match.index + (match[1] ? match[1].length : 0))
+      const offset = elementOffsets.get(el.id)
+      if (offset !== undefined) dim(offset)
     }
     for (const rel of Object.values(model.relations)) {
       const shown = visible.has(rel.sourceId) && visible.has(rel.targetId) && isRelationIncluded(view, rel.sourceId, rel.targetId)
       if (shown) continue
-      const match = new RegExp(`(^|\\n)\\s*${escapeRegExp(rel.sourceId)}\\s*->\\s*${escapeRegExp(rel.targetId)}`, 'm').exec(text)
-      if (match) dim(match.index + (match[1] ? match[1].length : 0))
+      const offset = relationOffsets.get(`${rel.sourceId}\u0000${rel.targetId}`)
+      if (offset !== undefined) dim(offset)
     }
     dimDecoRef.current = ed.deltaDecorations(dimDecoRef.current, decos)
   }, [model, activeViewId, dslSource])

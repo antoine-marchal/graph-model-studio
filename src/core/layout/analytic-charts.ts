@@ -6,7 +6,7 @@ export interface SankeyLinkFrame { id: string; source: string; target: string; v
 export interface SankeyFrame { kind: 'sankey'; width: number; height: number; nodes: SankeyNodeFrame[]; links: SankeyLinkFrame[] }
 export interface RadarSeriesFrame { id: string; label: string; values: number[]; color: string; stroke: string }
 export interface RadarFrame { kind: 'radar'; width: number; height: number; axes: string[]; max: number; series: RadarSeriesFrame[] }
-export interface XyPointFrame { id: string; x: number; y: number; size: number; label?: string }
+export interface XyPointFrame { id: string; x: number; y: number; size: number; label?: string; description?: string }
 export interface XySeriesFrame { id: string; label: string; color: string; stroke: string; points: XyPointFrame[] }
 export interface XyFrame { kind: 'xy'; width: number; height: number; xLabel?: string; yLabel?: string; xMin: number; xMax: number; yMin: number; yMax: number; connect: boolean; regression: boolean; series: XySeriesFrame[] }
 export interface BarSeriesFrame { id: string; label: string; values: number[]; color: string; stroke: string }
@@ -134,7 +134,7 @@ export function buildAnalyticChart(
     const seriesEls = children.filter(e => e.type === 'xySeries')
     const series = seriesEls.map((s, i) => ({
       id: s.id, label: s.name, ...elementColors(s.properties, COLORS[i % COLORS.length]),
-      points: s.children.map(pid => model.elements[pid]).filter(p => p?.type === 'xyPoint' && visibleIds.has(p.id)).map(p => ({ id: p.id, x: num(p.properties?.x), y: num(p.properties?.y), size: Math.max(3, num(p.properties?.size, 6)), label: p.name })),
+      points: s.children.map(pid => model.elements[pid]).filter(p => p?.type === 'xyPoint' && visibleIds.has(p.id)).map(p => ({ id: p.id, x: num(p.properties?.x), y: num(p.properties?.y), size: Math.max(3, num(p.properties?.size, 6)), label: p.name, description: p.description })),
     }))
     const points = series.flatMap(s => s.points)
     const xs = points.map(p => p.x), ys = points.map(p => p.y)

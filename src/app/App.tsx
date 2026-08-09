@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Titlebar } from './layout/Titlebar'
 import { StatusBar } from './layout/StatusBar'
 import { Explorer } from '@/features/explorer/Explorer'
-import { CodeEditor } from '@/features/editor-code/CodeEditor'
 import { PropertiesPanel } from '@/features/properties-panel/PropertiesPanel'
 import { ResizeHandle } from '@/ui/components/Resizable'
 import { useModelStore } from '@/store'
@@ -12,6 +11,8 @@ import { parseDsl } from '@/core/dsl/parser'
 import { GraphPanel } from './GraphPanel'
 
 type ViewMode = 'split' | 'code' | 'graph'
+
+const CodeEditor = lazy(() => import('@/features/editor-code/CodeEditor').then(module => ({ default: module.CodeEditor })))
 
 const VIEWMODE_KEY = 'gms:viewmode'
 function loadViewMode(): ViewMode {
@@ -146,7 +147,9 @@ export function App() {
               style={{ flexBasis: viewMode === 'split' ? `${layout.codeFrac * 100}%` : '100%', flexGrow: viewMode === 'split' ? 0 : 1 }}
             >
               <PanelHeader label="DSL" />
-              <div className="flex-1 overflow-hidden"><CodeEditor /></div>
+              <div className="flex-1 overflow-hidden">
+                <Suspense fallback={<div className="h-full bg-[var(--surface-0)]" />}><CodeEditor /></Suspense>
+              </div>
             </div>
           )}
 
