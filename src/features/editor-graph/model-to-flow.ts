@@ -5,7 +5,7 @@ import { notationRegistry } from '@/core/notation'
 import { contrastTextColor, deriveAccentColors, normalizeHexColor } from '@/core/notation'
 import {
   runLayout, computeGanttChart, computePert,
-  layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutTreeGraph,
+  layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutSnakeGraph, layoutTreeGraph,
   layoutMindmapGraph, layoutGridGraph,
   type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type PertResult,
   type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart, measureSankeyHeight,
@@ -67,15 +67,16 @@ const CONTAINER_FOR: Record<string, string> = {
   participant: 'seqGraph', seqActor: 'seqGraph',
   commit: 'gitGraph', mergeCommit: 'gitGraph',
   timelineEvent: 'timelineGraph',
+  snakeBullet: 'snakeGraph',
   treeNode: 'treeGraph',
   mindmapRoot: 'mindmapGraph', mindmapNode: 'mindmapGraph',
   gridItem: 'gridGraph',
   sankeyNode: 'sankeyGraph', radarSeries: 'radarChart',
   xySeries: 'xyChart', xyPoint: 'xyChart', barSeries: 'barChart',
 }
-const CHART_FRAME_TYPES = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'mindmapGraph'])
+const CHART_FRAME_TYPES = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'mindmapGraph', 'snakeGraph'])
 // containers whose children are pre-placed by a chart layout (not the graph engine)
-const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'treeGraph', 'mindmapGraph', 'gridGraph', 'sankeyGraph', 'radarChart', 'xyChart', 'barChart'])
+const PREPLACED_CONTAINERS = new Set(['seqGraph', 'gitGraph', 'timelineGraph', 'snakeGraph', 'treeGraph', 'mindmapGraph', 'gridGraph', 'sankeyGraph', 'radarChart', 'xyChart', 'barChart'])
 
 interface NestedLayout {
   positions: Record<string, Position> // relative-to-parent for children, absolute for top-level
@@ -205,9 +206,12 @@ export function computeNestedLayout(
         layout = layoutGitGraphFrame(kids)
       } else if (el.type === 'mindmapGraph') {
         layout = layoutMindmapGraph(model, el.id, hosted)
+      } else if (el.type === 'snakeGraph') {
+        layout = layoutSnakeGraph(el, kids, relations)
       } else {
         layout = layoutTimelineGraph(kids)
       }
+      for (const rid of layout.suppressed) suppressedRelations.add(rid)
       chartFrames[el.id] = layout.frame
       containerSize[el.id] = { width: layout.width, height: layout.height }
       for (const cid of Object.keys(layout.placements)) chartPlacement[cid] = layout.placements[cid]
@@ -657,6 +661,26 @@ export function modelToFlow(
     return topicDepth
   }
 
+  // Snake relations ignore manually pinned anchors. Their visual entry/exit
+  // sides follow the serpentine row direction so every lane flows naturally.
+  const snakeSides = new Map<string, { source: 'l' | 'r'; target: 'l' | 'r' }>()
+  const snakeBulletsByHost = new Map<string, string[]>()
+  for (const element of Object.values(model.elements)) {
+    const host = hostOf[element.id]
+    if (element.type !== 'snakeBullet' || !host) continue
+    const ids = snakeBulletsByHost.get(host)
+    if (ids) ids.push(element.id)
+    else snakeBulletsByHost.set(host, [element.id])
+  }
+  for (const [host, ids] of snakeBulletsByHost) {
+    const requested = Number(model.elements[host]?.properties?.maxColumns ?? model.elements[host]?.properties?.columns ?? 5)
+    const columns = Math.min(ids.length, Math.max(1, Math.min(20, Math.floor(requested || 5))))
+    ids.forEach((id, index) => {
+      const leftToRight = Math.floor(index / columns) % 2 === 0
+      snakeSides.set(id, { source: leftToRight ? 'r' : 'l', target: leftToRight ? 'l' : 'r' })
+    })
+  }
+
   // emit containers before their children (React Flow requirement for parentId)
   const ordered: string[] = []
   const seen = new Set<string>()
@@ -707,7 +731,9 @@ export function modelToFlow(
         height: size.height,
         '--node-selection': accentColors?.secondary ?? '#3B82F6',
       } as CSSProperties,
-      zIndex: d,
+      // Snake lanes deliberately run through bullet centres. Keep the complete
+      // bullet node (disc, title and metadata) above every relation layer.
+      zIndex: el.type === 'snakeBullet' ? 3000 + d : d,
       data: {
         label: el.name,
         elementType: el.type,
@@ -730,7 +756,11 @@ export function modelToFlow(
         isContainer: container && !placed,
         pert: pert?.nodes[id],
         progress: ganttProgress[id],
-        badge: el.notation === 'gitgraph' ? el.properties?.['tag'] : undefined,
+        badge: el.notation === 'gitgraph'
+          ? el.properties?.['tag']
+          : el.notation === 'snake'
+            ? el.properties?.['number'] ?? String(Object.values(model.elements).filter(candidate => hostOf[candidate.id] === hostOf[id]).findIndex(candidate => candidate.id === id) + 1)
+            : undefined,
         // pass raw properties for shapes that render them (quadrant/UML/ERD/note)
         chartProps: el.type === 'quadrantChart' || el.notation === 'uml' || el.notation === 'erd' ? el.properties : undefined,
         ishikawa: ishikawa[id],
@@ -867,6 +897,10 @@ export function modelToFlow(
       const critical = pert?.criticalRelations.has(rel.id) ?? false
       const relationAccent = normalizeHexColor(rel.properties?.accentColor)
       const relationColors = relationAccent ? deriveAccentColors(relationAccent) : undefined
+      const snakeRelation = rel.type === 'snakeFlow'
+      const snakeSourceSide = snakeSides.get(rel.sourceId)?.source
+      const snakeTargetSide = snakeSides.get(rel.targetId)?.target
+      if (snakeRelation) { markerStart = undefined; markerEnd = undefined }
       // a consumed treeNode endpoint is redirected to its frame-edge anchor
       const eSource = edgeEndpoint(rel.sourceId, rel.targetId)
       const eTarget = edgeEndpoint(rel.targetId, rel.sourceId)
@@ -879,15 +913,31 @@ export function modelToFlow(
         type: 'floating',
         sourceHandle: consumed.has(rel.sourceId) ? undefined : rel.sourceHandle,
         targetHandle: consumed.has(rel.targetId) ? undefined : rel.targetHandle,
-        data: { label, sourceLabel: rel.properties?.['sourceCard'], targetLabel: rel.properties?.['targetCard'], selectedStroke: relationColors?.secondary },
+        data: {
+          label,
+          sourceLabel: rel.properties?.['sourceCard'],
+          targetLabel: rel.properties?.['targetCard'],
+          selectedStroke: relationColors?.secondary,
+          middleArrow: snakeRelation && rel.direction !== 'undirected' ? rel.direction : undefined,
+          middleArrowColor: relationColors?.primary ?? '#FF9828',
+          underlayStroke: snakeRelation ? '#3E4F8A' : undefined,
+          underlayWidth: snakeRelation ? 18 : undefined,
+          cornerRadius: snakeRelation ? 32 : undefined,
+          snakeRelation,
+          snakeSourceSide: snakeRelation ? snakeSourceSide : undefined,
+          snakeTargetSide: snakeRelation ? snakeTargetSide : undefined,
+        },
         markerStart: markerStart || undefined,
         markerEnd: markerEnd || undefined,
         style: {
-          stroke: relationColors?.primary ?? (critical ? '#D32F2F' : 'var(--edge)'),
-          strokeWidth: critical ? 2.4 : 1.6,
+          stroke: relationColors?.primary ?? (snakeRelation ? '#FF9828' : critical ? '#D32F2F' : 'var(--edge)'),
+          strokeWidth: snakeRelation ? 3 : critical ? 2.4 : 1.6,
           strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
         },
-        zIndex: 1000, // edges above containers
+        // React Flow adds a child node's z-index to its connected edges. The
+        // negative offset keeps Snake rails above the graph container while
+        // leaving each bullet (including its label) one layer higher.
+        zIndex: snakeRelation ? -1 : 1000,
       })
       continue
     }

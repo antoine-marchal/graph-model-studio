@@ -215,6 +215,42 @@ function dedupeColinear(pts: Point[]): Point[] {
   return out
 }
 
+function cubicPoint(p0: Point, p1: Point, p2: Point, p3: Point, t: number): Point {
+  const u = 1 - t
+  return {
+    x: u ** 3 * p0.x + 3 * u ** 2 * t * p1.x + 3 * u * t ** 2 * p2.x + t ** 3 * p3.x,
+    y: u ** 3 * p0.y + 3 * u ** 2 * t * p1.y + 3 * u * t ** 2 * p2.y + t ** 3 * p3.y,
+  }
+}
+
+/** A maximally smooth Snake curve whose tangents follow row flow, not anchors. */
+export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | 'r', targetSide: 'l' | 'r') {
+  const dx = Math.abs(target.x - source.x)
+  const dy = Math.abs(target.y - source.y)
+  const sameSide = sourceSide === targetSide
+  const offset = sameSide
+    ? Math.max(80, dy * 0.45, dx * 0.35)
+    : Math.max(40, Math.min(110, dx * 0.42 + dy * 0.18))
+  const sourceDirection = sourceSide === 'r' ? 1 : -1
+  const targetDirection = targetSide === 'l' ? 1 : -1
+  const commonControlX = sameSide
+    ? sourceSide === 'r' ? Math.max(source.x, target.x) + offset : Math.min(source.x, target.x) - offset
+    : undefined
+  const c1 = { x: commonControlX ?? source.x + sourceDirection * offset, y: source.y }
+  const c2 = { x: commonControlX ?? target.x - targetDirection * offset, y: target.y }
+  const midpoint = cubicPoint(source, c1, c2, target, 0.5)
+  const before = cubicPoint(source, c1, c2, target, 0.47)
+  const after = cubicPoint(source, c1, c2, target, 0.53)
+  return {
+    path: `M ${source.x},${source.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${target.x},${target.y}`,
+    midpoint,
+    sourceLabelPoint: cubicPoint(source, c1, c2, target, 0.12),
+    targetLabelPoint: cubicPoint(source, c1, c2, target, 0.88),
+    angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
+    controls: [c1, c2] as const,
+  }
+}
+
 export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, style, data, selected, sourceHandleId, targetHandleId }: EdgeProps) => {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -235,6 +271,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   // self-loop fallback
   if (source === target) return null
 
+  const edgeData = data as {
+    label?: string
+    sourceLabel?: string
+    targetLabel?: string
+    selectedStroke?: string
+    middleArrow?: 'directed' | 'bidirectional'
+    middleArrowColor?: string
+    underlayStroke?: string
+    underlayWidth?: number
+    cornerRadius?: number
+    snakeRelation?: boolean
+    snakeSourceSide?: 'l' | 'r'
+    snakeTargetSide?: 'l' | 'r'
+  } | undefined
+
   let { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
   if (!sourceHandleId) {
     const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
@@ -244,14 +295,22 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, scene.spreadSlots)
     tx = p.x; ty = p.y
   }
+  if (edgeData?.snakeRelation) {
+    sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 1) / 2
+    sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 1) / 2
+    tx = targetNode.internals.positionAbsolute.x + (targetNode.measured.width ?? 1) / 2
+    ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 1) / 2
+  }
+  const snakeCurve = edgeData?.snakeRelation && edgeData.snakeSourceSide && edgeData.snakeTargetSide
 
   let path: string
   let labelX: number
   let labelY: number
   let sourceLabelPoint: Point
   let targetLabelPoint: Point
+  let middleArrowAngle = 0
   let routed: Point[] | null = null
-  if (routing === 'orthogonal') {
+  if (!snakeCurve && routing === 'orthogonal') {
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
@@ -319,9 +378,25 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   if (routed) routedEdges.set(id, routed)
   else routedEdges.delete(id)
 
-  if (routed) {
-    path = pointsToRoundedPath(routed)
+  if (snakeCurve) {
+    const curve = snakeFlowCurve(
+      { x: sx, y: sy },
+      { x: tx, y: ty },
+      edgeData!.snakeSourceSide!,
+      edgeData!.snakeTargetSide!,
+    )
+    path = curve.path
+    labelX = curve.midpoint.x
+    labelY = curve.midpoint.y
+    sourceLabelPoint = curve.sourceLabelPoint
+    targetLabelPoint = curve.targetLabelPoint
+    middleArrowAngle = curve.angle
+  } else if (routed) {
+    path = pointsToRoundedPath(routed, edgeData?.cornerRadius ?? 8)
     const mid = pointOnPolyline(routed, 0.5)
+    const beforeMid = pointOnPolyline(routed, 0.47)
+    const afterMid = pointOnPolyline(routed, 0.53)
+    middleArrowAngle = Math.atan2(afterMid.y - beforeMid.y, afterMid.x - beforeMid.x) * 180 / Math.PI
     labelX = mid.x
     labelY = mid.y
     sourceLabelPoint = pointOnPolylineAtDistance(routed, END_LABEL_DISTANCE)
@@ -334,13 +409,15 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     })
     sourceLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE)
     targetLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE, true)
+    middleArrowAngle = Math.atan2(ty - sy, tx - sx) * 180 / Math.PI
   }
 
-  const d2 = data as { label?: string; sourceLabel?: string; targetLabel?: string; selectedStroke?: string } | undefined
+  const d2 = edgeData
   const label = d2?.label
   const renderedStyle = selected && d2?.selectedStroke
     ? { ...style, stroke: d2.selectedStroke, strokeWidth: Math.max(Number(style?.strokeWidth) || 1.6, 2.4) }
     : style
+  const renderedLabelY = d2?.middleArrow ? labelY - 18 : labelY
   // Multiplicity labels sit directly on the relation, near their respective ends.
   const endLabel = (txt: string, x: number, y: number, key: string) => (
     <EdgeLabelRenderer key={key}>
@@ -352,7 +429,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   )
   return (
     <>
+      {d2?.underlayStroke && <BaseEdge id={`${id}-underlay`} path={path} style={{ stroke: d2.underlayStroke, strokeWidth: d2.underlayWidth ?? 18 }} />}
       <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={renderedStyle} />
+      {d2?.middleArrow && (
+        <EdgeLabelRenderer>
+          <div
+            className="pointer-events-none absolute"
+            style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px) rotate(${middleArrowAngle}deg)` }}
+          >
+            <svg width="18" height={d2.middleArrow === 'bidirectional' ? 18 : 12} viewBox={d2.middleArrow === 'bidirectional' ? '0 0 18 18' : '0 0 18 12'} aria-hidden>
+              <path d="M3 1 L15 6 L3 11 Z" fill={d2.middleArrowColor ?? '#FF9828'} />
+              {d2.middleArrow === 'bidirectional' && <path d="M15 17 L3 12 L15 7 Z" fill={d2.middleArrowColor ?? '#FF9828'} />}
+            </svg>
+          </div>
+        </EdgeLabelRenderer>
+      )}
       {d2?.sourceLabel && endLabel(d2.sourceLabel, sourceLabelPoint.x, sourceLabelPoint.y, 'sc')}
       {d2?.targetLabel && endLabel(d2.targetLabel, targetLabelPoint.x, targetLabelPoint.y, 'tc')}
       {label && (
@@ -360,7 +451,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
           <div
             className="gms-edge-label nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium shadow-sm"
             style={{
-              transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px)`,
+              transform: `translate(-50%,-50%) translate(${labelX}px,${renderedLabelY}px)`,
               background: 'var(--surface-1)',
               color: 'var(--edge-label)',
               border: selected ? `1px solid ${d2?.selectedStroke ?? 'var(--accent)'}` : '1px solid var(--border)',

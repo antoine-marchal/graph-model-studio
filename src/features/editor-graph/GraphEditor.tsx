@@ -141,7 +141,7 @@ function GraphEditorInner() {
   // the new nodes, then frame that view just like the toolbar's Fit action.
   useEffect(() => {
     if (!activeViewId) return
-    const timer = window.setTimeout(() => fitView({ duration: 300, padding: 0.2 }), 50)
+    const timer = window.setTimeout(() => fitView({ duration: 0, padding: 0.2 }), 50)
     return () => window.clearTimeout(timer)
   }, [activeViewId, fitView])
   // mirror store selection (e.g. explorer clicks) into React Flow so Delete works there too
@@ -185,7 +185,17 @@ function GraphEditorInner() {
     // A connection point is only an interaction affordance. New relations stay
     // floating so routing may choose the best side as nodes move; users can pin
     // anchors explicitly from the relation properties afterwards.
-    dispatch({ type: 'ADD_RELATION', payload: { id, ...endpoints, notation: 'generic' } })
+    const elements = useModelStore.getState().model.elements
+    const snakeRelation = elements[endpoints.sourceId]?.notation === 'snake' && elements[endpoints.targetId]?.notation === 'snake'
+    dispatch({
+      type: 'ADD_RELATION',
+      payload: {
+        id,
+        ...endpoints,
+        notation: snakeRelation ? 'snake' : 'generic',
+        type: snakeRelation ? 'snakeFlow' : 'rel',
+      },
+    })
   }, [dispatch])
 
   // ── selection → highlight code (no focus) ──

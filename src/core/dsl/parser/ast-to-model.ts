@@ -24,6 +24,7 @@ function inferNotation(elementType: string): NotationKind {
   const ishikawaTypes = new Set(['problem', 'cause', 'subCause'])
   const quadrantTypes = new Set(['quadrantChart', 'quadrantItem'])
   const timelineTypes = new Set(['timelineGraph', 'timelineEvent'])
+  const snakeTypes = new Set(['snakeGraph', 'snakeBullet'])
   const umlTypes = new Set(['umlClass', 'umlInterface', 'umlEnum', 'umlNote'])
   const erdTypes = new Set(['erdEntity'])
   const gridTypes = new Set(['gridGraph', 'gridItem'])
@@ -46,6 +47,7 @@ function inferNotation(elementType: string): NotationKind {
   if (ishikawaTypes.has(elementType)) return 'ishikawa'
   if (quadrantTypes.has(elementType)) return 'quadrant'
   if (timelineTypes.has(elementType)) return 'timeline'
+  if (snakeTypes.has(elementType)) return 'snake'
   if (umlTypes.has(elementType)) return 'uml'
   if (erdTypes.has(elementType)) return 'erd'
   if (gridTypes.has(elementType)) return 'grid'

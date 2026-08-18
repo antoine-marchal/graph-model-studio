@@ -277,7 +277,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (d.chartFrame) {
     const cf = d.chartFrame
-    body = d.elementType === 'mindmapGraph' ? (
+    body = d.elementType === 'mindmapGraph' || d.elementType === 'snakeGraph' ? (
       // A mind map lives directly on the canvas. Its graph element is only an
       // invisible grouping/layout surface, not a titled chart container.
       <div className="relative h-full w-full rounded-lg" style={d.customAccent ? { background: fill, border: `1.5px solid ${stroke}` } : undefined}>
@@ -285,6 +285,13 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           {cf.lines.map((l, i) => (
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
           ))}
+          {cf.paths?.map((p, i) => (
+            <path key={`p${i}`} d={p.d} fill="none" stroke={p.color ?? 'var(--edge)'} strokeWidth={p.width ?? 1.2} strokeDasharray={p.dash} strokeOpacity={p.opacity} strokeLinecap="round" strokeLinejoin="round" />
+          ))}
+          {cf.arrows?.map((arrow, i) => {
+            const size = arrow.size ?? 9
+            return <polygon key={`a${i}`} points={`${-size * 0.55},${-size * 0.45} ${size * 0.55},0 ${-size * 0.55},${size * 0.45}`} fill={arrow.color ?? '#FF9828'} transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`} />
+          })}
         </svg>
         <div className="pointer-events-none absolute left-4 top-1 flex flex-col" style={{ color: d.customAccent ? text : 'var(--fg-subtle)' }}>
           <span className="text-xs font-bold uppercase tracking-[0.16em]">{d.label}</span>
@@ -300,6 +307,13 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           {cf.lines.map((l, i) => (
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
           ))}
+          {cf.paths?.map((p, i) => (
+            <path key={`p${i}`} d={p.d} fill="none" stroke={p.color ?? 'var(--edge)'} strokeWidth={p.width ?? 1.2} strokeDasharray={p.dash} strokeOpacity={p.opacity} strokeLinecap="round" strokeLinejoin="round" />
+          ))}
+          {cf.arrows?.map((arrow, i) => {
+            const size = arrow.size ?? 9
+            return <polygon key={`a${i}`} points={`${-size * 0.55},${-size * 0.45} ${size * 0.55},0 ${-size * 0.55},${size * 0.45}`} fill={arrow.color ?? '#FF9828'} transform={`translate(${arrow.x} ${arrow.y}) rotate(${arrow.angle})`} />
+          })}
           {cf.texts.map((t, i) => (
             <text key={i} x={t.x} y={t.y} fontSize={t.size ?? 10} fill={t.color ?? 'var(--fg-muted)'} textAnchor={t.anchor ?? 'start'} fontWeight={t.bold ? 700 : 400} fontFamily="inherit">{t.text}</text>
           ))}
@@ -567,6 +581,18 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           <polygon points={`${width / 2},1 ${width - 1},${height / 2} ${width / 2},${height - 1} 1,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="1.5" />
         </svg>
         <span className="absolute left-full top-1/2 z-10 ml-1.5 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+      </div>
+    )
+  } else if (shape === 'snakeBullet') {
+    body = (
+      <div className={cn('relative h-full w-full', ring && 'rounded-full ' + ring)}>
+        <Handles stroke={stroke} />
+        <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full text-[12px] font-bold shadow-sm" style={{ background: fill, border: `2px solid ${stroke}`, color: text }}>
+          {d.badge}
+        </div>
+        <span className="absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 flex-col items-center whitespace-nowrap text-[11px] font-semibold" style={{ color: 'var(--fg)' }}>
+          <span>{d.label}</span>{metaText(d) && <span className="max-w-40 whitespace-normal text-center text-[9px] font-normal opacity-70">{metaText(d)}</span>}
+        </span>
       </div>
     )
   } else if (shape === 'dot') {

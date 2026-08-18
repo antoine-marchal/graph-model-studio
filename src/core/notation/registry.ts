@@ -19,7 +19,7 @@ export type NodeShape =
   | 'ganttBar'
   | 'ganttMilestone'
   | 'ganttSection'
-  | 'dot'
+  | 'dot' | 'snakeBullet'
   | 'quadrantChart'
   | 'ganttGraph'
   | 'chartFrame'
@@ -380,6 +380,12 @@ const TIMELINE_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'timelineEvent', label: 'Timeline Event', notation: 'timeline', shape: 'roundedRectangle', fill: '#00838F', stroke: '#005662', text: '#FFFFFF', accent: '#26C6DA', icon: 'none', defaultWidth: 150, defaultHeight: 64 },
 ]
 
+// ─── Snake diagram ──────────────────────────────────────────────────────────
+const SNAKE_ELEMENTS: ElementTypeDefinition[] = [
+  { type: 'snakeGraph', label: 'Snake Diagram', notation: 'snake', shape: 'chartFrame', fill: 'transparent', stroke: '#3E4F8A', text: '#1F2937', accent: '#FF9828', icon: 'none', defaultWidth: 720, defaultHeight: 280 },
+  { type: 'snakeBullet', label: 'Snake Bullet', notation: 'snake', shape: 'snakeBullet', fill: '#FF9828', stroke: '#FFFFFF', text: '#FFFFFF', accent: '#3E4F8A', icon: 'none', defaultWidth: 38, defaultHeight: 38 },
+]
+
 // ─── Generic ─────────────────────────────────────────────────────────────────
 const GENERIC_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'node', label: 'Node', notation: 'generic', shape: 'roundedRectangle', fill: '#374151', stroke: '#1F2937', text: '#F3F4F6', accent: '#6B7280', icon: 'none', ...RECT },
@@ -392,6 +398,7 @@ const ALL_ELEMENTS = [
   ...USECASE_ELEMENTS, ...TREE_ELEMENTS, ...PERT_ELEMENTS, ...GANTT_ELEMENTS,
   ...SEQUENCE_ELEMENTS, ...MINDMAP_ELEMENTS, ...GITGRAPH_ELEMENTS,
   ...ISHIKAWA_ELEMENTS, ...QUADRANT_ELEMENTS, ...TIMELINE_ELEMENTS,
+  ...SNAKE_ELEMENTS,
   ...UML_ELEMENTS, ...ERD_ELEMENTS, ...GRID_ELEMENTS, ...SANKEY_ELEMENTS,
   ...RADAR_ELEMENTS, ...XY_ELEMENTS, ...BAR_ELEMENTS, ...GENERIC_ELEMENTS,
 ]
@@ -402,6 +409,7 @@ const byNotation = new Map<NotationKind, ElementTypeDefinition[]>([
   ['pert', PERT_ELEMENTS], ['gantt', GANTT_ELEMENTS],
   ['sequence', SEQUENCE_ELEMENTS], ['mindmap', MINDMAP_ELEMENTS], ['gitgraph', GITGRAPH_ELEMENTS],
   ['ishikawa', ISHIKAWA_ELEMENTS], ['quadrant', QUADRANT_ELEMENTS], ['timeline', TIMELINE_ELEMENTS],
+  ['snake', SNAKE_ELEMENTS],
   ['uml', UML_ELEMENTS], ['erd', ERD_ELEMENTS], ['grid', GRID_ELEMENTS],
   ['sankey', SANKEY_ELEMENTS], ['radar', RADAR_ELEMENTS], ['xy', XY_ELEMENTS], ['bar', BAR_ELEMENTS],
   ['generic', GENERIC_ELEMENTS],
@@ -435,6 +443,7 @@ const RELATIONS: RelationTypeDefinition[] = [
   { type: 'branch', label: 'Branch', notation: 'tree', lineStyle: 'solid' },
   // PERT / Gantt dependency
   { type: 'dependsOn', label: 'Depends on', notation: 'pert', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
+  { type: 'snakeFlow', label: 'Snake flow', notation: 'snake', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
   // Sequence (UML)
   { type: 'message', label: 'Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-filled' },
   { type: 'asyncMessage', label: 'Async Message', notation: 'sequence', lineStyle: 'solid', markerEnd: 'gms-arrow-open' },
@@ -481,6 +490,7 @@ export const notationRegistry: NotationRegistry = {
     { kind: 'ishikawa', label: 'Ishikawa' },
     { kind: 'quadrant', label: 'Quadrant' },
     { kind: 'timeline', label: 'Timeline' },
+    { kind: 'snake', label: 'Snake Diagram' },
     { kind: 'uml', label: 'UML Class' },
     { kind: 'erd', label: 'ERD' },
     { kind: 'grid', label: 'Grid / Matrix' },

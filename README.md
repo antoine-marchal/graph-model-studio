@@ -28,12 +28,12 @@ DSL file containing the model, its views, and the diagram layout.
   one shared model. Type in the DSL or manipulate the canvas; both reconcile.
 - **Fifteen notations out of the box** — C4, ArchiMate (full element set across
   all layers), BPMN, Flowchart, UML Use Case, UML Sequence, Tree, Mindmap,
-  PERT, Gantt, Git Graph, Ishikawa (fishbone), Quadrant, Timeline, and a
+  PERT, Gantt, Git Graph, Ishikawa (fishbone), Quadrant, Timeline, Snake, and a
   Generic palette. Notation-correct node shapes and edge markers (filled/hollow
   arrows, diamonds, balls, open circles).
 - **Chart notations lay themselves out inside movable frames** — sequence
   (`seqGraph`), git (`gitGraph`), gantt (`ganttGraph`) and timeline
-  (`timelineGraph`) are container frames that embed their nodes and draw their
+  (`timelineGraph`) and snake (`snakeGraph`) are container frames that embed their nodes and draw their
   own decor (lifelines, lanes, axis, spine); drag the frame and the whole chart
   moves. Ishikawa nests `problem → cause → subCause`, quadrant charts plot items
   from `x`/`y`, a `mindmapGraph` lays a mind map out radially, and a `treeGraph`

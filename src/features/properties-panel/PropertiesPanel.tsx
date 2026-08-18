@@ -150,6 +150,9 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   timelineEvent: { group: 'Timeline', fields: [
     { key: 'date', label: 'Date', placeholder: 'e.g. 2026 or 2026-03' },
   ] },
+  snakeGraph: { group: 'Snake diagram', fields: [
+    { key: 'maxColumns', label: 'Maximum columns', placeholder: '5' },
+  ] },
   commit: { group: 'Git', fields: [
     { key: 'branch', label: 'Branch', placeholder: 'e.g. main, feature/x' },
     { key: 'tag', label: 'Tag', placeholder: 'e.g. v1.0' },

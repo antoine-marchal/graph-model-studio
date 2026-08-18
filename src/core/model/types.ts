@@ -17,6 +17,7 @@ export const NotationKindSchema = z.enum([
   'ishikawa',
   'quadrant',
   'timeline',
+  'snake',
   'uml',
   'erd',
   'grid',
@@ -103,6 +104,8 @@ export const QuadrantElementTypes = ['quadrantChart', 'quadrantItem'] as const
 
 export const TimelineElementTypes = ['timelineGraph', 'timelineEvent'] as const
 
+export const SnakeElementTypes = ['snakeGraph', 'snakeBullet'] as const
+
 export const GenericElementTypes = ['node', 'group', 'external'] as const
 
 export type C4ElementType = (typeof C4ElementTypes)[number]
@@ -119,6 +122,7 @@ export type GitGraphElementType = (typeof GitGraphElementTypes)[number]
 export type IshikawaElementType = (typeof IshikawaElementTypes)[number]
 export type QuadrantElementType = (typeof QuadrantElementTypes)[number]
 export type TimelineElementType = (typeof TimelineElementTypes)[number]
+export type SnakeElementType = (typeof SnakeElementTypes)[number]
 export type UmlElementType = (typeof UmlElementTypes)[number]
 export type ErdElementType = (typeof ErdElementTypes)[number]
 export type GridElementType = (typeof GridElementTypes)[number]
@@ -143,6 +147,7 @@ export type ElementType =
   | IshikawaElementType
   | QuadrantElementType
   | TimelineElementType
+  | SnakeElementType
   | UmlElementType
   | ErdElementType
   | GridElementType
@@ -174,6 +179,7 @@ export type RelationType =
   | 'generalization'
   | 'branch'
   | 'dependsOn'
+  | 'snakeFlow'
   | 'message'
   | 'asyncMessage'
   | 'replyMessage'

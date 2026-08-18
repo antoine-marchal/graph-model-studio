@@ -28,10 +28,28 @@ export interface DecorText {
   bold?: boolean
 }
 
+export interface DecorPath {
+  d: string
+  width?: number
+  color?: string
+  dash?: string
+  opacity?: number
+}
+
+export interface DecorArrow {
+  x: number
+  y: number
+  angle: number
+  size?: number
+  color?: string
+}
+
 /** Background furniture (lifelines, spine, lane lines) for a chart container. */
 export interface ChartFrame {
   lines: DecorLine[]
   texts: DecorText[]
+  paths?: DecorPath[]
+  arrows?: DecorArrow[]
 }
 
 const MINDMAP_BLUE = '#087CB5'
@@ -474,5 +492,127 @@ export function layoutTimelineGraph(events: GraphElement[]): ChartLayout {
 
   out.width = width
   out.height = height
+  return out
+}
+
+/**
+ * Snake diagram: bullets occupy a deterministic serpentine grid. Relations
+ * between bullets become the lane itself, so forks and joins naturally render
+ * as branches and merges. `maxColumns` on the snakeGraph defaults to five.
+ */
+export function layoutSnakeGraph(
+  graph: GraphElement,
+  bullets: GraphElement[],
+  relations: GraphRelation[],
+): ChartLayout {
+  const out = { ...empty(), width: 280, height: 160 } as ChartLayout
+  out.frame.paths = []
+  out.frame.arrows = []
+  if (bullets.length === 0) return out
+
+  const maxColumns = Math.max(1, Math.min(20, Math.floor(Number(graph.properties?.maxColumns ?? graph.properties?.columns ?? 5) || 5)))
+  const bulletIds = new Set(bullets.map(b => b.id))
+  const linkByPair = new Map<string, { sourceId: string; targetId: string }>()
+  const addLink = (sourceId: string, targetId: string) => {
+    if (!bulletIds.has(sourceId) || !bulletIds.has(targetId) || sourceId === targetId) return
+    const key = `${sourceId}>${targetId}`
+    linkByPair.set(key, { sourceId, targetId })
+  }
+  const refs = (value?: string) => (value ?? '').split(/[\s,;]+/).map(ref => ref.trim()).filter(Boolean)
+  for (const bullet of bullets) {
+    for (const target of refs(bullet.properties?.successor ?? bullet.properties?.successors)) addLink(bullet.id, target)
+    for (const source of refs(bullet.properties?.predecessor ?? bullet.properties?.predecessors)) addLink(source, bullet.id)
+  }
+  const links = [...linkByPair.values()]
+  const explicitLinks = relations
+    .filter(relation => bulletIds.has(relation.sourceId) && bulletIds.has(relation.targetId))
+    .map(relation => ({ sourceId: relation.sourceId, targetId: relation.targetId }))
+
+  // Declaration order defines the permanent implicit snake. User-created
+  // relations are independent selectable edges and never replace this order.
+  const index = new Map(bullets.map((b, i) => [b.id, i]))
+  const ordered = bullets.map(bullet => bullet.id)
+  const columns = Math.min(maxColumns, ordered.length)
+
+  const COL = 150
+  const ROW = 126
+  const TOP = TITLE + 36
+  const SIDE = 116
+  const centers = new Map<string, { x: number; y: number; row: number; col: number }>()
+  ordered.forEach((id, i) => {
+    const row = Math.floor(i / columns)
+    const slot = i % columns
+    const col = row % 2 === 0 ? slot : columns - 1 - slot
+    const bullet = bullets[index.get(id)!]
+    const size = defSize(bullet, 38, 38)
+    const x = SIDE + col * COL
+    const y = TOP + row * ROW
+    centers.set(id, { x, y, row, col })
+    out.placements[id] = { x: x - size.width / 2, y: y - size.height / 2, width: size.width, height: size.height }
+  })
+
+  const route = (from: { x: number; y: number; row: number }, to: { x: number; y: number; row: number }) => {
+    if (from.row === to.row) return {
+      d: `M ${from.x} ${from.y} L ${to.x} ${to.y}`,
+      arrow: { x: (from.x + to.x) / 2, y: from.y, angle: to.x >= from.x ? 0 : 180 },
+    }
+    const direction = from.row % 2 === 0 ? 1 : -1
+    const turnX = from.x + direction * 48
+    const midY = (from.y + to.y) / 2
+    return {
+      d: `M ${from.x} ${from.y} C ${turnX} ${from.y}, ${turnX} ${midY}, ${turnX} ${midY} C ${turnX} ${to.y}, ${to.x} ${to.y}, ${to.x} ${to.y}`,
+      arrow: { x: turnX, y: midY, angle: to.y >= from.y ? 90 : -90 },
+    }
+  }
+  const routeKeys = new Set<string>()
+  const addLane = (sourceId: string, targetId: string) => {
+    const from = centers.get(sourceId), to = centers.get(targetId)
+    if (!from || !to || sourceId === targetId) return
+    const key = `${sourceId}>${targetId}`
+    if (routeKeys.has(key)) return
+    routeKeys.add(key)
+    const { d, arrow } = route(from, to)
+    out.frame.paths!.push({ d, width: 18, color: '#3E4F8A' })
+    out.frame.paths!.push({ d, width: 3, color: '#FF9828' })
+    out.frame.arrows!.push({ ...arrow, size: 9, color: '#FF9828' })
+  }
+
+  const hasCustomLinks = explicitLinks.length > 0 || links.length > 0
+  const effectiveLinks = hasCustomLinks
+    ? [...explicitLinks, ...links]
+    : ordered.slice(1).map((targetId, i) => ({ sourceId: ordered[i], targetId }))
+
+  // Explicit graph topology replaces the generated declaration-order backbone.
+  // Property links remain frame decor; selectable model relations render later.
+  if (!hasCustomLinks) for (const link of effectiveLinks) addLane(link.sourceId, link.targetId)
+  for (const link of links) addLane(link.sourceId, link.targetId)
+
+  const predecessorCount = new Map(ordered.map(id => [id, 0]))
+  const successorCount = new Map(ordered.map(id => [id, 0]))
+  for (const link of effectiveLinks) {
+    predecessorCount.set(link.targetId, (predecessorCount.get(link.targetId) ?? 0) + 1)
+    successorCount.set(link.sourceId, (successorCount.get(link.sourceId) ?? 0) + 1)
+  }
+
+  for (const id of ordered) {
+    const point = centers.get(id)!
+    const rowDirection = point.row % 2 === 0 ? 1 : -1
+    if ((predecessorCount.get(id) ?? 0) === 0) {
+      const startX = point.x - rowDirection * 42
+      out.frame.paths.push({ d: `M ${startX} ${point.y} L ${point.x} ${point.y}`, width: 18, color: '#3E4F8A' })
+      out.frame.paths.push({ d: `M ${startX} ${point.y} L ${point.x} ${point.y}`, width: 3, color: '#FF9828' })
+    }
+    if ((successorCount.get(id) ?? 0) === 0) {
+      const endX = point.x + rowDirection * 58
+      const arrowBaseX = endX - rowDirection * 18
+      out.frame.paths.push({ d: `M ${point.x} ${point.y} L ${arrowBaseX} ${point.y}`, width: 18, color: '#3E4F8A' })
+      out.frame.paths.push({ d: `M ${point.x} ${point.y} L ${arrowBaseX} ${point.y}`, width: 3, color: '#FF9828' })
+      out.frame.arrows.push({ x: endX, y: point.y, angle: rowDirection > 0 ? 0 : 180, size: 34, color: '#FF9828' })
+    }
+  }
+
+  const rows = Math.ceil(ordered.length / columns)
+  out.width = SIDE * 2 + Math.max(0, columns - 1) * COL
+  out.height = TOP + Math.max(0, rows - 1) * ROW + 76
   return out
 }

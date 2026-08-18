@@ -20,7 +20,7 @@ export const demoGraphs: DemoGraph[] = [
   {
     id: 'delivery',
     title: 'Processes & delivery',
-    description: 'BPMN, flowchart, PERT, Gantt, and timeline views',
+    description: 'BPMN, flowchart, PERT, Gantt, timeline, and snake views',
     source: deliverySource,
   },
   {

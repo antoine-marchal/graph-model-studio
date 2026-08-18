@@ -15,6 +15,7 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
 /** Capture the canvas using the original application's transparent, cropped PNG behavior. */
 export async function captureGraphPng(wrapper: HTMLElement): Promise<Uint8Array> {
   const graphWrapper = wrapper as GraphCaptureWorkspace
+  await waitForStableGraph(graphWrapper)
   const contentBounds = graphWrapper.__gmsGetContentBounds?.()
   if (contentBounds && contentBounds.width > 0 && contentBounds.height > 0) {
     return captureCompleteGraph(graphWrapper, contentBounds)
@@ -131,6 +132,7 @@ async function captureCompleteGraph(
     reactFlowOverflow: reactFlow.style.getPropertyValue('overflow'),
     reactFlowBackground: reactFlow.style.getPropertyValue('background-color'),
     viewportTransform: viewport.style.getPropertyValue('transform'),
+    viewportTransition: viewport.style.getPropertyValue('transition'),
   }
 
   const materializedStrokes = materializeEdgeStrokes(wrapper)
@@ -141,6 +143,7 @@ async function captureCompleteGraph(
     reactFlow.style.setProperty('height', `${height}px`, 'important')
     reactFlow.style.setProperty('overflow', 'visible', 'important')
     reactFlow.style.setProperty('background-color', 'transparent', 'important')
+    viewport.style.setProperty('transition', 'none', 'important')
     viewport.style.setProperty(
       'transform',
       `translate(${padding - bounds.x}px, ${padding - bounds.y}px) scale(1)`,
@@ -164,8 +167,33 @@ async function captureCompleteGraph(
     restoreProperty(reactFlow, 'overflow', saved.reactFlowOverflow)
     restoreProperty(reactFlow, 'background-color', saved.reactFlowBackground)
     restoreProperty(viewport, 'transform', saved.viewportTransform)
+    restoreProperty(viewport, 'transition', saved.viewportTransition)
     restoreEdgeStrokes(materializedStrokes)
   }
+}
+
+/** Wait until measured node geometry is unchanged across consecutive paints. */
+async function waitForStableGraph(wrapper: GraphCaptureWorkspace): Promise<void> {
+  await (document as Document & { fonts?: FontFaceSet }).fonts?.ready
+  const images = Array.from(wrapper.querySelectorAll<HTMLImageElement>('img'))
+  await Promise.all(images.map(image => image.complete ? image.decode?.().catch(() => undefined) : new Promise<void>(resolve => {
+    image.addEventListener('load', () => resolve(), { once: true })
+    image.addEventListener('error', () => resolve(), { once: true })
+  })))
+
+  let previous = ''
+  let stableFrames = 0
+  for (let attempt = 0; attempt < 60 && stableFrames < 3; attempt++) {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const bounds = wrapper.__gmsGetContentBounds?.()
+    const nodes = Array.from(wrapper.querySelectorAll<HTMLElement>('.react-flow__node'))
+    const signature = bounds && bounds.width > 0 && bounds.height > 0
+      ? [bounds.x, bounds.y, bounds.width, bounds.height, nodes.length, ...nodes.flatMap(node => [node.offsetWidth, node.offsetHeight])].join(':')
+      : ''
+    stableFrames = signature && signature === previous ? stableFrames + 1 : 0
+    previous = signature
+  }
+  if (!previous) throw new Error('The active graph view has no measured content to export.')
 }
 
 function materializeEdgeStrokes(wrapper: HTMLElement) {

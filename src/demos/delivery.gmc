@@ -53,6 +53,17 @@ model {
     scaleEvent = timelineEvent "International scale" { date "2026-09" }
   }
 
+  releaseSnake = snakeGraph "Release workflow" {
+    maxColumns "5"
+    intake = snakeBullet "Intake"
+    triage = snakeBullet "Triage"
+    api = snakeBullet "API work"
+    ui = snakeBullet "UI work"
+    review = snakeBullet "Review"
+    release = snakeBullet "Release"
+    observe = snakeBullet "Observe"
+  }
+
   received -> validate : sequenceFlow
   validate -> stockCheck : sequenceFlow
   orderDocument -> validate : association
@@ -83,6 +94,14 @@ model {
   docs -> integration : dependsOn
   integration -> releaseMilestone : dependsOn
 
+  intake -> triage : snakeFlow
+  triage -> api : snakeFlow
+  triage -> ui : snakeFlow
+  api -> review : snakeFlow
+  ui -> review : snakeFlow
+  review -> release : snakeFlow
+  release -> observe : snakeFlow
+
   researchTask -> specTask : dependsOn
   specTask -> implementationTask : dependsOn
   implementationTask -> qaTask : dependsOn
@@ -108,6 +127,10 @@ views {
   }
   view history "05 · Timeline" {
     include roadmap, roadmap.*
+    autolayout lr
+  }
+  view snake "06 · Snake workflow" {
+    include releaseSnake, releaseSnake.*
     autolayout lr
   }
 }

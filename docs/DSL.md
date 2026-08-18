@@ -128,6 +128,19 @@ differently per diagram.
 ### Flowchart
 `start`, `end`, `process`, `decision`, `inputOutput`, `connector`
 
+### Snake diagram
+
+`snakeGraph` (container), `snakeBullet`. Set `maxColumns "5"` on the graph to
+control where the route turns. Connect bullets with `snakeFlow`, or set a
+bullet's `predecessor` / `successor` property (comma-separated IDs). Multiple
+successors create branches and multiple predecessors create merges. Without
+explicit links, bullets follow declaration order. The declaration-order
+backbone is generated automatically. As soon as explicit topology is supplied,
+those selectable `snakeFlow` relations replace all generated backbone links and
+support labels, multiplicities, colors, directions, and anchors. Every bullet
+without a predecessor receives an entry stub; every bullet without a successor
+receives an exit stub with a large arrow.
+
 ### Generic
 `node`, `group` (container), `external`
 
@@ -152,6 +165,7 @@ differently per diagram.
 | `sequenceFlow` | BPMN | filled arrow |
 | `messageFlow` | BPMN | dashed, open circle (source) + open arrow |
 | `flowArrow` | Flowchart | filled arrow |
+| `snakeFlow` | Snake | diagram lane; supports branches and merges |
 
 ---
 
