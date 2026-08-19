@@ -5,6 +5,95 @@ interface EmbedMarker {
   line: number
 }
 
+interface MarkdownHeading {
+  line: number
+  level: number
+}
+
+function markdownHeadings(document: vscode.TextDocument): MarkdownHeading[] {
+  const headings: MarkdownHeading[] = []
+  let fence: { character: string; length: number } | undefined
+  let previousCanBeSetextHeading = false
+
+  for (let line = 0; line < document.lineCount; line++) {
+    const text = document.lineAt(line).text
+    const fenceMatch = /^ {0,3}(`{3,}|~{3,})/.exec(text)
+    if (fence) {
+      if (fenceMatch
+        && fenceMatch[1][0] === fence.character
+        && fenceMatch[1].length >= fence.length
+        && text.slice(fenceMatch[0].length).trim() === '') {
+        fence = undefined
+      }
+      previousCanBeSetextHeading = false
+      continue
+    }
+    if (fenceMatch) {
+      fence = { character: fenceMatch[1][0], length: fenceMatch[1].length }
+      previousCanBeSetextHeading = false
+      continue
+    }
+
+    const atx = /^ {0,3}(#{1,6})(?:[ \t]+|$)/.exec(text)
+    if (atx) {
+      headings.push({ line, level: atx[1].length })
+      previousCanBeSetextHeading = false
+      continue
+    }
+
+    const setext = /^ {0,3}(=+|-+)[ \t]*$/.exec(text)
+    if (setext && previousCanBeSetextHeading) {
+      headings.push({ line: line - 1, level: setext[1][0] === '=' ? 1 : 2 })
+      previousCanBeSetextHeading = false
+      continue
+    }
+    previousCanBeSetextHeading = text.trim().length > 0
+  }
+
+  return headings
+}
+
+function markdownHeadingGuards(
+  document: vscode.TextDocument,
+  embedRanges: readonly vscode.FoldingRange[],
+): vscode.FoldingRange[] {
+  const headings = markdownHeadings(document)
+  const guards: vscode.FoldingRange[] = []
+  const prioritizedEmbeds = [...embedRanges]
+    .sort((left, right) => left.start - right.start || right.end - left.end)
+
+  for (let index = 0; index < headings.length; index++) {
+    const heading = headings[index]
+    let end = document.lineCount - 1
+    for (let next = index + 1; next < headings.length; next++) {
+      if (headings[next].level <= heading.level) {
+        end = headings[next].line - 1
+        break
+      }
+    }
+
+    let guardsEmbed = false
+    for (const embed of prioritizedEmbeds) {
+      if (heading.line < embed.start && end >= embed.start && end < embed.end) {
+        // A chapter ending on or inside an embed would cross it. Extend the
+        // chapter so that it contains the complete, higher-priority embed.
+        end = embed.end
+        guardsEmbed = true
+      } else if (heading.line > embed.start && heading.line < embed.end) {
+        // A generated chapter belongs to the embed. Prevent it from extending
+        // past embed:end and crossing its parent range.
+        end = Math.min(end, embed.end)
+        guardsEmbed = true
+      }
+    }
+    if (guardsEmbed && end > heading.line) {
+      guards.push(new vscode.FoldingRange(heading.line, end))
+    }
+  }
+
+  return guards
+}
+
 export function embedFoldingRanges(document: vscode.TextDocument): vscode.FoldingRange[] {
   const ranges: vscode.FoldingRange[] = []
   const stack: EmbedMarker[] = []
@@ -38,6 +127,11 @@ export function embedFoldingRanges(document: vscode.TextDocument): vscode.Foldin
     }
   }
 
+  // VS Code merges all Markdown folding providers and rejects crossing ranges.
+  // A heading can end on an embed opener or extend beyond embed:end. Publish
+  // same-start normalized heading ranges from this higher-ranked provider so
+  // every overlap becomes proper containment and the embed fold survives.
+  ranges.push(...markdownHeadingGuards(document, ranges))
   return ranges.sort((left, right) => left.start - right.start || right.end - left.end)
 }
 
