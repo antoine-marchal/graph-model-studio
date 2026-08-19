@@ -15,6 +15,7 @@ import { createDefaultView } from '../../src/core/model'
 import { captureGraphPng, pngBytesToDataUrl, type GraphCaptureWorkspace } from '../../src/features/editor-graph/png-export'
 import { setFileSaveAdapter, type SaveOptions } from '../../src/services/file-save'
 import { useModelStore } from '../../src/store'
+import { selectRenderViewId } from './view-selection'
 
 declare const acquireVsCodeApi: () => {
   postMessage(message: unknown): void
@@ -50,6 +51,12 @@ interface RenderMessage {
   theme?: 'light' | 'dark'
   editable?: boolean
   version: string
+  target?: {
+    uri: string
+    kind: 'document' | 'markdown'
+    blockIndex?: number
+    blockId?: string
+  }
 }
 
 interface ExportMessage {
@@ -103,6 +110,7 @@ function StudioGraph({ message }: { message: RenderMessage }) {
   const canUndo = useModelStore(state => state.past.length > 0)
   const canRedo = useModelStore(state => state.future.length > 0)
   const syncTimer = useRef<number | undefined>(undefined)
+  const renderedTargetKey = useRef<string | undefined>(undefined)
 
   const handleToggleTheme = () => {
     toggleTheme()
@@ -123,10 +131,16 @@ function StudioGraph({ message }: { message: RenderMessage }) {
       const view = createDefaultView()
       model.views[view.id] = view
     }
-    const preferredView = message.view
-      ? Object.values(model.views).find(view => view.id === message.view || view.name === message.view)
+    const targetKey = message.target
+      ? [message.target.kind, message.target.uri, message.target.blockIndex, message.target.blockId].join(':')
       : undefined
-    const activeViewId = preferredView?.id ?? Object.keys(model.views)[0] ?? null
+    const activeViewId = selectRenderViewId(
+      model.views,
+      message.view,
+      useModelStore.getState().activeViewId,
+      targetKey !== undefined && targetKey === renderedTargetKey.current,
+    )
+    renderedTargetKey.current = targetKey
     const theme = message.theme ?? 'dark'
 
     useModelStore.setState({

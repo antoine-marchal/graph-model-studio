@@ -6,6 +6,13 @@
         ],
         "description": "Embed content from an external file"
     },
+    "Embed GMC View": {
+        "prefix": "embed:gmc-view",
+        "body": [
+            "<!-- embed:file=\"${1:./graph.gmc}\" view=\"${2:viewid}\" -->"
+        ],
+        "description": "Embed a GMC file rendered from a specific view"
+    },
     "Embed Region": {
         "prefix": "embed:region",
         "body": [

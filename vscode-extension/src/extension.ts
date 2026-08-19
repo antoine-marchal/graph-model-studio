@@ -121,12 +121,13 @@ export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(m
 
   context.subscriptions.push(vscode.commands.registerCommand(
     'gmc.renderFilePng',
-    async (sourceUri: vscode.Uri, targetUri: vscode.Uri) => {
+    async (sourceUri: vscode.Uri, targetUri: vscode.Uri, view?: string) => {
       const document = await vscode.workspace.openTextDocument(sourceUri)
       const size = dimensions()
       const dataUrl = await preview.exportPng({
         source: document.getText(),
         name: path.basename(document.fileName),
+        view,
         theme: configuredTheme(),
       }, size.width, size.height, true)
       await writePng(dataUrl, targetUri)

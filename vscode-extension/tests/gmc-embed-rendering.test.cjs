@@ -18,8 +18,8 @@ const vscodeStub = {
         },
     },
     commands: {
-        async executeCommand(command, source, target) {
-            renderCalls.push({ command, source: source.fsPath, target: target.fsPath });
+        async executeCommand(command, source, target, view) {
+            renderCalls.push({ command, source: source.fsPath, target: target.fsPath, view });
             fs.writeFileSync(target.fsPath, 'png');
         },
     },
@@ -54,6 +54,7 @@ test('a GMC embed renders a sibling PNG and emits a Markdown image', async () =>
             command: 'gmc.renderFilePng',
             source,
             target: path.join(modelsDir, 'workflow.png'),
+            view: undefined,
         });
 
         const callCount = renderCalls.length;
@@ -89,6 +90,53 @@ test('a GMC embed renders a sibling PNG and emits a Markdown image', async () =>
         );
         assert.notEqual(changed, rendered);
         assert.equal(renderCalls.length, callCount + 1, 'changed GMC files must regenerate their PNG');
+    } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+test('a GMC embed forwards view and invalidates the PNG when view changes', async () => {
+    renderCalls.length = 0;
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gmc-embed-view-'));
+    try {
+        const source = path.join(tempRoot, 'workflow.gmc');
+        const rootDocument = path.join(tempRoot, 'index.md');
+        fs.writeFileSync(source, 'model { views { overview = view "Overview" } }', 'utf8');
+        const document = { uri: vscodeStub.Uri.file(rootDocument) };
+        const embedder = new MarkdownEmbedder();
+        assert.deepEqual(
+            embedder.parseAttributes('file="./workflow.gmc" view="overview"'),
+            { file: './workflow.gmc', view: 'overview' },
+        );
+
+        const overview = await embedder.buildNewContent(document, { file: './workflow.gmc', view: 'overview' });
+        assert.equal(renderCalls.at(-1).view, 'overview');
+        assert.equal(renderCalls.at(-1).target, path.join(tempRoot, 'workflow-overview.png'));
+        assert.match(overview, /!\[workflow\]\(\.\/workflow-overview\.png\)/);
+
+        const details = await embedder.buildNewContent(
+            document,
+            { file: './workflow.gmc', view: 'details' },
+            new Set(),
+            undefined,
+            true,
+            overview,
+        );
+        assert.equal(renderCalls.at(-1).view, 'details');
+        assert.equal(renderCalls.at(-1).target, path.join(tempRoot, 'workflow-details.png'));
+        assert.notEqual(details, overview, 'the cached render hash must include the requested view');
+
+        const callCount = renderCalls.length;
+        const unchanged = await embedder.buildNewContent(
+            document,
+            { file: './workflow.gmc', view: 'details' },
+            new Set(),
+            undefined,
+            true,
+            details,
+        );
+        assert.equal(unchanged, details);
+        assert.equal(renderCalls.length, callCount, 'the same source and view must reuse the PNG');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }

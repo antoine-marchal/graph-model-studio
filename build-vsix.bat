@@ -29,8 +29,12 @@ echo === Syncing extension version and assets ===
 node "vscode-extension\sync-from-root.mjs"
 if errorlevel 1 ( echo Extension sync failed & exit /b 1 )
 
-echo === Building and packaging VSIX ===
+echo === Rebuilding extension sources and webviews ===
 pushd vscode-extension
+call pnpm run build:source
+if errorlevel 1 ( popd & echo VSIX source build failed & exit /b 1 )
+
+echo === Packaging VSIX ===
 call pnpm run package
 if errorlevel 1 ( popd & echo VSIX build failed & exit /b 1 )
 popd

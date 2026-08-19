@@ -268,17 +268,25 @@ class MarkdownEmbedder {
                     }
                 }
                 else if (lang === 'gmc' && !(0, utils_1.isUrl)(embedResult.resolvedPath)) {
+                    const requestedView = attributes['view'];
+                    const viewSuffix = requestedView
+                        ? `-${requestedView.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'view'}`
+                        : '';
                     const pngPath = path.join(
                         path.dirname(embedResult.resolvedPath),
-                        `${path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath))}.png`,
+                        `${path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath))}${viewSuffix}.png`,
                     );
-                    const sourceHash = crypto.createHash('sha256').update(embedResult.content, 'utf8').digest('hex');
+                    const hashInput = requestedView
+                        ? `${embedResult.content}\0view=${requestedView}`
+                        : embedResult.content;
+                    const sourceHash = crypto.createHash('sha256').update(hashInput, 'utf8').digest('hex');
                     const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
                     if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
                         yield vscode.commands.executeCommand(
                             'gmc.renderFilePng',
                             vscode.Uri.file(embedResult.resolvedPath),
                             vscode.Uri.file(pngPath),
+                            requestedView,
                         );
                     }
                     const imagePath = (0, markdown_paths_1.rebaseRelativePath)(
