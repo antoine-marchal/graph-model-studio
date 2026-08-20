@@ -251,6 +251,38 @@ export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | '
   }
 }
 
+/** Git branch/merge curve with horizontal tangents through commit centres. */
+export function gitFlowCurve(source: Point, target: Point) {
+  const dx = target.x - source.x
+  const direction = dx >= 0 ? 1 : -1
+  const control = Math.max(20, Math.min(Math.abs(dx) * 0.46, 72))
+  const c1 = { x: source.x + direction * control, y: source.y }
+  const c2 = { x: target.x - direction * control, y: target.y }
+  const midpoint = cubicPoint(source, c1, c2, target, 0.5)
+  const before = cubicPoint(source, c1, c2, target, 0.47)
+  const after = cubicPoint(source, c1, c2, target, 0.53)
+  return {
+    path: `M ${source.x},${source.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${target.x},${target.y}`,
+    midpoint,
+    sourceLabelPoint: cubicPoint(source, c1, c2, target, 0.12),
+    targetLabelPoint: cubicPoint(source, c1, c2, target, 0.88),
+    angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
+    controls: [c1, c2] as const,
+  }
+}
+
+interface GanttNodeRect extends Point { width: number; height: number }
+
+/** Finish-to-start attachment points used by every task/milestone combination. */
+export function ganttAttachmentPoints(source: GanttNodeRect, target: GanttNodeRect, targetIsMilestone: boolean) {
+  return {
+    // A task exits at its right edge; for a diamond this is its right corner.
+    source: { x: source.x + source.width, y: source.y + source.height / 2 },
+    // A diamond is entered at its top corner; a task at its top-left corner.
+    target: { x: target.x + (targetIsMilestone ? target.width / 2 : 0), y: target.y },
+  }
+}
+
 export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, style, data, selected, sourceHandleId, targetHandleId }: EdgeProps) => {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -284,14 +316,17 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     snakeRelation?: boolean
     snakeSourceSide?: 'l' | 'r'
     snakeTargetSide?: 'l' | 'r'
+    chartRelation?: 'gantt' | 'git'
+    ganttTargetMilestone?: boolean
   } | undefined
 
   let { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
-  if (!sourceHandleId) {
+  const chartRelation = edgeData?.chartRelation
+  if (!sourceHandleId && !chartRelation) {
     const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
     sx = p.x; sy = p.y
   }
-  if (!targetHandleId) {
+  if (!targetHandleId && !chartRelation) {
     const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, scene.spreadSlots)
     tx = p.x; ty = p.y
   }
@@ -301,7 +336,41 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     tx = targetNode.internals.positionAbsolute.x + (targetNode.measured.width ?? 1) / 2
     ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 1) / 2
   }
+  if (chartRelation === 'gantt') {
+    const points = ganttAttachmentPoints(
+      {
+        x: sourceNode.internals.positionAbsolute.x,
+        y: sourceNode.internals.positionAbsolute.y,
+        width: sourceNode.measured.width ?? 1,
+        height: sourceNode.measured.height ?? 1,
+      },
+      {
+        x: targetNode.internals.positionAbsolute.x,
+        y: targetNode.internals.positionAbsolute.y,
+        width: targetNode.measured.width ?? 1,
+        height: targetNode.measured.height ?? 1,
+      },
+      edgeData?.ganttTargetMilestone === true,
+    )
+    sx = points.source.x
+    sy = points.source.y
+    tx = points.target.x
+    ty = points.target.y
+    sourcePos = Position.Right
+    targetPos = Position.Top
+  } else if (chartRelation === 'git') {
+    // Stop at each disc boundary. This is visually equivalent to drawing under
+    // opaque bubbles, while remaining correct even if React Flow changes the
+    // relative SVG/node stacking order.
+    sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 1)
+    sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 1) / 2
+    tx = targetNode.internals.positionAbsolute.x
+    ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 1) / 2
+    sourcePos = Position.Right
+    targetPos = Position.Left
+  }
   const snakeCurve = edgeData?.snakeRelation && edgeData.snakeSourceSide && edgeData.snakeTargetSide
+  const gitCurve = chartRelation === 'git' ? gitFlowCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
 
   let path: string
   let labelX: number
@@ -310,7 +379,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   let targetLabelPoint: Point
   let middleArrowAngle = 0
   let routed: Point[] | null = null
-  if (!snakeCurve && routing === 'orthogonal') {
+  if (chartRelation === 'gantt') {
+    const src = { x: sx, y: sy }
+    const tgt = { x: tx, y: ty }
+    const sourceStub = { x: sx + 20, y: sy }
+    const targetStub = { x: tx, y: ty - 20 }
+    const obstacles = filterRoutingObstacles(scene.nodeRects, source, target, src, tgt)
+    const occupied: Segment[] = []
+    for (const [edgeId, points] of routedEdges) {
+      if (edgeId !== id) occupied.push(...polylineSegments(points))
+    }
+    const middle = routeOrthogonal(sourceStub, targetStub, obstacles, occupied)
+    routed = middle
+      ? dedupeColinear([src, ...middle, tgt])
+      : dedupeColinear([src, sourceStub, { x: sourceStub.x, y: targetStub.y }, targetStub, tgt])
+  } else if (!snakeCurve && routing === 'orthogonal') {
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
@@ -391,6 +474,13 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     sourceLabelPoint = curve.sourceLabelPoint
     targetLabelPoint = curve.targetLabelPoint
     middleArrowAngle = curve.angle
+  } else if (gitCurve) {
+    path = gitCurve.path
+    labelX = gitCurve.midpoint.x
+    labelY = gitCurve.midpoint.y
+    sourceLabelPoint = gitCurve.sourceLabelPoint
+    targetLabelPoint = gitCurve.targetLabelPoint
+    middleArrowAngle = gitCurve.angle
   } else if (routed) {
     path = pointsToRoundedPath(routed, edgeData?.cornerRadius ?? 8)
     const mid = pointOnPolyline(routed, 0.5)

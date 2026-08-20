@@ -204,6 +204,27 @@ describe('grid / AMDEC matrix', () => {
     expect(nodes.find(n => n.id === 'b')!.position.y).toBeGreaterThan(300)
   })
 
+  it('expands wildcard colours, centres items and resolves signed relative projections', () => {
+    const m = parse(`model {
+      matrix = gridGraph "Matrix" {
+        cols "3" rows "3" cellW "200" cellH "100"
+        cellBg "1,*=#ffffff; *,2=#444444; 1,2=#abcdef"
+        item = gridItem "Move" { row "3" col "2" projection "-1,+1" }
+      }
+    } views { view v { include * } }`)
+    const { nodes } = modelToFlow(m, view(m))
+    const matrix = nodes.find(node => node.id === 'matrix')!
+    const item = nodes.find(node => node.id === 'item')!
+    const grid = matrix.data.grid!
+    expect(grid.cellBg['1,1']).toBe('#ffffff')
+    expect(grid.cellBg['2,2']).toBe('#444444')
+    expect(grid.cellBg['1,2']).toBe('#abcdef')
+    expect(item.position.x + item.width! / 2).toBeCloseTo(grid.originX + 1.5 * grid.cellW)
+    expect(item.position.y + item.height! / 2).toBeCloseTo(grid.originY + 2.5 * grid.cellH)
+    expect(item.data.projection!.dx).toBeGreaterThan(0)
+    expect(item.data.projection!.dy).toBeLessThan(0)
+  })
+
   it('preserves a resized grid item while constraining it to its cell', () => {
     const m = parse(`model {
       matrix = gridGraph "Matrix" { cols "2" rows "2" cellW "250" cellH "120" item = gridItem "Resizable" { row "1" col "1" } }

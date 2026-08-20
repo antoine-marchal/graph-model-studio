@@ -1,8 +1,13 @@
 import { describe, it, expect } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
 import { notationRegistry } from '@/core/notation'
-import { computePert, computeGanttChart, parseGanttDuration, parseGanttDate, GANTT_PX_PER_DAY, GANTT_AXIS_H } from '@/core/layout'
+import {
+  computePert, computeGanttChart, formatGanttDuration, formatGanttStart,
+  parseGanttDuration, parseGanttDate, parseGanttUnitStart, GANTT_PX_PER_DAY, GANTT_AXIS_H,
+  GANTT_SECTION_INSET,
+} from '@/core/layout'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
+import { ganttAttachmentPoints } from '@/features/editor-graph/edges/FloatingEdge'
 import type { GraphModel, GraphView } from '@/core/model'
 
 function view(model: GraphModel): GraphView {
@@ -110,6 +115,40 @@ describe('Gantt scheduling and layout', () => {
     expect(parseGanttDuration('nope')).toBeUndefined()
     expect(parseGanttDate('2026-07-10')?.getUTCDate()).toBe(10)
     expect(parseGanttDate('July 10')).toBeUndefined()
+    expect(parseGanttUnitStart('3')).toBe(3)
+    expect(parseGanttUnitStart('2026-01-01')).toBeUndefined()
+  })
+
+  it('supports unit-based starts, durations and a custom axis prefix', () => {
+    const m = parse(`model {
+      chart = ganttGraph "Increment plan" { prefix "PI"
+        a = ganttTask "Foundation" { start "1" duration "2" }
+        b = ganttTask "Delivery" { start "4" duration "2" }
+      }
+    } views { view v { include * } }`)
+    const chart = computeGanttChart(m, new Set(['a', 'b']), { unitPrefix: m.elements.chart.properties.prefix })!
+    expect(chart.baseDate).toBeUndefined()
+    expect(chart.baseUnit).toBe(1)
+    expect(chart.schedule.a).toEqual({ startDay: 0, days: 2 })
+    expect(chart.schedule.b).toEqual({ startDay: 3, days: 2 })
+    expect(chart.axis.ticks.slice(0, 4).map(tick => tick.label)).toEqual(['PI1', 'PI2', 'PI3', 'PI4'])
+    expect(formatGanttStart(chart, 2)).toBe('3')
+    expect(formatGanttDuration(2, '1', '2')).toBe('2')
+    expect(formatGanttDuration(14, '2026-01-01', '2w')).toBe('2w')
+  })
+
+  it('supports a spaced prefix and configurable numeric/date axis origins', () => {
+    const units = parse(`model { graph = ganttGraph { task = ganttTask { start "10" duration "2" } } }`)
+    const unitChart = computeGanttChart(units, new Set(['task']), { unitPrefix: 'PI ', firstUnit: 10 })!
+    expect(unitChart.schedule.task.startDay).toBe(0)
+    expect(unitChart.axis.ticks.slice(0, 3).map(tick => tick.label)).toEqual(['PI 10', 'PI 11', 'PI 12'])
+    expect(formatGanttStart(unitChart, 2)).toBe('12')
+
+    const dates = parse(`model { graph = ganttGraph { task = ganttTask { start "2026-01-12" duration "2d" } } }`)
+    const dateChart = computeGanttChart(dates, new Set(['task']), { firstDate: '2026-01-10' })!
+    expect(dateChart.schedule.task.startDay).toBe(2)
+    expect(dateChart.axis.ticks[0].label).toBe('01-10')
+    expect(formatGanttStart(dateChart, 3)).toBe('2026-01-13')
   })
 
   it('schedules from explicit dates and dependencies', () => {
@@ -159,14 +198,58 @@ describe('Gantt scheduling and layout', () => {
     expect(a.parentId).toBe('chart')
     expect(b.parentId).toBe('chart')
     // positions are relative to the frame (title + axis offset)
-    expect(a.position.x).toBe(16)
+    expect(a.position.x).toBe(16 + GANTT_SECTION_INSET)
     expect(a.position.y).toBe(28 + GANTT_AXIS_H)
     expect(a.width).toBe(2 * GANTT_PX_PER_DAY)
-    expect(b.position.x).toBe(16 + 2 * GANTT_PX_PER_DAY)
+    expect(b.position.x).toBe(16 + GANTT_SECTION_INSET + 2 * GANTT_PX_PER_DAY)
     expect(b.width).toBe(3 * GANTT_PX_PER_DAY)
+    expect(b.position.y - (a.position.y + a.height!)).toBeGreaterThanOrEqual(24)
     expect(b.position.y).toBeGreaterThan(a.position.y)
     // frame grows to wrap the chart
     expect(frame.width!).toBeGreaterThanOrEqual(b.position.x + b.width!)
+  })
+
+  it('forces Gantt dependencies to ignore persisted anchors', () => {
+    const m = parse(`model {
+      chart = ganttGraph { a = ganttTask { start "1" duration "2" } b = ganttMilestone { start "3" } }
+      a -> b anchor l r
+    } views { view v { include * } }`)
+    const { edges } = modelToFlow(m, view(m))
+    expect(edges[0].sourceHandle).toBeUndefined()
+    expect(edges[0].targetHandle).toBeUndefined()
+    expect(edges[0].data).toMatchObject({ chartRelation: 'gantt' })
+  })
+
+  it('routes all task/milestone combinations with milestone-aware corners', () => {
+    const m = parse(`model {
+      chart = ganttGraph {
+        t1 = ganttTask { start "1" duration "1" }
+        t2 = ganttTask { start "2" duration "1" }
+        m1 = ganttMilestone { start "3" }
+        m2 = ganttMilestone { start "4" }
+      }
+      t1 -> m1
+      m1 -> t2
+      m1 -> m2
+    } views { view v { include * } }`)
+    const { edges } = modelToFlow(m, view(m))
+    const relation = (source: string, target: string) => edges.find(edge => edge.source === source && edge.target === target)!
+    expect(relation('t1', 'm1').data).toMatchObject({ chartRelation: 'gantt', ganttTargetMilestone: true })
+    expect(relation('m1', 't2').data).toMatchObject({ chartRelation: 'gantt', ganttTargetMilestone: false })
+    expect(relation('m1', 'm2').data).toMatchObject({ chartRelation: 'gantt', ganttTargetMilestone: true })
+
+    const taskTarget = ganttAttachmentPoints(
+      { x: 10, y: 20, width: 30, height: 10 },
+      { x: 80, y: 60, width: 40, height: 12 },
+      false,
+    )
+    expect(taskTarget).toEqual({ source: { x: 40, y: 25 }, target: { x: 80, y: 60 } })
+    const milestoneTarget = ganttAttachmentPoints(
+      { x: 10, y: 20, width: 26, height: 26 },
+      { x: 80, y: 60, width: 26, height: 26 },
+      true,
+    )
+    expect(milestoneTarget).toEqual({ source: { x: 36, y: 33 }, target: { x: 93, y: 60 } })
   })
 
   it('flattens section nesting: rows parent to the frame, band wraps its tasks', () => {
@@ -195,8 +278,10 @@ describe('Gantt scheduling and layout', () => {
     const rev = nodes.find(n => n.id === 'rev')!
     expect(band.height!).toBeGreaterThan(spec.height! + rev.height!)
     for (const t of [spec, rev]) {
-      expect(t.position.y).toBeGreaterThanOrEqual(band.position.y)
-      expect(t.position.y + t.height!).toBeLessThanOrEqual(band.position.y + band.height!)
+      expect(t.position.x).toBeGreaterThan(band.position.x)
+      expect(t.position.x + t.width!).toBeLessThan(band.position.x + band.width!)
+      expect(t.position.y).toBeGreaterThan(band.position.y)
+      expect(t.position.y + t.height!).toBeLessThan(band.position.y + band.height!)
     }
   })
 

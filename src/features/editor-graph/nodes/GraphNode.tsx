@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, NodeResizer, useReactFlow, type NodeProps, type ResizeParams } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
 import type { PertNodeValues, ChartFrame, TreeRow, GridFrame, AnalyticChartFrame } from '@/core/layout'
-import { GANTT_AXIS_H } from '@/core/layout'
+import { formatGanttDuration, GANTT_AXIS_H, GANTT_PX_PER_DAY } from '@/core/layout'
 import type { IshikawaFrame, GanttFrame } from '../model-to-flow'
 import { TreeGraphView } from './TreeGraphView'
 import { GridGraphView } from './GridGraphView'
@@ -566,7 +566,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           <div className="absolute inset-y-0 left-0 rounded-l" style={{ width: `${prog}%`, background: stroke, opacity: 0.55 }} />
         )}
         <div
-          className={cn('absolute inset-y-0 z-10 flex items-center whitespace-nowrap text-[10px] font-semibold', labelOutside ? 'left-full pl-1.5' : 'left-2')}
+          className={cn('absolute inset-y-0 z-10 flex items-center whitespace-nowrap text-[10px] font-semibold', labelOutside ? 'right-full pr-1.5 text-right' : 'left-2')}
           style={{ color: labelOutside ? 'var(--fg)' : text }}
         >
           {d.label}
@@ -580,7 +580,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
           <polygon points={`${width / 2},1 ${width - 1},${height / 2} ${width / 2},${height - 1} 1,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="1.5" />
         </svg>
-        <span className="absolute left-full top-1/2 z-10 ml-1.5 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+        <span className="absolute right-full top-1/2 z-10 mr-1.5 -translate-y-1/2 whitespace-nowrap text-right text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
       </div>
     )
   } else if (shape === 'snakeBullet') {
@@ -638,17 +638,20 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   }
 
   const isContainer = d.isContainer || shape === 'container'
+  const isGanttTask = d.elementType === 'ganttTask'
   // resize works on leaves and containers; a container can only grow past its
   // auto-fit size, never shrink below its children (clamped in model-to-flow)
-  // gantt geometry derives from dates/durations — resizing it would be undone on the next layout
+  // Gantt tasks are horizontally resizable and persist the result as duration;
+  // milestones and section bands keep their schedule-derived geometry.
   const resizable = shape !== 'person' && shape !== 'stickFigure'
-    && shape !== 'ganttBar' && shape !== 'ganttMilestone' && shape !== 'ganttSection'
+    && shape !== 'ganttMilestone' && shape !== 'ganttSection'
     && !d.embeddedXySeries
   const resizer = resizable && (
     <NodeResizer
       isVisible={selected}
-      minWidth={48}
-      minHeight={32}
+      minWidth={isGanttTask ? 10 : 48}
+      minHeight={isGanttTask ? height : 32}
+      maxHeight={isGanttTask ? height : undefined}
       lineClassName="!border-[var(--accent)]"
       handleClassName="!h-2 !w-2 !rounded-sm !border !border-[var(--accent)] !bg-[var(--surface-1)]"
       onResizeStart={(_, p) => {
@@ -664,7 +667,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             height: node.measured?.height ?? node.height ?? 70,
           },
         }))
-        const selectedNodes = all.filter(node => selectedIds.has(node.id))
+        const selectedNodes = isGanttTask ? all.filter(node => node.id === id) : all.filter(node => selectedIds.has(node.id))
         resizeSession.current = { start: p, selected: selectedNodes.length ? selectedNodes : all.filter(node => node.id === id), all }
       }}
       onResize={(_, p) => {
@@ -690,7 +693,11 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       onResizeEnd={(_, p) => {
         const session = resizeSession.current
         resizeSession.current = null
-        if (activeViewId && session) {
+        if (session && isGanttTask) {
+          const element = useModelStore.getState().model.elements[id]
+          const duration = formatGanttDuration(p.width / GANTT_PX_PER_DAY, element?.properties?.start, element?.properties?.duration)
+          dispatch({ type: 'UPDATE_ELEMENT', payload: { id, properties: { ...element?.properties, duration } } })
+        } else if (activeViewId && session) {
           const mutation = resizeSelection(id, session.start, p, session.selected, session.all)
           dispatch({ type: 'RESIZE_NODES', payload: { viewId: activeViewId, ...mutation } })
         }

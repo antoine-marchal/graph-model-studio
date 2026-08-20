@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
 import { notationRegistry } from '@/core/notation'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
+import { gitFlowCurve } from '@/features/editor-graph/edges/FloatingEdge'
 import type { GraphModel, GraphView } from '@/core/model'
 
 function view(model: GraphModel): GraphView {
@@ -92,7 +93,7 @@ describe('git graph container', () => {
         c4 = mergeCommit "merge" { tag "v1.0" }
       }
       c1 -> c2
-      c2 -> c3
+      c2 -> c3 anchor t b
       c3 -> c4
       c1 -> c4
     }
@@ -110,9 +111,26 @@ describe('git graph container', () => {
     for (const id of ['c1', 'c2', 'c3', 'c4']) expect(nodes.find(n => n.id === id)!.parentId).toBe('hist')
     expect(nodes.find(n => n.id === 'c4')!.data.badge).toBe('v1.0')
     expect(edges.filter(e => m.relations[e.id])).toHaveLength(4)
+    const branch = edges.find(edge => edge.source === 'c2' && edge.target === 'c3')!
+    expect(branch.sourceHandle).toBeUndefined()
+    expect(branch.targetHandle).toBeUndefined()
+    expect(branch.markerEnd).toBeUndefined()
+    expect(branch.data).toMatchObject({ chartRelation: 'git' })
+    expect(nodes.find(node => node.id === 'c2')!.zIndex).toBeGreaterThan(branch.zIndex ?? 0)
     // frame carries the lane decor + branch labels
     const frame = nodes.find(n => n.id === 'hist')!
     expect(frame.data.chartFrame!.texts.map(t => t.text)).toEqual(expect.arrayContaining(['main', 'feature']))
+    expect(frame.data.chartFrame!.lines).toHaveLength(2)
+    expect(frame.data.chartFrame!.lines.every(line => line.dash === '2 6')).toBe(true)
+  })
+
+  it('uses smooth horizontal tangents for branches and merges', () => {
+    const curve = gitFlowCurve({ x: 0, y: 60 }, { x: 120, y: 0 })
+    expect(curve.controls[0].y).toBe(60)
+    expect(curve.controls[1].y).toBe(0)
+    expect(curve.controls[0].x).toBeGreaterThan(0)
+    expect(curve.controls[1].x).toBeLessThan(120)
+    expect(curve.path).toContain(' C ')
   })
 })
 

@@ -3,9 +3,13 @@ import type { GraphModel, GraphView, GraphElement } from '../model'
 /** Rendering constants (px). */
 export const GANTT_PX_PER_DAY = 28
 export const GANTT_BAR_H = 30
-export const GANTT_ROW_GAP = 10
+export const GANTT_ROW_GAP = 28
 export const GANTT_AXIS_H = 36
 export const GANTT_MILESTONE_SIZE = 26
+/** Horizontal breathing room between a section band and its scheduled rows. */
+export const GANTT_SECTION_INSET = 20
+/** Space below the final row wrapped by a section band. */
+export const GANTT_SECTION_BOTTOM_INSET = 12
 
 export interface GanttPlacement {
   x: number
@@ -27,9 +31,21 @@ export interface GanttChart {
   totalDays: number
   /** origin date (UTC midnight) when at least one task has an explicit date */
   baseDate?: Date
+  /** first displayed value for a unit-based schedule (undefined in date mode) */
+  baseUnit?: number
+  /** label prefix for a unit-based schedule, e.g. "PI" */
+  unitPrefix: string
   axis: { width: number; height: number; ticks: GanttTick[] }
   /** 0..100 completion per task (from a `progress "60"` property) */
   progress: Record<string, number>
+}
+
+export interface GanttChartOptions {
+  unitPrefix?: string
+  /** First unit displayed on a numeric axis, e.g. 10 for "PI10". */
+  firstUnit?: number
+  /** First date displayed on a date axis (YYYY-MM-DD). */
+  firstDate?: string
 }
 
 const DAY_MS = 86_400_000
@@ -51,6 +67,33 @@ export function parseGanttDuration(raw: string | undefined): number | undefined 
   return m[2].toLowerCase() === 'w' ? n * 7 : n
 }
 
+/** Parse a plain numeric Gantt start (unit-based schedule, not a date). */
+export function parseGanttUnitStart(raw: string | undefined): number | undefined {
+  if (!raw) return undefined
+  const value = Number(raw.trim())
+  return Number.isFinite(value) ? value : undefined
+}
+
+const formatUnit = (value: number) => Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)))
+
+/** Convert an offset on a computed chart back to the persisted `start` value. */
+export function formatGanttStart(chart: Pick<GanttChart, 'baseDate' | 'baseUnit'>, offset: number): string {
+  if (chart.baseDate) {
+    return new Date(chart.baseDate.getTime() + offset * DAY_MS).toISOString().slice(0, 10)
+  }
+  return formatUnit((chart.baseUnit ?? 1) + offset)
+}
+
+/** Convert a resized task width to a duration while retaining useful legacy suffixes. */
+export function formatGanttDuration(units: number, start: string | undefined, previous: string | undefined): string {
+  const value = Math.max(0, units)
+  if (parseGanttDate(start)) {
+    if (/w\s*$/i.test(previous ?? '') && value % 7 === 0) return `${formatUnit(value / 7)}w`
+    return `${formatUnit(value)}d`
+  }
+  return formatUnit(value)
+}
+
 function isGanttRow(el: GraphElement): boolean {
   // the ganttGraph frame is a container, not a scheduled row
   return el.notation === 'gantt' && el.type !== 'ganttGraph'
@@ -65,7 +108,11 @@ function isGanttRow(el: GraphElement): boolean {
  *   (`a -> b` means b starts after a finishes), else at the chart origin.
  * - Rows follow declaration order; `ganttSection` rows span the whole chart.
  */
-export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): GanttChart | null {
+export function computeGanttChart(
+  model: GraphModel,
+  visibleIds: Set<string>,
+  options: GanttChartOptions = {},
+): GanttChart | null {
   const rows = Object.values(model.elements).filter(el => visibleIds.has(el.id) && isGanttRow(el))
   if (rows.length === 0) return null
 
@@ -87,10 +134,24 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
     const d = parseGanttDate(el.properties?.['start'])
     if (d) explicitStart.set(el.id, d)
   }
-  let baseDate: Date | undefined
-  for (const d of explicitStart.values()) {
+  let baseDate = parseGanttDate(options.firstDate)
+  if (!baseDate) for (const d of explicitStart.values()) {
     if (!baseDate || d.getTime() < baseDate.getTime()) baseDate = d
   }
+  // A chart containing dates stays in date mode. Otherwise plain numeric starts
+  // define a unit scale (PI, sprint, iteration, etc.).
+  const explicitUnitStart = new Map<string, number>()
+  if (!baseDate) {
+    for (const el of schedulable) {
+      const value = parseGanttUnitStart(el.properties?.['start'])
+      if (value !== undefined) explicitUnitStart.set(el.id, value)
+    }
+  }
+  const configuredFirstUnit = options.firstUnit
+  const baseUnit = baseDate
+    ? undefined
+    : Number.isFinite(configuredFirstUnit) ? configuredFirstUnit : 1
+  const unitPrefix = options.unitPrefix ?? 'D'
 
   const durations = new Map<string, number>()
   for (const el of schedulable) {
@@ -114,8 +175,11 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
     visiting.add(id)
     let day: number
     const exp = explicitStart.get(id)
+    const unit = explicitUnitStart.get(id)
     if (exp && baseDate) {
       day = (exp.getTime() - baseDate.getTime()) / DAY_MS
+    } else if (unit !== undefined && baseUnit !== undefined) {
+      day = unit - baseUnit
     } else {
       day = 0
       for (const p of preds.get(id)!) day = Math.max(day, resolveStart(p) + durations.get(p)!)
@@ -136,7 +200,8 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
   const placements: Record<string, GanttPlacement> = {}
   const schedule: Record<string, { startDay: number; days: number }> = {}
   const progress: Record<string, number> = {}
-  const chartW = totalDays * GANTT_PX_PER_DAY
+  const timelineW = totalDays * GANTT_PX_PER_DAY
+  const chartW = timelineW + GANTT_SECTION_INSET * 2
 
   // A section groups the rows that follow it until the next section (whether
   // those tasks are nested inside it in the DSL or just declared after it), so
@@ -157,7 +222,7 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
     const y = rowY(row)
     if (el.type === 'ganttSection') {
       const endRow = sectionEnd.get(el.id) ?? row
-      const bottom = rowY(endRow) + GANTT_BAR_H
+      const bottom = rowY(endRow) + GANTT_BAR_H + GANTT_SECTION_BOTTOM_INSET
       placements[el.id] = { x: 0, y, width: chartW, height: bottom - y }
       return
     }
@@ -168,14 +233,14 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
     if (Number.isFinite(p)) progress[el.id] = Math.max(0, Math.min(100, p))
     if (el.type === 'ganttMilestone') {
       placements[el.id] = {
-        x: day * GANTT_PX_PER_DAY - GANTT_MILESTONE_SIZE / 2,
+        x: GANTT_SECTION_INSET + day * GANTT_PX_PER_DAY - GANTT_MILESTONE_SIZE / 2,
         y: y + (GANTT_BAR_H - GANTT_MILESTONE_SIZE) / 2,
         width: GANTT_MILESTONE_SIZE,
         height: GANTT_MILESTONE_SIZE,
       }
     } else {
       placements[el.id] = {
-        x: day * GANTT_PX_PER_DAY,
+        x: GANTT_SECTION_INSET + day * GANTT_PX_PER_DAY,
         y,
         width: Math.max(days * GANTT_PX_PER_DAY, 10),
         height: GANTT_BAR_H,
@@ -192,13 +257,13 @@ export function computeGanttChart(model: GraphModel, visibleIds: Set<string>): G
       const dt = new Date(baseDate.getTime() + d * DAY_MS)
       label = `${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`
     } else {
-      label = `D${d + 1}`
+      label = `${unitPrefix}${formatUnit((baseUnit ?? 1) + d)}`
     }
-    ticks.push({ x: d * GANTT_PX_PER_DAY, label })
+    ticks.push({ x: GANTT_SECTION_INSET + d * GANTT_PX_PER_DAY, label })
   }
 
   const chartH = GANTT_AXIS_H + rows.length * (GANTT_BAR_H + GANTT_ROW_GAP)
-  return { placements, schedule, totalDays, baseDate, axis: { width: chartW, height: chartH, ticks }, progress }
+  return { placements, schedule, totalDays, baseDate, baseUnit, unitPrefix, axis: { width: chartW, height: chartH, ticks }, progress }
 }
 
 /** True when a view contains at least one visible Gantt element. */

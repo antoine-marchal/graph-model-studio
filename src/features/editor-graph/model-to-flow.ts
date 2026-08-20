@@ -189,7 +189,11 @@ export function computeNestedLayout(
     if (!visible.has(el.id)) continue
     if (el.type === 'ganttGraph') {
       const hosted = new Set(hostedIds(el.id))
-      const chart = computeGanttChart(model, hosted)
+      const chart = computeGanttChart(model, hosted, {
+        unitPrefix: el.properties?.['prefix'] ?? 'D',
+        firstUnit: Number(el.properties?.['firstUnit']),
+        firstDate: el.properties?.['firstDate'],
+      })
       if (!chart) continue
       ganttCharts[el.id] = chart
       for (const rid of Object.keys(chart.placements)) chartPlacement[rid] = chart.placements[rid]
@@ -602,8 +606,13 @@ export function modelToFlow(
     if (el.type === 'gridItem') {
       const frame = gridFrames[parentId]
       if (!frame) return undefined
-      const row = Number(parts[0])
-      const col = Number(parts[1])
+      const currentRow = Math.min(frame.rows, Math.max(1, Number(el.properties?.['row']) || 1))
+      const currentCol = Math.min(frame.cols, Math.max(1, Number(el.properties?.['col']) || 1))
+      // Signed values are relative offsets (`-1,+1`). Keep unsigned legacy
+      // values as absolute cells so existing diagrams remain compatible.
+      const relative = /^[+-]/.test(parts[0]) || /^[+-]/.test(parts[1])
+      const row = relative ? currentRow + Number(parts[0]) : Number(parts[0])
+      const col = relative ? currentCol + Number(parts[1]) : Number(parts[1])
       if (!Number.isInteger(row) || !Number.isInteger(col) || row < 1 || row > frame.rows || col < 1 || col > frame.cols) return undefined
       tx = frame.originX + (col - 0.5) * frame.cellW
       ty = frame.originY + (row - 0.5) * frame.cellH
@@ -733,7 +742,7 @@ export function modelToFlow(
       } as CSSProperties,
       // Snake lanes deliberately run through bullet centres. Keep the complete
       // bullet node (disc, title and metadata) above every relation layer.
-      zIndex: el.type === 'snakeBullet' ? 3000 + d : d,
+      zIndex: el.type === 'snakeBullet' || el.notation === 'gitgraph' ? 3000 + d : d,
       data: {
         label: el.name,
         elementType: el.type,
@@ -898,6 +907,18 @@ export function modelToFlow(
       const relationAccent = normalizeHexColor(rel.properties?.accentColor)
       const relationColors = relationAccent ? deriveAccentColors(relationAccent) : undefined
       const snakeRelation = rel.type === 'snakeFlow'
+      const sourceType = model.elements[rel.sourceId]?.type
+      const targetType = model.elements[rel.targetId]?.type
+      const ganttSource = sourceType === 'ganttTask' || sourceType === 'ganttMilestone'
+      const ganttTarget = targetType === 'ganttTask' || targetType === 'ganttMilestone'
+      const ganttRelation = ganttSource
+        && ganttTarget
+        && hostOf[rel.sourceId] !== undefined
+        && hostOf[rel.sourceId] === hostOf[rel.targetId]
+      const gitRelation = (sourceType === 'commit' || sourceType === 'mergeCommit')
+        && (targetType === 'commit' || targetType === 'mergeCommit')
+        && hostOf[rel.sourceId] !== undefined
+        && hostOf[rel.sourceId] === hostOf[rel.targetId]
       const snakeSourceSide = snakeSides.get(rel.sourceId)?.source
       const snakeTargetSide = snakeSides.get(rel.targetId)?.target
       if (snakeRelation) { markerStart = undefined; markerEnd = undefined }
@@ -911,8 +932,8 @@ export function modelToFlow(
         source: eSource,
         target: eTarget,
         type: 'floating',
-        sourceHandle: consumed.has(rel.sourceId) ? undefined : rel.sourceHandle,
-        targetHandle: consumed.has(rel.targetId) ? undefined : rel.targetHandle,
+        sourceHandle: consumed.has(rel.sourceId) || ganttRelation || gitRelation ? undefined : rel.sourceHandle,
+        targetHandle: consumed.has(rel.targetId) || ganttRelation || gitRelation ? undefined : rel.targetHandle,
         data: {
           label,
           sourceLabel: rel.properties?.['sourceCard'],
@@ -926,18 +947,20 @@ export function modelToFlow(
           snakeRelation,
           snakeSourceSide: snakeRelation ? snakeSourceSide : undefined,
           snakeTargetSide: snakeRelation ? snakeTargetSide : undefined,
+          chartRelation: ganttRelation ? 'gantt' : gitRelation ? 'git' : undefined,
+          ganttTargetMilestone: ganttRelation && targetType === 'ganttMilestone',
         },
         markerStart: markerStart || undefined,
-        markerEnd: markerEnd || undefined,
+        markerEnd: gitRelation ? undefined : ganttRelation ? 'gms-arrow-filled' : markerEnd || undefined,
         style: {
           stroke: relationColors?.primary ?? (snakeRelation ? '#FF9828' : critical ? '#D32F2F' : 'var(--edge)'),
-          strokeWidth: snakeRelation ? 3 : critical ? 2.4 : 1.6,
+          strokeWidth: snakeRelation ? 3 : ganttRelation ? 2.2 : gitRelation ? 2.4 : critical ? 2.4 : 1.6,
           strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
         },
         // React Flow adds a child node's z-index to its connected edges. The
         // negative offset keeps Snake rails above the graph container while
         // leaving each bullet (including its label) one layer higher.
-        zIndex: snakeRelation ? -1 : 1000,
+        zIndex: snakeRelation ? -1 : gitRelation ? 1 : 1000,
       })
       continue
     }

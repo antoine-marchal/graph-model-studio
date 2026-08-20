@@ -142,8 +142,8 @@ export function layoutGitGraphFrame(commits: GraphElement[]): ChartLayout {
   if (commits.length === 0) return out
 
   const LABW = 84
-  const COLW = 60
-  const LANEH = 58
+  const COLW = 105
+  const LANEH = 72
   const lanes: string[] = []
   const laneOf = new Map<string, number>()
   for (const c of commits) {
@@ -328,12 +328,17 @@ export interface GridLayout {
 const GRID_HEAD = 30 // header band thickness (px)
 const GRID_AXIS = 22 // axis-title band thickness
 
-/** Parse "2,3=#f00; 1,1=#0f0" into { "2,3": "#f00", … }. */
-function parseCellBg(raw: string | undefined): Record<string, string> {
+/** Parse exact cells and wildcard ranges such as "1,*=#fff; *,5=#444". */
+function parseCellBg(raw: string | undefined, rows: number, cols: number): Record<string, string> {
   const out: Record<string, string> = {}
   for (const part of (raw ?? '').split(';')) {
-    const m = part.trim().match(/^(\d+)\s*,\s*(\d+)\s*=\s*(\S+)$/)
-    if (m) out[`${m[1]},${m[2]}`] = m[3]
+    const m = part.trim().match(/^(\d+|\*)\s*,\s*(\d+|\*)\s*=\s*(\S+)$/)
+    if (!m) continue
+    const selectedRows = m[1] === '*' ? Array.from({ length: rows }, (_, i) => i + 1) : [Number(m[1])]
+    const selectedCols = m[2] === '*' ? Array.from({ length: cols }, (_, i) => i + 1) : [Number(m[2])]
+    for (const row of selectedRows) for (const col of selectedCols) {
+      if (row >= 1 && row <= rows && col >= 1 && col <= cols) out[`${row},${col}`] = m[3]
+    }
   }
   return out
 }
@@ -358,7 +363,7 @@ export function layoutGridGraph(
   const preferredCellH = Math.max(56, parseInt(p['cellH'] ?? '84', 10) || 84)
   const xHeaders = (p['xHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
   const yHeaders = (p['yHeaders'] ?? '').split(';').map(s => s.trim()).filter(Boolean)
-  const cellBg = parseCellBg(p['cellBg'])
+  const cellBg = parseCellBg(p['cellBg'], rows, cols)
 
   const gridMargin = GRID_AXIS + GRID_HEAD
   const originX = gridMargin
@@ -369,27 +374,38 @@ export function layoutGridGraph(
   const cellW = Math.max(preferredCellW, targetSize ? (targetSize.width - gridMargin * 2) / cols : 0)
   const cellH = Math.max(preferredCellH, targetSize ? (targetSize.height - TITLE - gridMargin * 2) / rows : 0)
 
-  // stack items within their cell
+  // Stack items as one centred group within their cell. A single item is thus
+  // exactly centred, while multiple items remain readable without overlapping.
   const items = [...hostedIds].map(id => model.elements[id]).filter(Boolean)
-  const perCellOffset = new Map<string, number>()
+  const perCell = new Map<string, Array<{ item: GraphElement; width: number; height: number }>>()
   const placements: Record<string, SpecialPlacement> = {}
   for (const it of items) {
     const r = Math.min(rows, Math.max(1, parseInt(it.properties?.['row'] ?? '1', 10) || 1))
     const c = Math.min(cols, Math.max(1, parseInt(it.properties?.['col'] ?? '1', 10) || 1))
     const key = `${r},${c}`
-    const offset = perCellOffset.get(key) ?? 0
     const fallback = defSize(it, cellW - 12, 26)
     const requested = itemSizes[it.id] ?? fallback
-    const availableHeight = Math.max(18, cellH - 12 - offset)
     const width = Math.min(Math.max(48, requested.width), cellW - 12)
-    const height = Math.min(Math.max(18, requested.height), availableHeight)
-    placements[it.id] = {
-      x: originX + (c - 1) * cellW + 6,
-      y: originY + (r - 1) * cellH + 6 + offset,
-      width,
-      height,
-    }
-    perCellOffset.set(key, offset + height + 4)
+    const height = Math.min(Math.max(18, requested.height), cellH - 12)
+    perCell.set(key, [...(perCell.get(key) ?? []), { item: it, width, height }])
+  }
+  for (const [key, entries] of perCell) {
+    const [r, c] = key.split(',').map(Number)
+    const gap = entries.length > 1 ? 4 : 0
+    const naturalHeight = entries.reduce((sum, entry) => sum + entry.height, 0) + gap * (entries.length - 1)
+    const scale = naturalHeight > cellH - 12 ? (cellH - 12) / naturalHeight : 1
+    const heights = entries.map(entry => Math.max(18, entry.height * scale))
+    const groupHeight = heights.reduce((sum, height) => sum + height, 0) + gap * (entries.length - 1)
+    let y = originY + (r - 1) * cellH + (cellH - groupHeight) / 2
+    entries.forEach((entry, index) => {
+      placements[entry.item.id] = {
+        x: originX + (c - 1) * cellW + (cellW - entry.width) / 2,
+        y,
+        width: entry.width,
+        height: heights[index],
+      }
+      y += heights[index] + gap
+    })
   }
 
   const width = gridMargin + cols * cellW + gridMargin

@@ -136,13 +136,18 @@ function AccentColorField({ value, fallback, nodeColor, containerColor, onChange
 /** Custom-property fields shown per element type, grouped under a labelled box. */
 interface PropFieldSpec { key: string; label: string; placeholder: string; multiline?: boolean }
 const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[] }> = {
+  ganttGraph: { group: 'Schedule axis', fields: [
+    { key: 'prefix', label: 'Unit prefix', placeholder: 'e.g. PI, Sprint, D' },
+    { key: 'firstUnit', label: 'First unit', placeholder: 'e.g. 10' },
+    { key: 'firstDate', label: 'First date (YYYY-MM-DD)', placeholder: 'e.g. 2026-01-01' },
+  ] },
   ganttTask: { group: 'Schedule', fields: [
-    { key: 'start', label: 'Start (YYYY-MM-DD)', placeholder: 'e.g. 2026-08-03' },
-    { key: 'duration', label: 'Duration (5d, 2w)', placeholder: 'e.g. 5d' },
+    { key: 'start', label: 'Start (date or unit)', placeholder: 'e.g. 2026-08-03 or 1' },
+    { key: 'duration', label: 'Duration (date or units)', placeholder: 'e.g. 5d, 2w or 2' },
     { key: 'progress', label: 'Progress (0–100)', placeholder: 'e.g. 60' },
   ] },
   ganttMilestone: { group: 'Schedule', fields: [
-    { key: 'start', label: 'Start (YYYY-MM-DD)', placeholder: 'e.g. 2026-08-03' },
+    { key: 'start', label: 'Start (date or unit)', placeholder: 'e.g. 2026-08-03 or 1' },
   ] },
   pertTask: { group: 'PERT', fields: [
     { key: 'duration', label: 'Duration (time units)', placeholder: 'e.g. 5' },
@@ -195,12 +200,12 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
     { key: 'yLabel', label: 'Y axis title', placeholder: 'Occurrence' },
     { key: 'xHeaders', label: 'Column headers (;)', placeholder: '1; 2; 3; 4; 5' },
     { key: 'yHeaders', label: 'Row headers (;)', placeholder: '1; 2; 3; 4; 5' },
-    { key: 'cellBg', label: 'Cell colours (r,c=#hex;)', placeholder: '5,5=#e53935; 1,1=#43a047', multiline: true },
+    { key: 'cellBg', label: 'Cell colours (r,c or wildcard)', placeholder: '1,*=#fff; *,5=#444; 5,5=#e53935', multiline: true },
   ] },
   gridItem: { group: 'Cell (1-based)', fields: [
     { key: 'row', label: 'Row', placeholder: '1' },
     { key: 'col', label: 'Column', placeholder: '1' },
-    { key: 'projection', label: 'Projection (row column)', placeholder: 'e.g. 2 4' },
+    { key: 'projection', label: 'Projection (row offset, column offset)', placeholder: 'e.g. -1,+1' },
   ] },
   treeNode: { group: 'Tree node', fields: [
     { key: 'icon', label: 'Icon path or URL', placeholder: 'icons/file.svg, C:\\icons\\file.png, or https://…' },
@@ -352,8 +357,10 @@ function ElementProperties({ elementId }: { elementId: string }) {
   const properties = element?.properties
   const setProp = useCallback((key: string, v: string) => {
     const props = { ...(properties ?? {}) }
-    const t = v.trim()
-    if (t) props[key] = t; else delete props[key]
+    // Prefix spacing is meaningful (`prefix "PI "` renders "PI 10"). Other
+    // fields retain the usual whitespace-normalising behaviour.
+    const next = key === 'prefix' ? v : v.trim()
+    if (next.length > 0) props[key] = next; else delete props[key]
     dispatch({ type: 'UPDATE_ELEMENT', payload: { id: elementId, properties: props } })
   }, [dispatch, elementId, properties])
   const clearColors = useCallback(() => {

@@ -31,7 +31,10 @@ import { EdgeMarkers } from './edges/EdgeMarkers'
 import { Button } from '@/ui/components/Button'
 import { nanoid } from './nanoid'
 import { notationRegistry } from '@/core/notation'
-import { alignNodes, runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine } from '@/core/layout'
+import {
+  alignNodes, computeGanttChart, formatGanttStart, GANTT_MILESTONE_SIZE, GANTT_PX_PER_DAY,
+  runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine,
+} from '@/core/layout'
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
@@ -73,6 +76,27 @@ function descendantIds(model: ReturnType<typeof useModelStore.getState>['model']
     stack.push(...(model.elements[c]?.children ?? []))
   }
   return out
+}
+
+function ganttHostId(model: ReturnType<typeof useModelStore.getState>['model'], id: string): string | undefined {
+  let current: string | undefined = model.elements[id]?.type === 'ganttGraph' ? id : model.elements[id]?.parentId
+  while (current) {
+    if (model.elements[current]?.type === 'ganttGraph') return current
+    current = model.elements[current]?.parentId
+  }
+  return undefined
+}
+
+function ganttChartFor(model: ReturnType<typeof useModelStore.getState>['model'], hostId: string) {
+  const hosted = new Set(Object.values(model.elements)
+    .filter(element => element.id !== hostId && ganttHostId(model, element.id) === hostId)
+    .map(element => element.id))
+  const properties = model.elements[hostId]?.properties
+  return computeGanttChart(model, hosted, {
+    unitPrefix: properties?.prefix ?? 'D',
+    firstUnit: Number(properties?.firstUnit),
+    firstDate: properties?.firstDate,
+  })
 }
 
 function GraphEditorInner() {
@@ -293,6 +317,26 @@ function GraphEditorInner() {
       }
       if (dragged.length === 1) {
         const el = model.elements[node.id]
+        const currentGanttHost = el && (el.type === 'ganttTask' || el.type === 'ganttMilestone')
+          ? ganttHostId(model, el.id)
+          : undefined
+        if (el && currentGanttHost) {
+          const chart = ganttChartFor(model, currentGanttHost)
+          if (chart) {
+            const timelineX = node.position.x - 16 + (el.type === 'ganttMilestone' ? GANTT_MILESTONE_SIZE / 2 : 0)
+            const offset = Math.max(0, Math.round(timelineX / GANTT_PX_PER_DAY))
+            dispatch({
+              type: 'UPDATE_ELEMENT',
+              payload: { id: el.id, properties: { ...el.properties, start: formatGanttStart(chart, offset) } },
+            })
+          }
+          const siblings = Object.values(model.elements).filter(candidate => candidate.parentId === el.parentId && CHART_CHILD_AXIS[candidate.type])
+          const live = new Map(nodes.map(candidate => [candidate.id, candidate.position]))
+          const ordered = siblings.map(candidate => candidate.id)
+            .sort((a, b) => (a === node.id ? node.position.y : live.get(a)?.y ?? 0) - (b === node.id ? node.position.y : live.get(b)?.y ?? 0))
+          if (el.parentId && ordered.length > 1) reorderSiblings(el.parentId, ordered)
+          return
+        }
         // gridItem dropped into the matrix → snap to the cell under it (row/col)
         if (el?.type === 'gridItem') {
           const parent = nodes.find(n => n.id === node.parentId)
@@ -351,6 +395,8 @@ function GraphEditorInner() {
         // a container; nested targets still prefer the smallest node.
         const candidates = liveNodes.filter(candidate => {
           if (candidate.id === node.id || desc.has(candidate.id) || !model.elements[candidate.id]) return false
+          if ((el?.type === 'ganttTask' || el?.type === 'ganttMilestone')
+            && !['ganttGraph', 'ganttSection'].includes(model.elements[candidate.id].type)) return false
           const origin = absoluteNodePosition(candidate, liveNodes)
           const width = candidate.measured?.width ?? candidate.width ?? 0
           const height = candidate.measured?.height ?? candidate.height ?? 0
@@ -366,6 +412,20 @@ function GraphEditorInner() {
         if (newParent !== el?.parentId) {
           const position = droppedPosition(node, target, liveNodes)
           dispatch({ type: 'REPARENT_ELEMENT', payload: { viewId, id: node.id, parentId: newParent, position } })
+          const newGanttHost = target && (model.elements[target.id]?.type === 'ganttGraph' ? target.id : ganttHostId(model, target.id))
+          if (el && newGanttHost && (el.type === 'ganttTask' || el.type === 'ganttMilestone')) {
+            const chart = ganttChartFor(model, newGanttHost)
+            const hostNode = liveNodes.find(candidate => candidate.id === newGanttHost)
+            const hostOrigin = hostNode ? absoluteNodePosition(hostNode, liveNodes) : { x: 0, y: 0 }
+            const offset = Math.max(0, Math.round((drop.x - hostOrigin.x - 16) / GANTT_PX_PER_DAY))
+            dispatch({
+              type: 'UPDATE_ELEMENT',
+              payload: {
+                id: el.id,
+                properties: { ...el.properties, start: formatGanttStart(chart ?? { baseUnit: 1 }, offset) },
+              },
+            })
+          }
           return
         }
       }
@@ -571,7 +631,10 @@ function GraphEditorInner() {
             }
             return true
           })
-          const created = duplicateElements(copied, { parentId: null })
+          const targetId = state.selectedElementIds.length === 1 && state.model.elements[state.selectedElementIds[0]]
+            ? state.selectedElementIds[0]
+            : null
+          const created = duplicateElements(copied, { parentId: targetId })
           const point = mouseScreenPosition.current
             ? screenToFlowPosition(mouseScreenPosition.current)
             : (() => {
@@ -592,7 +655,10 @@ function GraphEditorInner() {
               },
             }]
           })
-          const positions = positionsCenteredAt(point, sourceGeometry)
+          const targetNode = targetId ? liveNodes.find(node => node.id === targetId) : undefined
+          const targetOrigin = targetNode ? absoluteNodePosition(targetNode, liveNodes) : undefined
+          const localPoint = targetOrigin ? { x: point.x - targetOrigin.x, y: point.y - targetOrigin.y } : point
+          const positions = positionsCenteredAt(localPoint, sourceGeometry)
           if (state.activeViewId && Object.keys(positions).length) setViewPositions(state.activeViewId, positions, true)
           setTimeout(() => selectElements(created), 0)
         }
