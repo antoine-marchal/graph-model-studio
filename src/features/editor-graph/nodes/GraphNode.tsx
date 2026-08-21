@@ -306,7 +306,14 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         {selected && <div className="pointer-events-none absolute inset-0 rounded-lg border border-dashed border-blue-500/35" />}
       </div>
     ) : (
-      <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
+      <div
+        className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)}
+        style={d.elementType === 'seqGraph'
+          // An inset border keeps SVG decor and React Flow children in the same
+          // coordinate space, so activity bars sit exactly on their lifelines.
+          ? { background: fill, boxShadow: `inset 0 0 0 1.5px ${stroke}` }
+          : { background: fill, border: `1.5px solid ${stroke}` }}
+      >
         <Handles stroke={stroke} />
         <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
@@ -451,6 +458,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (shape === 'circle' || shape === 'thickCircle' || shape === 'doubleCircle') {
     const borderWidth = shape === 'thickCircle' ? 4 : 2
+    const isMergeCommit = d.elementType === 'mergeCommit'
     body = (
       <div
         className={cn('relative flex h-full w-full items-center justify-center rounded-full', ring && 'rounded-full ' + ring)}
@@ -458,7 +466,20 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       >
         <Handles stroke={stroke} />
         {shape === 'doubleCircle' && <div className="absolute rounded-full" style={{ inset: 3, border: `2px solid ${stroke}` }} />}
-        <span className="px-1 text-center text-[9px] font-semibold" style={{ color: text }}>{d.label}</span>
+        {isMergeCommit ? (
+          <>
+            {d.badge && (
+              <span className="absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded border border-[var(--border)] bg-[var(--surface-1)] px-1 text-[9px] font-semibold" style={{ color: 'var(--fg)' }}>
+                {d.badge}
+              </span>
+            )}
+            <span className="absolute left-1/2 top-full z-10 mt-1 flex -translate-x-1/2 flex-col items-center whitespace-nowrap text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>
+              <span>{d.label}</span>{metaText(d) && <span className="text-[8px] font-normal opacity-70">{metaText(d)}</span>}
+            </span>
+          </>
+        ) : (
+          <span className="px-1 text-center text-[9px] font-semibold" style={{ color: text }}>{d.label}</span>
+        )}
       </div>
     )
   } else if (shape === 'diamond') {
@@ -584,6 +605,16 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         >{d.label}</span>
       </div>
     )
+  } else if (shape === 'activityBar') {
+    body = (
+      <div
+        className={cn('relative h-full w-full rounded-sm shadow-sm', ring)}
+        style={{ background: fill, border: `1.5px solid ${stroke}` }}
+        title={d.label}
+      >
+        <Handles stroke={stroke} />
+      </div>
+    )
   } else if (shape === 'snakeBullet') {
     body = (
       <div className={cn('relative h-full w-full', ring && 'rounded-full ' + ring)}>
@@ -640,6 +671,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
 
   const isContainer = d.isContainer || shape === 'container'
   const isGanttTask = d.elementType === 'ganttTask'
+  const isActivityBar = d.elementType === 'activityBar'
   // resize works on leaves and containers; a container can only grow past its
   // auto-fit size, never shrink below its children (clamped in model-to-flow)
   // Gantt tasks are horizontally resizable and persist the result as duration;
@@ -650,8 +682,8 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const resizer = resizable && (
     <NodeResizer
       isVisible={selected}
-      minWidth={isGanttTask ? 10 : 48}
-      minHeight={isGanttTask ? height : 32}
+      minWidth={isActivityBar ? 8 : isGanttTask ? 10 : 48}
+      minHeight={isActivityBar ? 24 : isGanttTask ? height : 32}
       maxHeight={isGanttTask ? height : undefined}
       lineClassName="!border-[var(--accent)]"
       handleClassName="!h-2 !w-2 !rounded-sm !border !border-[var(--accent)] !bg-[var(--surface-1)]"

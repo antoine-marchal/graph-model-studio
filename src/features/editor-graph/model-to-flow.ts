@@ -67,7 +67,7 @@ export interface GanttFrame {
 // level) and becomes a React Flow child of it, so the whole chart moves as one.
 const CONTAINER_FOR: Record<string, string> = {
   ganttTask: 'ganttGraph', ganttMilestone: 'ganttGraph', ganttSection: 'ganttGraph',
-  participant: 'seqGraph', seqActor: 'seqGraph',
+  participant: 'seqGraph', seqActor: 'seqGraph', activityBar: 'seqGraph',
   commit: 'gitGraph', mergeCommit: 'gitGraph',
   timelineEvent: 'timelineGraph',
   snakeBullet: 'snakeGraph',
@@ -219,7 +219,7 @@ export function computeNestedLayout(
       const kids = hostedChildren(el.id)
       let layout: ChartLayout
       if (el.type === 'seqGraph') {
-        layout = layoutSequenceGraph(kids, relations)
+        layout = layoutSequenceGraph(kids, relations, view.nodeSizes ?? {})
         seqMessagesByHost[el.id] = layout.messages
         for (const rid of layout.suppressed) suppressedRelations.add(rid)
       } else if (el.type === 'gitGraph') {
@@ -734,15 +734,15 @@ export function modelToFlow(
     const customAccent = normalizeHexColor(el.properties?.accentColor)
     const accentColors = customAccent ? deriveAccentColors(customAccent) : undefined
     const container = isVisibleContainer(model, id, visible)
+    const placed = !!hostOf[id]
     const nodeColor = normalizeHexColor(el.properties?.backgroundColor)
     const containerColor = normalizeHexColor(el.properties?.containerColor)
-    const fill = container
+    const fill = container && !placed
       ? containerColor ?? nodeColor ?? accentColors?.container ?? def.fill
       : nodeColor ?? accentColors?.tertiary ?? def.fill
     const hasCustomColor = !!(accentColors || nodeColor || containerColor)
     // containers auto-size around children; chart-placed children are chart-sized;
     // other leaves honour a per-view manual size override
-    const placed = !!hostOf[id]
     const size = (container && sizes[id]?.width) || (placed && sizes[id])
       ? sizes[id]
       : (view.nodeSizes ?? {})[id] ?? { width: def.defaultWidth, height: def.defaultHeight }
@@ -766,6 +766,8 @@ export function modelToFlow(
       // bullet node (disc, title and metadata) above every relation layer.
       zIndex: el.type === 'ganttTask' || el.type === 'ganttMilestone'
         ? 3000 + d
+        : el.type === 'activityBar'
+          ? 2000 + d
         : el.type === 'ganttSection'
           ? 1000 + d
           : el.type === 'snakeBullet' || el.notation === 'gitgraph' ? 3000 + d : d,
@@ -859,12 +861,12 @@ export function modelToFlow(
   // they move with the frame; positions are container-local
   for (const [hostId, msgs] of Object.entries(seqMessagesByHost)) {
     for (const msg of msgs) {
-      for (const [suffix, x] of [['s', msg.sx], ['t', msg.tx]] as const) {
+      for (const [suffix, x, y] of [['s', msg.sx, msg.sy], ['t', msg.tx, msg.ty]] as const) {
         nodes.push({
           id: `__seqpt_${msg.relId}_${suffix}`,
           type: 'seqPoint',
           parentId: hostId,
-          position: { x: x - 1, y: msg.y - 1 },
+          position: { x: x - 1, y: y - 1 },
           draggable: false,
           selectable: false,
           focusable: false,
@@ -1019,7 +1021,9 @@ export function modelToFlow(
         markerEnd: gitRelation ? undefined : ganttRelation ? 'gms-arrow-filled' : markerEnd || undefined,
         style: {
           stroke: relationColors?.primary ?? (snakeRelation ? '#FF9828' : critical ? '#D32F2F' : 'var(--edge)'),
-          strokeWidth: snakeRelation ? 3 : ganttRelation ? 2.2 : gitRelation ? 2.4 : critical ? 2.4 : 1.6,
+          // Git relations sit on top of the dotted lane guide. Keep them wide
+          // enough to fully mask that guide and read as the actual history line.
+          strokeWidth: snakeRelation ? 3 : ganttRelation ? 2.2 : gitRelation ? 4 : critical ? 2.4 : 1.6,
           strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
         },
         // React Flow adds a child node's z-index to its connected edges. The
@@ -1056,7 +1060,11 @@ export function modelToFlow(
         source: `__seqpt_${msg.relId}_s`,
         target: `__seqpt_${msg.relId}_t`,
         type: 'floating',
-        data: { label: rel.label, selectedStroke: relationColors?.secondary },
+        data: {
+          label: rel.label,
+          selectedStroke: relationColors?.secondary,
+          chartRelation: msg.selfLoop ? 'sequenceLoop' : undefined,
+        },
         markerEnd: rdef?.markerEnd ?? 'gms-arrow-filled',
         markerStart: rdef?.markerStart,
         style: {

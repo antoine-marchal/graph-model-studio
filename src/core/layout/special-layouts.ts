@@ -1,4 +1,4 @@
-import type { GraphElement, GraphModel, GraphRelation } from '../model'
+import type { GraphElement, GraphModel, GraphRelation, Size } from '../model'
 
 /** Chart-local geometry for one element (relative to its container origin). */
 export interface SpecialPlacement {
@@ -59,8 +59,10 @@ const MINDMAP_DEEP = '#71767A'
 export interface SeqMessage {
   relId: string
   sx: number
+  sy: number
   tx: number
-  y: number
+  ty: number
+  selfLoop: boolean
 }
 
 /** Result of laying out one chart container's children. */
@@ -94,12 +96,14 @@ const empty = (): Pick<ChartLayout, 'placements' | 'frame' | 'messages' | 'suppr
  * Sequence diagram: participants become columns with dashed lifelines; the
  * relations between them are drawn as ordered horizontal messages.
  */
-export function layoutSequenceGraph(participants: GraphElement[], relations: GraphRelation[]): ChartLayout {
+export function layoutSequenceGraph(elements: GraphElement[], relations: GraphRelation[], nodeSizes: Record<string, Size> = {}): ChartLayout {
   const out = { ...empty(), width: 240, height: 160 } as ChartLayout
+  const participants = elements.filter(element => element.type === 'participant' || element.type === 'seqActor')
+  const activities = elements.filter(element => element.type === 'activityBar')
   if (participants.length === 0) return out
 
   const COL = 184
-  const sizes = participants.map(p => defSize(p, p.type === 'seqActor' ? 90 : 140, p.type === 'seqActor' ? 96 : 52))
+  const sizes = participants.map(p => nodeSizes[p.id] ?? defSize(p, p.type === 'seqActor' ? 90 : 140, p.type === 'seqActor' ? 96 : 52))
   const headH = Math.max(...sizes.map(s => s.height))
   const centerX = (i: number) => PADX + 74 + i * COL
   const headTop = TITLE + PADY
@@ -107,25 +111,44 @@ export function layoutSequenceGraph(participants: GraphElement[], relations: Gra
   const partIds = new Set(participants.map(p => p.id))
   const msgs = relations.filter(r => partIds.has(r.sourceId) && partIds.has(r.targetId))
   const STEP = 38
+  const lifelineStart = headTop + headH + 2
   const firstY = headTop + headH + 34
   const lastCenter = centerX(participants.length - 1)
 
   const width = lastCenter + 74 + PADX
-  const height = firstY + Math.max(msgs.length, 1) * STEP + PADY + 6
+  const idx = new Map(participants.map((p, i) => [p.id, i]))
+  const activityBottom = activities.reduce((bottom, activity) => {
+    const participantIndex = activity.parentId ? idx.get(activity.parentId) : undefined
+    if (participantIndex === undefined) return bottom
+    const size = nodeSizes[activity.id] ?? defSize(activity, 14, 96)
+    const requestedY = Number(activity.properties?.['y'])
+    const y = Math.max(lifelineStart, Number.isFinite(requestedY) && requestedY > 0 ? requestedY : firstY)
+    out.placements[activity.id] = {
+      x: centerX(participantIndex) - size.width / 2,
+      y,
+      width: size.width,
+      height: size.height,
+    }
+    return Math.max(bottom, y + size.height)
+  }, 0)
+  const messageBottom = firstY + Math.max(msgs.length, 1) * STEP
+  const height = Math.max(messageBottom, activityBottom) + PADY + 6
 
   participants.forEach((p, i) => {
     const s = sizes[i]
     // bottom-align the heads so every lifeline starts at the same y
     out.placements[p.id] = { x: centerX(i) - s.width / 2, y: headTop + (headH - s.height), width: s.width, height: s.height }
-    out.frame.lines.push({ x1: centerX(i), y1: headTop + headH + 2, x2: centerX(i), y2: height - PADY, dash: '5 4', color: EDGE_COLOR })
+    out.frame.lines.push({ x1: centerX(i), y1: lifelineStart, x2: centerX(i), y2: height - PADY, dash: '5 4', color: EDGE_COLOR })
   })
 
-  const idx = new Map(participants.map((p, i) => [p.id, i]))
   msgs.forEach((r, k) => {
     out.suppressed.push(r.id)
     const sx = centerX(idx.get(r.sourceId)!)
-    const tx = r.sourceId === r.targetId ? sx + 66 : centerX(idx.get(r.targetId)!)
-    out.messages.push({ relId: r.id, sx, tx, y: firstY + k * STEP })
+    const selfLoop = r.sourceId === r.targetId
+    const sy = firstY + k * STEP
+    const tx = selfLoop ? sx : centerX(idx.get(r.targetId)!)
+    const ty = selfLoop ? sy + 22 : sy
+    out.messages.push({ relId: r.id, sx, sy, tx, ty, selfLoop })
   })
 
   out.width = width

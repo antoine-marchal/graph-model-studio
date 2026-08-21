@@ -158,6 +158,9 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   timelineEvent: { group: 'Timeline', fields: [
     { key: 'date', label: 'Date', placeholder: 'e.g. 2026 or 2026-03' },
   ] },
+  activityBar: { group: 'Sequence', fields: [
+    { key: 'y', label: 'Vertical position', placeholder: 'e.g. 140' },
+  ] },
   snakeGraph: { group: 'Snake diagram', fields: [
     { key: 'maxColumns', label: 'Maximum columns', placeholder: '5' },
   ] },

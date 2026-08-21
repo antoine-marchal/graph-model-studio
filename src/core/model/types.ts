@@ -82,7 +82,7 @@ export const PertElementTypes = ['pertTask', 'pertMilestone'] as const
 
 export const GanttElementTypes = ['ganttGraph', 'ganttTask', 'ganttMilestone', 'ganttSection'] as const
 
-export const SequenceElementTypes = ['seqGraph', 'participant', 'seqActor'] as const
+export const SequenceElementTypes = ['seqGraph', 'participant', 'seqActor', 'activityBar'] as const
 
 export const MindmapElementTypes = ['mindmapGraph', 'mindmapRoot', 'mindmapNode'] as const
 

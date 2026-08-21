@@ -27,8 +27,32 @@ export function relationEndpoints(connection: Connection): { sourceId: string; t
   }
   const sourceId = unsankey(unanchor(connection.source), connection.sourceHandle)
   const targetId = unsankey(unanchor(connection.target), connection.targetHandle)
-  if (!sourceId || !targetId || sourceId === targetId) return null
+  if (!sourceId || !targetId) return null
   return { sourceId, targetId }
+}
+
+interface SequenceParticipantRect {
+  id: string
+  position: Position
+  width: number
+  height: number
+}
+
+/** Snap an activity bar to the closest participant lifeline after a drag. */
+export function sequenceActivityDrop(
+  position: Position,
+  width: number,
+  participants: SequenceParticipantRect[],
+): { participantId: string; y: number } | null {
+  if (!participants.length) return null
+  const centerX = position.x + width / 2
+  const participant = participants.reduce((nearest, candidate) => {
+    const distance = Math.abs(candidate.position.x + candidate.width / 2 - centerX)
+    const nearestDistance = Math.abs(nearest.position.x + nearest.width / 2 - centerX)
+    return distance < nearestDistance ? candidate : nearest
+  })
+  const lifelineStart = Math.max(...participants.map(candidate => candidate.position.y + candidate.height)) + 2
+  return { participantId: participant.id, y: Math.round(Math.max(lifelineStart, position.y)) }
 }
 
 /** Resolve a React Flow node position into canvas coordinates. */

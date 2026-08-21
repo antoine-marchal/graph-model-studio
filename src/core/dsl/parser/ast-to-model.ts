@@ -18,7 +18,7 @@ function inferNotation(elementType: string): NotationKind {
   const treeTypes = new Set(['treeGraph', 'treeNode'])
   const pertTypes = new Set(['pertTask', 'pertMilestone'])
   const ganttTypes = new Set(['ganttGraph', 'ganttTask', 'ganttMilestone', 'ganttSection'])
-  const sequenceTypes = new Set(['seqGraph', 'participant', 'seqActor'])
+  const sequenceTypes = new Set(['seqGraph', 'participant', 'seqActor', 'activityBar'])
   const mindmapTypes = new Set(['mindmapGraph', 'mindmapRoot', 'mindmapNode'])
   const gitTypes = new Set(['gitGraph', 'commit', 'mergeCommit'])
   const ishikawaTypes = new Set(['problem', 'cause', 'subCause'])

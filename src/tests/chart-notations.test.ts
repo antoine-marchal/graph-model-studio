@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
 import { notationRegistry } from '@/core/notation'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
-import { gitFlowCurve } from '@/features/editor-graph/edges/FloatingEdge'
+import { gitFlowCurve, selfLoopCurve, sequenceLoopCurve } from '@/features/editor-graph/edges/FloatingEdge'
 import type { GraphModel, GraphView } from '@/core/model'
 
 function view(model: GraphModel): GraphView {
@@ -17,7 +17,7 @@ function parse(src: string): GraphModel {
 
 describe('chart notations: registry + parsing', () => {
   it('registers sequence, mindmap, gitgraph, ishikawa, quadrant and timeline types', () => {
-    for (const t of ['seqGraph', 'participant', 'seqActor', 'mindmapRoot', 'mindmapNode',
+    for (const t of ['seqGraph', 'participant', 'seqActor', 'activityBar', 'mindmapRoot', 'mindmapNode',
       'gitGraph', 'commit', 'mergeCommit', 'problem', 'cause', 'subCause',
       'quadrantChart', 'quadrantItem', 'timelineGraph', 'timelineEvent']) {
       expect(notationRegistry.getElementDef(t), t).toBeTruthy()
@@ -30,6 +30,7 @@ describe('chart notations: registry + parsing', () => {
   it('infers the new notations', () => {
     const m = parse(`model {
       p = participant "API"
+      activation = activityBar "Processing"
       r = mindmapRoot "Idea"
       c = commit "c1"
       f = problem "Defects"
@@ -37,6 +38,7 @@ describe('chart notations: registry + parsing', () => {
       t = timelineEvent "Launch"
     }`)
     expect(m.elements['p'].notation).toBe('sequence')
+    expect(m.elements['activation'].notation).toBe('sequence')
     expect(m.elements['r'].notation).toBe('mindmap')
     expect(m.elements['c'].notation).toBe('gitgraph')
     expect(m.elements['f'].notation).toBe('ishikawa')
@@ -49,16 +51,20 @@ describe('sequence graph container', () => {
   const m = parse(`model {
     flow = seqGraph "Login" {
       user = seqActor "User"
-      web = participant "Web App"
+      web = participant "Web App" {
+        processing = activityBar "Processing" { y "160" accentColor "#0ea5e9" }
+      }
       api = participant "API"
     }
     user -> web : message "click login"
     web -> api : asyncMessage "POST /auth"
     api -> web : replyMessage "200 OK"
+    web -> web : message "validate"
   }
   views { view seq "Login flow" { include * autolayout lr } }`)
 
   it('hosts participants in the frame and draws lifelines + ordered messages', () => {
+    view(m).nodeSizes.processing = { width: 18, height: 120 }
     const { nodes, edges } = modelToFlow(m, view(m))
     const frame = nodes.find(n => n.id === 'flow')!
     expect(frame.data.chartFrame).toBeTruthy()
@@ -73,13 +79,42 @@ describe('sequence graph container', () => {
     expect(new Set(heads).size).toBe(1)
     // point nodes parented to the frame, message edges keyed by relation id
     const pts = nodes.filter(n => n.type === 'seqPoint')
-    expect(pts).toHaveLength(6)
+    expect(pts).toHaveLength(8)
     for (const p of pts) expect(p.parentId).toBe('flow')
     const msgEdges = edges.filter(e => String(e.source).startsWith('__seqpt_'))
-    expect(msgEdges).toHaveLength(3)
+    expect(msgEdges).toHaveLength(4)
     for (const e of msgEdges) expect(m.relations[e.id]).toBeTruthy()
     const reply = msgEdges.find(e => m.relations[e.id].type === 'replyMessage')!
     expect(reply.style?.strokeDasharray).toBe('6 4')
+    const loop = msgEdges.find(e => e.data?.chartRelation === 'sequenceLoop')!
+    expect(loop).toBeTruthy()
+    const loopSource = nodes.find(node => node.id === loop.source)!
+    const loopTarget = nodes.find(node => node.id === loop.target)!
+    expect(loopTarget.position.y).toBeGreaterThan(loopSource.position.y)
+
+    const activity = nodes.find(node => node.id === 'processing')!
+    const participant = nodes.find(node => node.id === 'web')!
+    expect(m.elements.processing.parentId).toBe('web')
+    expect(activity.parentId).toBe('flow')
+    expect(activity.data.shape).toBe('activityBar')
+    expect(activity.data.customAccent).toBe(true)
+    expect({ width: activity.width, height: activity.height }).toEqual({ width: 18, height: 120 })
+    expect(activity.position.x + activity.width! / 2).toBe(participant.position.x + participant.width! / 2)
+    expect(activity.position.y).toBe(160)
+    const firstMessagePoint = nodes.find(node => node.id === msgEdges[0].source)!
+    expect(activity.position.y).toBeLessThan(firstMessagePoint.position.y)
+  })
+
+  it('builds reusable loop curves for sequence and ordinary nodes', () => {
+    const ordinary = selfLoopCurve({ x: 10, y: 20, width: 120, height: 60 })
+    expect(ordinary.path).toContain('M')
+    expect(ordinary.start.x).toBe(130)
+    expect(ordinary.end.x).toBe(130)
+    expect(ordinary.label.x).toBeGreaterThan(130)
+
+    const sequence = sequenceLoopCurve({ x: 100, y: 120 }, { x: 100, y: 142 })
+    expect(sequence.path).toContain('154')
+    expect(sequence.label.x).toBe(154)
   })
 })
 
@@ -116,6 +151,7 @@ describe('git graph container', () => {
     expect(branch.targetHandle).toBeUndefined()
     expect(branch.markerEnd).toBeUndefined()
     expect(branch.data).toMatchObject({ chartRelation: 'git' })
+    expect(branch.style?.strokeWidth).toBe(4)
     expect(nodes.find(node => node.id === 'c2')!.zIndex).toBeGreaterThan(branch.zIndex ?? 0)
     // frame carries the lane decor + branch labels
     const frame = nodes.find(n => n.id === 'hist')!

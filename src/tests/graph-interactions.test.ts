@@ -6,6 +6,7 @@ import {
   positionsCenteredAt,
   relationEndpoints,
   resizeSelection,
+  sequenceActivityDrop,
   type ResizeSnapshot,
 } from '@/features/editor-graph/graph-interactions'
 import { createDefaultView, createEmptyModel } from '@/core/model'
@@ -33,6 +34,20 @@ describe('graph interactions', () => {
       sourceHandle: 'l',
       targetHandle: 'sankey:metric:r',
     })).toEqual({ sourceId: 'topic', targetId: 'metric' })
+  })
+
+  it('allows a relation to loop back to the same node', () => {
+    expect(relationEndpoints({ source: 'node', target: 'node', sourceHandle: 'r', targetHandle: 'r' }))
+      .toEqual({ sourceId: 'node', targetId: 'node' })
+  })
+
+  it('snaps an activity bar to the nearest participant lifeline', () => {
+    const participants = [
+      { id: 'left', position: { x: 40, y: 40 }, width: 140, height: 52 },
+      { id: 'right', position: { x: 224, y: 40 }, width: 140, height: 52 },
+    ]
+    expect(sequenceActivityDrop({ x: 275, y: 180 }, 14, participants)).toEqual({ participantId: 'right', y: 180 })
+    expect(sequenceActivityDrop({ x: 90, y: 60 }, 14, participants)).toEqual({ participantId: 'left', y: 94 })
   })
 
   it('resizes every selected node and reduces container left/top padding', () => {

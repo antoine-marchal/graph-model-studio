@@ -271,6 +271,72 @@ export function gitFlowCurve(source: Point, target: Point) {
   }
 }
 
+interface SelfLoopRect extends Point { width: number; height: number }
+
+/** Stable loop geometry shared by every node type. */
+export function selfLoopCurve(rect: SelfLoopRect, side: 't' | 'b' | 'l' | 'r' = 'r') {
+  const gap = 48
+  let points: Point[]
+  let sourcePos: Position
+  let targetPos: Position
+  if (side === 'l') {
+    points = [
+      { x: rect.x, y: rect.y + rect.height * 0.35 },
+      { x: rect.x - gap, y: rect.y + rect.height * 0.35 },
+      { x: rect.x - gap, y: rect.y + rect.height * 0.65 },
+      { x: rect.x, y: rect.y + rect.height * 0.65 },
+    ]
+    sourcePos = targetPos = Position.Left
+  } else if (side === 't') {
+    points = [
+      { x: rect.x + rect.width * 0.65, y: rect.y },
+      { x: rect.x + rect.width * 0.65, y: rect.y - gap },
+      { x: rect.x + rect.width * 0.35, y: rect.y - gap },
+      { x: rect.x + rect.width * 0.35, y: rect.y },
+    ]
+    sourcePos = targetPos = Position.Top
+  } else if (side === 'b') {
+    points = [
+      { x: rect.x + rect.width * 0.35, y: rect.y + rect.height },
+      { x: rect.x + rect.width * 0.35, y: rect.y + rect.height + gap },
+      { x: rect.x + rect.width * 0.65, y: rect.y + rect.height + gap },
+      { x: rect.x + rect.width * 0.65, y: rect.y + rect.height },
+    ]
+    sourcePos = targetPos = Position.Bottom
+  } else {
+    points = [
+      { x: rect.x + rect.width, y: rect.y + rect.height * 0.65 },
+      { x: rect.x + rect.width + gap, y: rect.y + rect.height * 0.65 },
+      { x: rect.x + rect.width + gap, y: rect.y + rect.height * 0.35 },
+      { x: rect.x + rect.width, y: rect.y + rect.height * 0.35 },
+    ]
+    sourcePos = targetPos = Position.Right
+  }
+  return {
+    path: pointsToRoundedPath(points, 8),
+    points,
+    start: points[0],
+    end: points[points.length - 1],
+    label: pointOnPolyline(points, 0.5),
+    sourceLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE),
+    targetLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE, true),
+    sourcePos,
+    targetPos,
+  }
+}
+
+/** UML-style rectangular return drawn at one sequence lifeline. */
+export function sequenceLoopCurve(source: Point, target: Point) {
+  const reach = 54
+  const points = [source, { x: source.x + reach, y: source.y }, { x: source.x + reach, y: target.y }, target]
+  return {
+    path: pointsToRoundedPath(points, 6),
+    label: { x: source.x + reach, y: (source.y + target.y) / 2 },
+    sourceLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE),
+    targetLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE, true),
+  }
+}
+
 interface GanttNodeRect extends Point { width: number; height: number }
 
 /** Finish-to-start attachment points used by every task/milestone combination. */
@@ -300,9 +366,6 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   }, [id])
   if (!sourceNode || !targetNode) return null
 
-  // self-loop fallback
-  if (source === target) return null
-
   const edgeData = data as {
     label?: string
     sourceLabel?: string
@@ -316,17 +379,32 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     snakeRelation?: boolean
     snakeSourceSide?: 'l' | 'r'
     snakeTargetSide?: 'l' | 'r'
-    chartRelation?: 'gantt' | 'git'
+    chartRelation?: 'gantt' | 'git' | 'sequenceLoop'
     ganttTargetMilestone?: boolean
   } | undefined
 
-  let { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
+  const loopSide = (sourceHandleId ?? targetHandleId ?? 'r') as 't' | 'b' | 'l' | 'r'
+  const selfCurve = source === target
+    ? selfLoopCurve({
+      x: sourceNode.internals.positionAbsolute.x,
+      y: sourceNode.internals.positionAbsolute.y,
+      width: sourceNode.measured.width ?? 1,
+      height: sourceNode.measured.height ?? 1,
+    }, loopSide)
+    : undefined
+  let { sx, sy, tx, ty, sourcePos, targetPos } = selfCurve
+    ? {
+      sx: selfCurve.start.x, sy: selfCurve.start.y,
+      tx: selfCurve.end.x, ty: selfCurve.end.y,
+      sourcePos: selfCurve.sourcePos, targetPos: selfCurve.targetPos,
+    }
+    : getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
   const chartRelation = edgeData?.chartRelation
-  if (!sourceHandleId && !chartRelation) {
+  if (!selfCurve && !sourceHandleId && !chartRelation) {
     const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
     sx = p.x; sy = p.y
   }
-  if (!targetHandleId && !chartRelation) {
+  if (!selfCurve && !targetHandleId && !chartRelation) {
     const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, scene.spreadSlots)
     tx = p.x; ty = p.y
   }
@@ -371,6 +449,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   }
   const snakeCurve = edgeData?.snakeRelation && edgeData.snakeSourceSide && edgeData.snakeTargetSide
   const gitCurve = chartRelation === 'git' ? gitFlowCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
+  const sequenceCurve = chartRelation === 'sequenceLoop' ? sequenceLoopCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
 
   let path: string
   let labelX: number
@@ -393,7 +472,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     routed = middle
       ? dedupeColinear([src, ...middle, tgt])
       : dedupeColinear([src, sourceStub, { x: sourceStub.x, y: targetStub.y }, targetStub, tgt])
-  } else if (!snakeCurve && routing === 'orthogonal') {
+  } else if (!selfCurve && !sequenceCurve && !snakeCurve && routing === 'orthogonal') {
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
@@ -461,7 +540,19 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   if (routed) routedEdges.set(id, routed)
   else routedEdges.delete(id)
 
-  if (snakeCurve) {
+  if (selfCurve) {
+    path = selfCurve.path
+    labelX = selfCurve.label.x
+    labelY = selfCurve.label.y
+    sourceLabelPoint = selfCurve.sourceLabelPoint
+    targetLabelPoint = selfCurve.targetLabelPoint
+  } else if (sequenceCurve) {
+    path = sequenceCurve.path
+    labelX = sequenceCurve.label.x
+    labelY = sequenceCurve.label.y
+    sourceLabelPoint = sequenceCurve.sourceLabelPoint
+    targetLabelPoint = sequenceCurve.targetLabelPoint
+  } else if (snakeCurve) {
     const curve = snakeFlowCurve(
       { x: sx, y: sy },
       { x: tx, y: ty },

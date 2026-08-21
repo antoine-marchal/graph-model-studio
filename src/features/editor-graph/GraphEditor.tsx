@@ -45,6 +45,7 @@ import {
   droppedPosition,
   positionsCenteredAt,
   relationEndpoints,
+  sequenceActivityDrop,
   type DragAxis,
 } from './graph-interactions'
 import {
@@ -211,13 +212,15 @@ function GraphEditorInner() {
     // anchors explicitly from the relation properties afterwards.
     const elements = useModelStore.getState().model.elements
     const snakeRelation = elements[endpoints.sourceId]?.notation === 'snake' && elements[endpoints.targetId]?.notation === 'snake'
+    const sequenceMessage = ['participant', 'seqActor'].includes(elements[endpoints.sourceId]?.type)
+      && ['participant', 'seqActor'].includes(elements[endpoints.targetId]?.type)
     dispatch({
       type: 'ADD_RELATION',
       payload: {
         id,
         ...endpoints,
-        notation: snakeRelation ? 'snake' : 'generic',
-        type: snakeRelation ? 'snakeFlow' : 'rel',
+        notation: snakeRelation ? 'snake' : sequenceMessage ? 'sequence' : 'generic',
+        type: snakeRelation ? 'snakeFlow' : sequenceMessage ? 'message' : 'rel',
       },
     })
   }, [dispatch])
@@ -317,6 +320,28 @@ function GraphEditorInner() {
       }
       if (dragged.length === 1) {
         const el = model.elements[node.id]
+        if (el?.type === 'activityBar' && node.parentId) {
+          const participants = nodes
+            .filter(candidate => candidate.parentId === node.parentId && ['participant', 'seqActor'].includes(candidate.data.elementType))
+            .map(candidate => ({
+              id: candidate.id,
+              position: candidate.position,
+              width: candidate.measured?.width ?? candidate.width ?? 1,
+              height: candidate.measured?.height ?? candidate.height ?? 1,
+            }))
+          const placement = sequenceActivityDrop(node.position, node.measured?.width ?? node.width ?? 14, participants)
+          if (placement) {
+            dispatch({
+              type: 'UPDATE_ELEMENT',
+              payload: {
+                id: el.id,
+                parentId: placement.participantId,
+                properties: { ...el.properties, y: String(placement.y) },
+              },
+            })
+            return
+          }
+        }
         const currentGanttHost = el && (el.type === 'ganttTask' || el.type === 'ganttMilestone')
           ? ganttHostId(model, el.id)
           : undefined
@@ -457,6 +482,37 @@ function GraphEditorInner() {
     const def = notationRegistry.getElementDef(elementType)
     let id = createElementId(elementType)
     while (model.elements[id]) id = createElementId(elementType)
+    let parentId: string | undefined
+    let properties: Record<string, string> | undefined
+    if (elementType === 'activityBar') {
+      const host = nodes.find(candidate => {
+        if (candidate.data.elementType !== 'seqGraph') return false
+        const origin = absoluteNodePosition(candidate, nodes)
+        const width = candidate.measured?.width ?? candidate.width ?? 0
+        const height = candidate.measured?.height ?? candidate.height ?? 0
+        return flowX >= origin.x && flowX <= origin.x + width && flowY >= origin.y && flowY <= origin.y + height
+      })
+      if (host) {
+        const origin = absoluteNodePosition(host, nodes)
+        const participants = nodes
+          .filter(candidate => candidate.parentId === host.id && ['participant', 'seqActor'].includes(candidate.data.elementType))
+          .map(candidate => ({
+            id: candidate.id,
+            position: candidate.position,
+            width: candidate.measured?.width ?? candidate.width ?? 1,
+            height: candidate.measured?.height ?? candidate.height ?? 1,
+          }))
+        const placement = sequenceActivityDrop(
+          { x: flowX - origin.x - (def?.defaultWidth ?? 14) / 2, y: flowY - origin.y - (def?.defaultHeight ?? 96) / 2 },
+          def?.defaultWidth ?? 14,
+          participants,
+        )
+        if (placement) {
+          parentId = placement.participantId
+          properties = { y: String(placement.y) }
+        }
+      }
+    }
     dispatch({
       type: 'ADD_ELEMENT',
       payload: {
@@ -464,12 +520,14 @@ function GraphEditorInner() {
         name: def?.label ?? 'New Element',
         type: elementType,
         notation: def?.notation ?? 'generic',
+        ...(parentId ? { parentId } : {}),
+        ...(properties ? { properties } : {}),
         position: { x: flowX - (def?.defaultWidth ?? 150) / 2, y: flowY - (def?.defaultHeight ?? 70) / 2 },
       },
     })
     pushRecentType(elementType)
     setTimeout(() => { selectElements([id]); setEditingElement(id) }, 0)
-  }, [dispatch, model.elements, selectElements, setEditingElement, pushRecentType])
+  }, [dispatch, model.elements, nodes, selectElements, setEditingElement, pushRecentType])
 
   // ── context menu ──
   const onPaneContextMenu = useCallback((e: React.MouseEvent | MouseEvent) => {

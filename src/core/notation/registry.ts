@@ -19,6 +19,7 @@ export type NodeShape =
   | 'ganttBar'
   | 'ganttMilestone'
   | 'ganttSection'
+  | 'activityBar'
   | 'dot' | 'snakeBullet'
   | 'quadrantChart'
   | 'ganttGraph'
@@ -308,6 +309,7 @@ const SEQUENCE_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'seqGraph', label: 'Sequence Graph', notation: 'sequence', shape: 'chartFrame', fill: 'rgba(45,74,102,0.05)', stroke: '#2D4A66', text: '#12283a', accent: '#4A7196', icon: 'none', defaultWidth: 480, defaultHeight: 300 },
   { type: 'participant', label: 'Participant', notation: 'sequence', shape: 'roundedRectangle', fill: '#2D4A66', stroke: '#1D3344', text: '#FFFFFF', accent: '#4A7196', icon: 'none', defaultWidth: 140, defaultHeight: 52 },
   { type: 'seqActor', label: 'Actor (Sequence)', notation: 'sequence', shape: 'stickFigure', fill: '#FDF6E3', stroke: '#8D6E63', text: '#3E2723', accent: '#8D6E63', icon: 'none', defaultWidth: 90, defaultHeight: 96 },
+  { type: 'activityBar', label: 'Activity Bar', notation: 'sequence', shape: 'activityBar', fill: '#7DD3FC', stroke: '#0369A1', text: '#0C4A6E', accent: '#0EA5E9', icon: 'none', defaultWidth: 14, defaultHeight: 96 },
 ]
 
 // ─── Mindmap ─────────────────────────────────────────────────────────────────
