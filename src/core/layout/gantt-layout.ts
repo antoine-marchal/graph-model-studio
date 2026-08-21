@@ -5,11 +5,17 @@ export const GANTT_PX_PER_DAY = 28
 export const GANTT_BAR_H = 30
 export const GANTT_ROW_GAP = 28
 export const GANTT_AXIS_H = 36
+/** Breathing room between the time axis and the first scheduled row. */
+export const GANTT_AXIS_TASK_GAP = 22
 export const GANTT_MILESTONE_SIZE = 26
 /** Horizontal breathing room between a section band and its scheduled rows. */
 export const GANTT_SECTION_INSET = 20
 /** Space below the final row wrapped by a section band. */
 export const GANTT_SECTION_BOTTOM_INSET = 12
+export const GANTT_LABEL_CHAR_WIDTH = 6.5
+export const GANTT_LABEL_INNER_PADDING = 16
+export const GANTT_LABEL_OUTSIDE_GAP = 6
+export const GANTT_LABEL_RIGHT_PADDING = 10
 
 export interface GanttPlacement {
   x: number
@@ -21,6 +27,12 @@ export interface GanttPlacement {
 export interface GanttTick {
   x: number
   label: string
+}
+
+export interface GanttSpecialLine extends GanttTick {}
+
+export interface GanttSubTick extends GanttTick {
+  showLabel: boolean
 }
 
 export interface GanttChart {
@@ -35,7 +47,12 @@ export interface GanttChart {
   baseUnit?: number
   /** label prefix for a unit-based schedule, e.g. "PI" */
   unitPrefix: string
-  axis: { width: number; height: number; ticks: GanttTick[] }
+  pixelsPerUnit: number
+  /** Extra frame width reserved for task labels rendered outside their bars. */
+  labelOverflow: number
+  /** Side chosen for each milestone label so it remains inside the frame. */
+  milestoneLabelSide: Record<string, 'left' | 'right'>
+  axis: { width: number; height: number; ticks: GanttTick[]; subTicks: GanttSubTick[]; specialLines: GanttSpecialLine[] }
   /** 0..100 completion per task (from a `progress "60"` property) */
   progress: Record<string, number>
 }
@@ -46,6 +63,14 @@ export interface GanttChartOptions {
   firstUnit?: number
   /** First date displayed on a date axis (YYYY-MM-DD). */
   firstDate?: string
+  /** Exact chart-body width available inside a manually resized frame. */
+  axisWidth?: number
+  /** `2:"Today"; 2026-01-05:"Launch"` markers. */
+  specialLines?: string
+  /** Optional labels for subdivisions of numeric units, e.g. "IT". */
+  subunitPrefix?: string
+  /** Number of equal subdivisions inside each numeric unit. */
+  maxSubunit?: number
 }
 
 const DAY_MS = 86_400_000
@@ -75,6 +100,26 @@ export function parseGanttUnitStart(raw: string | undefined): number | undefined
 }
 
 const formatUnit = (value: number) => Number.isInteger(value) ? String(value) : String(Number(value.toFixed(3)))
+
+export function ganttTaskLabelWidth(label: string): number {
+  return [...label].length * GANTT_LABEL_CHAR_WIDTH
+}
+
+export function ganttTaskLabelOutside(barWidth: number, label: string): boolean {
+  return barWidth < ganttTaskLabelWidth(label) + GANTT_LABEL_INNER_PADDING
+}
+
+/** Parse labelled unit/date markers while tolerating optional quotes and spaces. */
+export function parseGanttSpecialLines(raw: string | undefined): { at: string; label: string }[] {
+  if (!raw) return []
+  return raw.split(';').flatMap(part => {
+    const match = part.trim().match(/^([^:]+)\s*:\s*(?:"([^"]*)"|'([^']*)'|(.+))$/)
+    if (!match) return []
+    const at = match[1].trim()
+    const label = (match[2] ?? match[3] ?? match[4] ?? '').trim()
+    return at && label ? [{ at, label }] : []
+  })
+}
 
 /** Convert an offset on a computed chart back to the persisted `start` value. */
 export function formatGanttStart(chart: Pick<GanttChart, 'baseDate' | 'baseUnit'>, offset: number): string {
@@ -200,13 +245,19 @@ export function computeGanttChart(
   const placements: Record<string, GanttPlacement> = {}
   const schedule: Record<string, { startDay: number; days: number }> = {}
   const progress: Record<string, number> = {}
-  const timelineW = totalDays * GANTT_PX_PER_DAY
+  const requestedTimelineW = options.axisWidth === undefined
+    ? undefined
+    : Math.max(1, options.axisWidth - GANTT_SECTION_INSET * 2)
+  const pixelsPerUnit = requestedTimelineW === undefined
+    ? GANTT_PX_PER_DAY
+    : requestedTimelineW / totalDays
+  const timelineW = totalDays * pixelsPerUnit
   const chartW = timelineW + GANTT_SECTION_INSET * 2
 
   // A section groups the rows that follow it until the next section (whether
   // those tasks are nested inside it in the DSL or just declared after it), so
   // it renders as a band wrapping its own header row plus every task row.
-  const rowY = (row: number) => GANTT_AXIS_H + row * (GANTT_BAR_H + GANTT_ROW_GAP)
+  const rowY = (row: number) => GANTT_AXIS_H + GANTT_AXIS_TASK_GAP + row * (GANTT_BAR_H + GANTT_ROW_GAP)
   const sectionEnd = new Map<string, number>()
   rows.forEach((el, i) => {
     if (el.type !== 'ganttSection') return
@@ -233,23 +284,28 @@ export function computeGanttChart(
     if (Number.isFinite(p)) progress[el.id] = Math.max(0, Math.min(100, p))
     if (el.type === 'ganttMilestone') {
       placements[el.id] = {
-        x: GANTT_SECTION_INSET + day * GANTT_PX_PER_DAY - GANTT_MILESTONE_SIZE / 2,
+        x: GANTT_SECTION_INSET + day * pixelsPerUnit - GANTT_MILESTONE_SIZE / 2,
         y: y + (GANTT_BAR_H - GANTT_MILESTONE_SIZE) / 2,
         width: GANTT_MILESTONE_SIZE,
         height: GANTT_MILESTONE_SIZE,
       }
     } else {
       placements[el.id] = {
-        x: GANTT_SECTION_INSET + day * GANTT_PX_PER_DAY,
+        x: GANTT_SECTION_INSET + day * pixelsPerUnit,
         y,
-        width: Math.max(days * GANTT_PX_PER_DAY, 10),
+        width: Math.max(days * pixelsPerUnit, 10),
         height: GANTT_BAR_H,
       }
     }
   })
 
-  // ── axis ticks: daily up to 3 weeks, else weekly ──
-  const step = totalDays > 21 ? 7 : 1
+  // ── axis ticks: thin labels when a manually narrowed scale would overlap ──
+  const widestAxisLabel = baseDate
+    ? '00-00'
+    : `${unitPrefix}${formatUnit((baseUnit ?? 1) + totalDays)}`
+  const labelSpacing = Math.max(28, [...widestAxisLabel].length * 5.4 + 4)
+  const responsiveStep = options.axisWidth === undefined ? 1 : Math.ceil(labelSpacing / pixelsPerUnit)
+  const step = Math.max(totalDays > 21 ? 7 : 1, responsiveStep)
   const ticks: GanttTick[] = []
   for (let d = 0; d <= totalDays; d += step) {
     let label: string
@@ -259,11 +315,71 @@ export function computeGanttChart(
     } else {
       label = `${unitPrefix}${formatUnit((baseUnit ?? 1) + d)}`
     }
-    ticks.push({ x: GANTT_SECTION_INSET + d * GANTT_PX_PER_DAY, label })
+    ticks.push({ x: GANTT_SECTION_INSET + d * pixelsPerUnit, label })
   }
 
-  const chartH = GANTT_AXIS_H + rows.length * (GANTT_BAR_H + GANTT_ROW_GAP)
-  return { placements, schedule, totalDays, baseDate, baseUnit, unitPrefix, axis: { width: chartW, height: chartH, ticks }, progress }
+  const subTicks: GanttSubTick[] = []
+  // Preserve intentional whitespace exactly like the main unit prefix
+  // (`subunitPrefix "IT "` renders `IT 1`).
+  const subunitPrefix = options.subunitPrefix ?? ''
+  const maxSubunit = Math.floor(options.maxSubunit ?? 0)
+  if (!baseDate && subunitPrefix.trim() && maxSubunit > 0) {
+    const subunitWidth = pixelsPerUnit / maxSubunit
+    const widestSubunitLabel = `${subunitPrefix}${maxSubunit}`
+    const subunitLabelSpacing = Math.max(24, [...widestSubunitLabel].length * 5.2 + 4)
+    const subunitStep = Math.max(1, Math.ceil(subunitLabelSpacing / subunitWidth))
+    for (let unit = 0; unit < totalDays; unit++) {
+      for (let subunit = 0; subunit < maxSubunit; subunit++) {
+        const index = subunit + 1
+        subTicks.push({
+          x: GANTT_SECTION_INSET + unit * pixelsPerUnit + subunit * subunitWidth,
+          label: `${subunitPrefix}${formatUnit(index)}`,
+          showLabel: subunit === 0 || subunit % subunitStep === 0,
+        })
+      }
+    }
+  }
+
+  const specialLines: GanttSpecialLine[] = []
+  for (const marker of parseGanttSpecialLines(options.specialLines)) {
+    const markerDate = parseGanttDate(marker.at)
+    const markerUnit = parseGanttUnitStart(marker.at)
+    const offset = baseDate && markerDate
+      ? (markerDate.getTime() - baseDate.getTime()) / DAY_MS
+      : !baseDate && markerUnit !== undefined
+        ? markerUnit - (baseUnit ?? 1)
+        : undefined
+    if (offset !== undefined && offset >= 0 && offset <= totalDays) {
+      specialLines.push({ x: GANTT_SECTION_INSET + offset * pixelsPerUnit, label: marker.label })
+    }
+  }
+
+  const chartH = GANTT_AXIS_H + GANTT_AXIS_TASK_GAP + rows.length * (GANTT_BAR_H + GANTT_ROW_GAP)
+  let requiredContentRight = chartW
+  const milestoneLabelSide: Record<string, 'left' | 'right'> = {}
+  for (const el of schedulable) {
+    const placement = placements[el.id]
+    const labelWidth = ganttTaskLabelWidth(el.name)
+    if (el.type === 'ganttMilestone') {
+      const availableLeft = placement.x - GANTT_LABEL_OUTSIDE_GAP
+      const side = labelWidth <= availableLeft ? 'left' : 'right'
+      milestoneLabelSide[el.id] = side
+      if (side === 'right') {
+        requiredContentRight = Math.max(
+          requiredContentRight,
+          placement.x + placement.width + GANTT_LABEL_OUTSIDE_GAP + labelWidth + GANTT_LABEL_RIGHT_PADDING,
+        )
+      }
+      continue
+    }
+    if (!ganttTaskLabelOutside(placement.width, el.name)) continue
+    requiredContentRight = Math.max(
+      requiredContentRight,
+      placement.x + placement.width + GANTT_LABEL_OUTSIDE_GAP + labelWidth + GANTT_LABEL_RIGHT_PADDING,
+    )
+  }
+  const labelOverflow = Math.max(0, requiredContentRight - chartW)
+  return { placements, schedule, totalDays, baseDate, baseUnit, unitPrefix, pixelsPerUnit, labelOverflow, milestoneLabelSide, axis: { width: chartW, height: chartH, ticks, subTicks, specialLines }, progress }
 }
 
 /** True when a view contains at least one visible Gantt element. */

@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { Handle, Position, NodeResizer, useReactFlow, type NodeProps, type ResizeParams } from '@xyflow/react'
 import type { NodeShape, IconKind } from '@/core/notation'
 import type { PertNodeValues, ChartFrame, TreeRow, GridFrame, AnalyticChartFrame } from '@/core/layout'
-import { formatGanttDuration, GANTT_AXIS_H, GANTT_PX_PER_DAY } from '@/core/layout'
+import { formatGanttDuration, ganttTaskLabelOutside, GANTT_PX_PER_DAY } from '@/core/layout'
 import type { IshikawaFrame, GanttFrame } from '../model-to-flow'
 import { TreeGraphView } from './TreeGraphView'
 import { GridGraphView } from './GridGraphView'
@@ -35,6 +35,12 @@ export interface GraphNodeData extends Record<string, unknown> {
   pert?: PertNodeValues
   /** 0..100 completion for Gantt bars */
   progress?: number
+  /** Current responsive horizontal scale inherited from the Gantt frame. */
+  ganttPixelsPerUnit?: number
+  /** Side selected by the layout for a milestone label. */
+  ganttMilestoneLabelSide?: 'left' | 'right'
+  /** Contrast-safe text inherited from the enclosing Gantt frame. */
+  ganttExternalText?: string
   /** small badge above a dot node (e.g. a commit's `tag "v1.0"` property) */
   badge?: string
   /** element properties passed through for shapes that read them (quadrantChart labels) */
@@ -321,22 +327,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       </div>
     )
   } else if (d.ganttGraph) {
-    const fr = d.ganttGraph
-    const axisTop = fr.top
-    const axisBase = axisTop + GANTT_AXIS_H
     body = (
       <div className={cn('relative h-full w-full overflow-hidden rounded-lg', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
         <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
-        <svg className="pointer-events-none absolute inset-0 overflow-visible" width="100%" height="100%">
-          <line x1={8} y1={axisBase} x2={width - 8} y2={axisBase} stroke={stroke} strokeWidth={1} strokeOpacity={0.6} />
-          {fr.ticks.map((t, i) => (
-            <g key={i}>
-              <line x1={16 + t.x} y1={axisBase} x2={16 + t.x} y2={height - 8} stroke={stroke} strokeWidth={1} strokeOpacity={0.22} strokeDasharray="2 4" />
-              <text x={16 + t.x + 3} y={axisBase - 5} fontSize={9} fill="var(--fg-muted)" fontWeight={600} fontFamily="inherit">{t.label}</text>
-            </g>
-          ))}
-        </svg>
       </div>
     )
   } else if (d.ishikawa) {
@@ -558,7 +552,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     )
   } else if (shape === 'ganttBar') {
     const prog = d.progress
-    const labelOutside = width < d.label.length * 6.5 + 16
+    const labelOutside = ganttTaskLabelOutside(width, d.label)
     body = (
       <div className={cn('relative h-full w-full rounded', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
@@ -566,21 +560,28 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           <div className="absolute inset-y-0 left-0 rounded-l" style={{ width: `${prog}%`, background: stroke, opacity: 0.55 }} />
         )}
         <div
-          className={cn('absolute inset-y-0 z-10 flex items-center whitespace-nowrap text-[10px] font-semibold', labelOutside ? 'right-full pr-1.5 text-right' : 'left-2')}
-          style={{ color: labelOutside ? 'var(--fg)' : text }}
+          className={cn('absolute z-20 flex whitespace-nowrap text-[10px] font-semibold', labelOutside ? 'bottom-1/2 left-full mb-1 ml-1.5' : 'inset-y-0 left-2 items-center')}
+          style={{ color: labelOutside ? d.ganttExternalText ?? 'var(--fg)' : text }}
         >
           {d.label}
         </div>
       </div>
     )
   } else if (shape === 'ganttMilestone') {
+    const labelOnRight = d.ganttMilestoneLabelSide === 'right'
     body = (
       <div className={cn('relative h-full w-full', ring && 'rounded ' + ring)}>
         <Handles stroke={stroke} />
         <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="absolute inset-0">
           <polygon points={`${width / 2},1 ${width - 1},${height / 2} ${width / 2},${height - 1} 1,${height / 2}`} fill={fill} stroke={stroke} strokeWidth="1.5" />
         </svg>
-        <span className="absolute right-full top-1/2 z-10 mr-1.5 -translate-y-1/2 whitespace-nowrap text-right text-[10px] font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+        <span
+          className={cn(
+            'absolute top-1/2 z-10 -translate-y-1/2 whitespace-nowrap text-[10px] font-semibold',
+            labelOnRight ? 'left-full ml-1.5 text-left' : 'right-full mr-1.5 text-right',
+          )}
+          style={{ color: d.ganttExternalText ?? 'var(--fg)' }}
+        >{d.label}</span>
       </div>
     )
   } else if (shape === 'snakeBullet') {
@@ -695,7 +696,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         resizeSession.current = null
         if (session && isGanttTask) {
           const element = useModelStore.getState().model.elements[id]
-          const duration = formatGanttDuration(p.width / GANTT_PX_PER_DAY, element?.properties?.start, element?.properties?.duration)
+          const duration = formatGanttDuration(p.width / (d.ganttPixelsPerUnit ?? GANTT_PX_PER_DAY), element?.properties?.start, element?.properties?.duration)
           dispatch({ type: 'UPDATE_ELEMENT', payload: { id, properties: { ...element?.properties, duration } } })
         } else if (activeViewId && session) {
           const mutation = resizeSelection(id, session.start, p, session.selected, session.all)

@@ -138,8 +138,11 @@ interface PropFieldSpec { key: string; label: string; placeholder: string; multi
 const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[] }> = {
   ganttGraph: { group: 'Schedule axis', fields: [
     { key: 'prefix', label: 'Unit prefix', placeholder: 'e.g. PI, Sprint, D' },
+    { key: 'subunitPrefix', label: 'Subunit prefix', placeholder: 'e.g. IT' },
+    { key: 'maxSubunit', label: 'Subunits per unit', placeholder: 'e.g. 3' },
     { key: 'firstUnit', label: 'First unit', placeholder: 'e.g. 10' },
     { key: 'firstDate', label: 'First date (YYYY-MM-DD)', placeholder: 'e.g. 2026-01-01' },
+    { key: 'specialLines', label: 'Special lines', placeholder: '2:"Now"; 5:"Goal"', multiline: true },
   ] },
   ganttTask: { group: 'Schedule', fields: [
     { key: 'start', label: 'Start (date or unit)', placeholder: 'e.g. 2026-08-03 or 1' },

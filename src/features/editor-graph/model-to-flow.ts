@@ -4,10 +4,10 @@ import type { GraphModel, GraphView, Position } from '@/core/model'
 import { notationRegistry } from '@/core/notation'
 import { contrastTextColor, deriveAccentColors, normalizeHexColor } from '@/core/notation'
 import {
-  runLayout, computeGanttChart, computePert,
+  runLayout, computeGanttChart, computePert, GANTT_PX_PER_DAY,
   layoutSequenceGraph, layoutGitGraphFrame, layoutTimelineGraph, layoutSnakeGraph, layoutTreeGraph,
   layoutMindmapGraph, layoutGridGraph,
-  type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type PertResult,
+  type LayoutNodeInput, type LayoutEdgeInput, type LayoutEngine, type GanttChart, type GanttTick, type GanttSubTick, type PertResult,
   type ChartFrame, type ChartLayout, type SeqMessage, type TreeRow, type GridFrame, type AnalyticChartFrame, buildAnalyticChart, measureSankeyHeight,
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
@@ -57,6 +57,9 @@ export interface GanttFrame {
   width: number
   height: number
   ticks: GanttTick[]
+  subTicks: GanttSubTick[]
+  specialLines: GanttTick[]
+  pixelsPerUnit: number
 }
 
 // Chart-container element types and which child element types they host. A
@@ -98,6 +101,10 @@ interface NestedLayout {
   treeAnchorOf: Record<string, { leftX: number; rightX: number; y: number }>
   /** 0..100 progress per gantt task (union across every gantt graph) */
   ganttProgress: Record<string, number>
+  /** Responsive horizontal scale per hosted Gantt row. */
+  ganttPixelsPerUnit: Record<string, number>
+  /** Label side selected for hosted Gantt milestones. */
+  ganttMilestoneLabelSide: Record<string, 'left' | 'right'>
   /** React Flow parent (the enclosing chart container) for each hosted child */
   hostOf: Record<string, string>
   /** sequence messages per seqGraph container (container-local coordinates) */
@@ -181,6 +188,8 @@ export function computeNestedLayout(
   // one gantt chart per ganttGraph, scheduled over just that graph's rows
   const ganttCharts: Record<string, GanttChart> = {}
   const ganttProgress: Record<string, number> = {}
+  const ganttPixelsPerUnit: Record<string, number> = {}
+  const ganttMilestoneLabelSide: Record<string, 'left' | 'right'> = {}
   // container-local placement per hosted child (gantt + seq/git/timeline)
   const chartPlacement: Record<string, { x: number; y: number; width: number; height: number }> = {}
   const containerSize: Record<string, { width: number; height: number }> = {}
@@ -189,14 +198,21 @@ export function computeNestedLayout(
     if (!visible.has(el.id)) continue
     if (el.type === 'ganttGraph') {
       const hosted = new Set(hostedIds(el.id))
+      const manualWidth = (view.nodeSizes ?? {})[el.id]?.width
       const chart = computeGanttChart(model, hosted, {
         unitPrefix: el.properties?.['prefix'] ?? 'D',
         firstUnit: Number(el.properties?.['firstUnit']),
         firstDate: el.properties?.['firstDate'],
+        axisWidth: manualWidth === undefined ? undefined : Math.max(80, manualWidth - CONTAINER_PAD * 2),
+        specialLines: el.properties?.['specialLines'],
+        subunitPrefix: el.properties?.['subunitPrefix'],
+        maxSubunit: Number(el.properties?.['maxSubunit']),
       })
       if (!chart) continue
       ganttCharts[el.id] = chart
       for (const rid of Object.keys(chart.placements)) chartPlacement[rid] = chart.placements[rid]
+      for (const rid of Object.keys(chart.placements)) ganttPixelsPerUnit[rid] = chart.pixelsPerUnit
+      Object.assign(ganttMilestoneLabelSide, chart.milestoneLabelSide)
       Object.assign(ganttProgress, chart.progress)
     } else if (CHART_FRAME_TYPES.has(el.type)) {
       const hosted = new Set(hostedIds(el.id))
@@ -342,9 +358,15 @@ export function computeNestedLayout(
       const manual = (view.nodeSizes ?? {})[parentKey]
       const bodyW = chart?.axis.width ?? 240
       const bodyH = chart?.axis.height ?? 120
-      const W = Math.max(PADX * 2 + bodyW, manual?.width ?? 0)
+      const W = (manual?.width ?? (PADX * 2 + bodyW)) + (chart?.labelOverflow ?? 0)
       const H = Math.max(TITLE + bodyH + CONTAINER_PAD, manual?.height ?? 0)
-      ganttFrames[parentKey] = { top: TITLE, width: W, height: H, ticks: chart?.axis.ticks ?? [] }
+      ganttFrames[parentKey] = {
+        top: TITLE, width: W, height: H,
+        ticks: chart?.axis.ticks ?? [],
+        subTicks: chart?.axis.subTicks ?? [],
+        specialLines: chart?.axis.specialLines ?? [],
+        pixelsPerUnit: chart?.pixelsPerUnit ?? GANTT_PX_PER_DAY,
+      }
       return { width: W, height: H }
     }
 
@@ -463,7 +485,7 @@ export function computeNestedLayout(
   }
 
   layoutLevel(ROOT)
-  return { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations }
+  return { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, ganttPixelsPerUnit, ganttMilestoneLabelSide, hostOf, seqMessagesByHost, suppressedRelations }
 }
 
 /**
@@ -560,7 +582,7 @@ export function modelToFlow(
   settings: LayoutSettings = { engine: 'layered' },
 ): { nodes: GraphNode[]; edges: GraphEdge[] } {
   const visible = getVisibleElementIds(model, view)
-  const { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
+  const { positions, sizes, ishikawa, ganttFrames, chartFrames, gridFrames, analyticCharts, treeRoots, consumed, treeAnchorOf, ganttProgress, ganttPixelsPerUnit, ganttMilestoneLabelSide, hostOf, seqMessagesByHost, suppressedRelations } = computeNestedLayout(model, view, settings)
 
   // every treeNode gets a small connect dot at its label end so the user can
   // drag a relation from it; existing DSL relations reuse the same anchor
@@ -742,7 +764,11 @@ export function modelToFlow(
       } as CSSProperties,
       // Snake lanes deliberately run through bullet centres. Keep the complete
       // bullet node (disc, title and metadata) above every relation layer.
-      zIndex: el.type === 'snakeBullet' || el.notation === 'gitgraph' ? 3000 + d : d,
+      zIndex: el.type === 'ganttTask' || el.type === 'ganttMilestone'
+        ? 3000 + d
+        : el.type === 'ganttSection'
+          ? 1000 + d
+          : el.type === 'snakeBullet' || el.notation === 'gitgraph' ? 3000 + d : d,
       data: {
         label: el.name,
         elementType: el.type,
@@ -765,6 +791,8 @@ export function modelToFlow(
         isContainer: container && !placed,
         pert: pert?.nodes[id],
         progress: ganttProgress[id],
+        ganttPixelsPerUnit: ganttPixelsPerUnit[id],
+        ganttMilestoneLabelSide: ganttMilestoneLabelSide[id],
         badge: el.notation === 'gitgraph'
           ? el.properties?.['tag']
           : el.notation === 'snake'
@@ -789,6 +817,43 @@ export function modelToFlow(
       ...(useParent ? { parentId: rfParent } : {}),
     }
   })
+
+  for (const node of nodes) {
+    if (node.data.elementType !== 'ganttTask') continue
+    const host = node.parentId ? nodes.find(candidate => candidate.id === node.parentId) : undefined
+    if (host?.data.ganttGraph) node.data.ganttExternalText = host.data.text
+  }
+
+  // Axis/grid chrome needs its own stacking context: above accent-colored
+  // section bands, below Gantt relations, tasks and milestones.
+  for (const [hostId, frame] of Object.entries(ganttFrames)) {
+    const host = nodes.find(node => node.id === hostId)
+    if (!host) continue
+    nodes.push({
+      id: `__gantt_axis__${hostId}`,
+      type: 'ganttAxis',
+      parentId: hostId,
+      position: { x: 0, y: 0 },
+      width: frame.width,
+      height: frame.height,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      connectable: false,
+      zIndex: 2000,
+      style: { width: frame.width, height: frame.height, pointerEvents: 'none' },
+      data: {
+        width: frame.width,
+        height: frame.height,
+        axisTop: frame.top,
+        offsetX: CONTAINER_PAD,
+        ticks: frame.ticks,
+        subTicks: frame.subTicks,
+        specialLines: frame.specialLines,
+        stroke: host.data.stroke,
+      },
+    } as unknown as GraphNode)
+  }
 
   // sequence message endpoints: invisible points parented to their seqGraph so
   // they move with the frame; positions are container-local
@@ -960,7 +1025,7 @@ export function modelToFlow(
         // React Flow adds a child node's z-index to its connected edges. The
         // negative offset keeps Snake rails above the graph container while
         // leaving each bullet (including its label) one layer higher.
-        zIndex: snakeRelation ? -1 : gitRelation ? 1 : 1000,
+        zIndex: snakeRelation ? -1 : ganttRelation ? 2500 : gitRelation ? 1 : 1000,
       })
       continue
     }

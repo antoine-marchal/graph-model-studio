@@ -36,3 +36,7 @@ vscode-extension/pnpm-workspace.yaml
 
 test.gmc
 test.md
+
+output
+.playwright-cli
+.agents

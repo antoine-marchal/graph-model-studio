@@ -324,7 +324,9 @@ function GraphEditorInner() {
           const chart = ganttChartFor(model, currentGanttHost)
           if (chart) {
             const timelineX = node.position.x - 16 + (el.type === 'ganttMilestone' ? GANTT_MILESTONE_SIZE / 2 : 0)
-            const offset = Math.max(0, Math.round(timelineX / GANTT_PX_PER_DAY))
+            const hostNode = nodes.find(candidate => candidate.id === currentGanttHost)
+            const scale = hostNode?.data.ganttGraph?.pixelsPerUnit ?? GANTT_PX_PER_DAY
+            const offset = Math.max(0, Math.round(timelineX / scale))
             dispatch({
               type: 'UPDATE_ELEMENT',
               payload: { id: el.id, properties: { ...el.properties, start: formatGanttStart(chart, offset) } },
@@ -417,7 +419,8 @@ function GraphEditorInner() {
             const chart = ganttChartFor(model, newGanttHost)
             const hostNode = liveNodes.find(candidate => candidate.id === newGanttHost)
             const hostOrigin = hostNode ? absoluteNodePosition(hostNode, liveNodes) : { x: 0, y: 0 }
-            const offset = Math.max(0, Math.round((drop.x - hostOrigin.x - 16) / GANTT_PX_PER_DAY))
+            const scale = hostNode?.data.ganttGraph?.pixelsPerUnit ?? GANTT_PX_PER_DAY
+            const offset = Math.max(0, Math.round((drop.x - hostOrigin.x - 16) / scale))
             dispatch({
               type: 'UPDATE_ELEMENT',
               payload: {

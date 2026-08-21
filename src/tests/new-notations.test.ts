@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
 import { notationRegistry } from '@/core/notation'
 import {
-  computePert, computeGanttChart, formatGanttDuration, formatGanttStart,
-  parseGanttDuration, parseGanttDate, parseGanttUnitStart, GANTT_PX_PER_DAY, GANTT_AXIS_H,
+  computePert, computeGanttChart, formatGanttDuration, formatGanttStart, parseGanttSpecialLines,
+  parseGanttDuration, parseGanttDate, parseGanttUnitStart, GANTT_PX_PER_DAY, GANTT_AXIS_H, GANTT_AXIS_TASK_GAP,
   GANTT_SECTION_INSET,
 } from '@/core/layout'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
@@ -151,6 +151,91 @@ describe('Gantt scheduling and layout', () => {
     expect(formatGanttStart(dateChart, 3)).toBe('2026-01-13')
   })
 
+  it('stretches and shrinks the time scale to an explicit chart width', () => {
+    const m = parse(`model { graph = ganttGraph { task = ganttTask { start "1" duration "2" } later = ganttTask { start "5" duration "1" } } }`)
+    const wide = computeGanttChart(m, new Set(['task', 'later']), { axisWidth: 640 })!
+    const narrow = computeGanttChart(m, new Set(['task', 'later']), { axisWidth: 120 })!
+    expect(wide.axis.width).toBe(640)
+    expect(narrow.axis.width).toBe(120)
+    expect(wide.pixelsPerUnit).toBeGreaterThan(narrow.pixelsPerUnit)
+    expect(wide.placements.task.width).toBeCloseTo(wide.pixelsPerUnit * 2)
+    expect(narrow.placements.later.x).toBeCloseTo(GANTT_SECTION_INSET + narrow.pixelsPerUnit * 4)
+    expect(narrow.axis.ticks.length).toBeLessThan(wide.axis.ticks.length)
+    expect(narrow.axis.ticks[1].x - narrow.axis.ticks[0].x).toBeGreaterThanOrEqual(28)
+  })
+
+  it('repeats an evenly divided numeric subunit timeline for every major unit', () => {
+    const m = parse(`model {
+      graph = ganttGraph {
+        first = ganttTask { start "1" duration "1" }
+        last = ganttTask { start "3" duration "1" }
+      }
+    }`)
+    const chart = computeGanttChart(m, new Set(['first', 'last']), {
+      unitPrefix: 'PI ', subunitPrefix: 'IT ', maxSubunit: 3, axisWidth: 400,
+    })!
+    expect(chart.axis.ticks.slice(0, 2).map(tick => tick.label)).toEqual(['PI 1', 'PI 2'])
+    expect(chart.axis.subTicks.slice(0, 6).map(tick => tick.label)).toEqual(['IT 1', 'IT 2', 'IT 3', 'IT 1', 'IT 2', 'IT 3'])
+    const [it1, it2, it3] = chart.axis.subTicks
+    const pi2 = chart.axis.ticks[1]
+    expect(it2.x - it1.x).toBeCloseTo(it3.x - it2.x)
+    expect(pi2.x - it3.x).toBeCloseTo(it2.x - it1.x)
+    expect(chart.axis.subTicks[3].x).toBeCloseTo(pi2.x)
+    expect(chart.axis.subTicks.every(tick => tick.showLabel)).toBe(true)
+  })
+
+  it('reserves only the width needed by an external task label', () => {
+    const m = parse(`model {
+      graph = ganttGraph {
+        first = ganttTask "Short" { start "2026-08-21" duration "5d" }
+        last = ganttTask "Tournée spéciale " { start "2026-09-03" duration "2d" }
+        milestone = ganttMilestone "Done" { start "2026-09-06" }
+      }
+    }`)
+    const chart = computeGanttChart(m, new Set(['first', 'last', 'milestone']), { axisWidth: 336 })!
+    expect(chart.axis.ticks.length).toBeLessThan(chart.totalDays + 1)
+    expect(chart.labelOverflow).toBeGreaterThan(0)
+    expect(chart.labelOverflow).toBeLessThan(140)
+  })
+
+  it('moves an early milestone label right and reserves enough frame width', () => {
+    const m = parse(`model {
+      graph = ganttGraph {
+        milestone = ganttMilestone "Gantt Milestone" { start "2026-08-21" }
+        later = ganttTask "Later" { start "2026-08-22" duration "1d" }
+      }
+    }`)
+    const chart = computeGanttChart(m, new Set(['milestone', 'later']), { axisWidth: 120 })!
+    expect(chart.milestoneLabelSide.milestone).toBe('right')
+    expect(chart.labelOverflow).toBeGreaterThan(0)
+  })
+
+  it('keeps a late milestone label on the left when it fits', () => {
+    const m = parse(`model {
+      graph = ganttGraph {
+        first = ganttTask "First" { start "2026-08-21" duration "1d" }
+        milestone = ganttMilestone "Done" { start "2026-08-28" }
+      }
+    }`)
+    const chart = computeGanttChart(m, new Set(['first', 'milestone']), { axisWidth: 240 })!
+    expect(chart.milestoneLabelSide.milestone).toBe('left')
+  })
+
+  it('parses and places labelled special lines on unit and date scales', () => {
+    expect(parseGanttSpecialLines(`2:"Aujourd'hui"; 5:'Demain'`)).toEqual([
+      { at: '2', label: "Aujourd'hui" },
+      { at: '5', label: 'Demain' },
+    ])
+    const units = parse(`model { graph = ganttGraph { task = ganttTask { start "1" duration "5" } } }`)
+    const unitChart = computeGanttChart(units, new Set(['task']), { specialLines: `2:"Aujourd'hui"; 5:"Demain"` })!
+    expect(unitChart.axis.specialLines.map(line => line.label)).toEqual(["Aujourd'hui", 'Demain'])
+    expect(unitChart.axis.specialLines[0].x).toBeCloseTo(GANTT_SECTION_INSET + unitChart.pixelsPerUnit)
+
+    const dates = parse(`model { graph = ganttGraph { task = ganttTask { start "2026-01-01" duration "5d" } } }`)
+    const dateChart = computeGanttChart(dates, new Set(['task']), { specialLines: `2026-01-03:"Review"` })!
+    expect(dateChart.axis.specialLines[0].x).toBeCloseTo(GANTT_SECTION_INSET + dateChart.pixelsPerUnit * 2)
+  })
+
   it('schedules from explicit dates and dependencies', () => {
     const m = parse(`model {
       spec = ganttTask "Spec" { start "2026-01-05" duration "3d" }
@@ -186,11 +271,13 @@ describe('Gantt scheduling and layout', () => {
     }
     views { view g { include * autolayout lr } }`)
     const { nodes } = modelToFlow(m, view(m))
-    // the frame carries the axis ticks; no separate axis node exists
+    // the frame carries axis data and a synthetic overlay paints it above sections
     const frame = nodes.find(n => n.id === 'chart')!
     expect(frame.data.ganttGraph).toBeTruthy()
     expect(frame.data.ganttGraph!.ticks.length).toBeGreaterThan(0)
-    expect(nodes.find(n => n.id === '__gantt_axis__')).toBeUndefined()
+    const axis = nodes.find(n => n.id === '__gantt_axis__chart')!
+    expect(axis.parentId).toBe('chart')
+    expect(axis.zIndex).toBe(2000)
 
     const a = nodes.find(n => n.id === 'a')!
     const b = nodes.find(n => n.id === 'b')!
@@ -199,7 +286,7 @@ describe('Gantt scheduling and layout', () => {
     expect(b.parentId).toBe('chart')
     // positions are relative to the frame (title + axis offset)
     expect(a.position.x).toBe(16 + GANTT_SECTION_INSET)
-    expect(a.position.y).toBe(28 + GANTT_AXIS_H)
+    expect(a.position.y).toBe(28 + GANTT_AXIS_H + GANTT_AXIS_TASK_GAP)
     expect(a.width).toBe(2 * GANTT_PX_PER_DAY)
     expect(b.position.x).toBe(16 + GANTT_SECTION_INSET + 2 * GANTT_PX_PER_DAY)
     expect(b.width).toBe(3 * GANTT_PX_PER_DAY)
@@ -207,6 +294,30 @@ describe('Gantt scheduling and layout', () => {
     expect(b.position.y).toBeGreaterThan(a.position.y)
     // frame grows to wrap the chart
     expect(frame.width!).toBeGreaterThanOrEqual(b.position.x + b.width!)
+  })
+
+  it('uses the persisted frame width as the responsive Gantt scale', () => {
+    const m = parse(`model {
+      chart = ganttGraph "Plan" { specialLines "2:Today"
+        a = ganttTask "A label longer than its bar" { start "1" duration "1" }
+        b = ganttTask "B" { start "5" duration "1" }
+      }
+      a -> b
+    }
+    views { view g { include * } }`)
+    const graphView = view(m)
+    graphView.nodeSizes.chart = { width: 400, height: 300 }
+    const { nodes } = modelToFlow(m, graphView)
+    const frame = nodes.find(node => node.id === 'chart')!
+    const a = nodes.find(node => node.id === 'a')!
+    const b = nodes.find(node => node.id === 'b')!
+    expect(frame.width).toBe(400)
+    expect(frame.data.ganttGraph?.specialLines).toHaveLength(1)
+    expect(a.data.ganttPixelsPerUnit).toBe(frame.data.ganttGraph?.pixelsPerUnit)
+    expect(b.position.x + b.width!).toBeCloseTo(400 - 16 - GANTT_SECTION_INSET)
+    expect(a.zIndex).toBeGreaterThan(frame.zIndex!)
+    const axis = nodes.find(node => node.id === '__gantt_axis__chart')!
+    expect(axis.zIndex).toBeGreaterThan(nodes.find(node => node.id === 'chart')!.zIndex!)
   })
 
   it('forces Gantt dependencies to ignore persisted anchors', () => {
@@ -218,6 +329,7 @@ describe('Gantt scheduling and layout', () => {
     expect(edges[0].sourceHandle).toBeUndefined()
     expect(edges[0].targetHandle).toBeUndefined()
     expect(edges[0].data).toMatchObject({ chartRelation: 'gantt' })
+    expect(edges[0].zIndex).toBe(2500)
   })
 
   it('routes all task/milestone combinations with milestone-aware corners', () => {
@@ -274,9 +386,12 @@ describe('Gantt scheduling and layout', () => {
     }
     // the section band spans its header row plus both task rows
     const band = nodes.find(n => n.id === 'p1')!
+    const axis = nodes.find(n => n.id === '__gantt_axis__chart')!
     const spec = nodes.find(n => n.id === 'spec')!
     const rev = nodes.find(n => n.id === 'rev')!
     expect(band.height!).toBeGreaterThan(spec.height! + rev.height!)
+    expect(band.zIndex).toBeLessThan(axis.zIndex!)
+    expect(axis.zIndex).toBeLessThan(spec.zIndex!)
     for (const t of [spec, rev]) {
       expect(t.position.x).toBeGreaterThan(band.position.x)
       expect(t.position.x + t.width!).toBeLessThan(band.position.x + band.width!)
