@@ -404,7 +404,9 @@ function GraphEditorInner() {
         }
         // chart children (gantt/seq/git/timeline rows) reorder among their model
         // siblings by drop position instead of moving freely
-        const axis = el ? CHART_CHILD_AXIS[el.type] : undefined
+        let axis = el ? CHART_CHILD_AXIS[el.type] : undefined
+        const chartHost = el?.parentId ? model.elements[el.parentId] : undefined
+        if (axis === 'x' && (chartHost?.type === 'gitGraph' || chartHost?.type === 'timelineGraph') && chartHost.properties?.orientation === 'vertical') axis = 'y'
         if (axis && el?.parentId) {
           const sibs = Object.values(model.elements).filter(e => e.parentId === el.parentId && CHART_CHILD_AXIS[e.type])
           const live = new Map(nodes.map(n => [n.id, n.position]))

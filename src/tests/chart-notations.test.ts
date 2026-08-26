@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
 import { notationRegistry } from '@/core/notation'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
-import { gitFlowCurve, selfLoopCurve, sequenceLoopCurve } from '@/features/editor-graph/edges/FloatingEdge'
+import { gitFlowCurve, selfLoopCurve, sequenceLoopCurve, shouldRouteOrthogonally } from '@/features/editor-graph/edges/FloatingEdge'
 import type { GraphModel, GraphView } from '@/core/model'
 
 function view(model: GraphModel): GraphView {
@@ -98,7 +98,9 @@ describe('sequence graph container', () => {
     expect(activity.parentId).toBe('flow')
     expect(activity.data.shape).toBe('activityBar')
     expect(activity.data.customAccent).toBe(true)
-    expect({ width: activity.width, height: activity.height }).toEqual({ width: 18, height: 120 })
+    // The self-message lands just below the requested bar, so the bar grows to
+    // cover both of its connection points.
+    expect({ width: activity.width, height: activity.height }).toEqual({ width: 18, height: 148 })
     expect(activity.position.x + activity.width! / 2).toBe(participant.position.x + participant.width! / 2)
     expect(activity.position.y).toBe(160)
     const firstMessagePoint = nodes.find(node => node.id === msgEdges[0].source)!
@@ -111,10 +113,19 @@ describe('sequence graph container', () => {
     expect(ordinary.start.x).toBe(130)
     expect(ordinary.end.x).toBe(130)
     expect(ordinary.label.x).toBeGreaterThan(130)
+    expect(selfLoopCurve({ x: 10, y: 20, width: 120, height: 60 }, 'r', 0).path).not.toContain('Q')
 
     const sequence = sequenceLoopCurve({ x: 100, y: 120 }, { x: 100, y: 142 })
     expect(sequence.path).toContain('154')
     expect(sequence.label.x).toBe(154)
+  })
+
+  it('always routes auto anchors orthogonally with curved routing selected', () => {
+    expect(shouldRouteOrthogonally('curved')).toBe(true)
+    expect(shouldRouteOrthogonally('curved', 'b')).toBe(true)
+    expect(shouldRouteOrthogonally('curved', undefined, 'l')).toBe(true)
+    expect(shouldRouteOrthogonally('curved', 'r', 'l')).toBe(false)
+    expect(shouldRouteOrthogonally('curved', 'r', 'l', true)).toBe(true)
   })
 })
 
@@ -167,6 +178,42 @@ describe('git graph container', () => {
     expect(curve.controls[0].x).toBeGreaterThan(0)
     expect(curve.controls[1].x).toBeLessThan(120)
     expect(curve.path).toContain(' C ')
+  })
+
+  it('flows commits top to bottom in vertical orientation', () => {
+    const m = parse(`model {
+      hist = gitGraph "History" { orientation "vertical"
+        c1 = commit "init"
+        c2 = commit "feat" { branch "feature" }
+        c3 = commit "more" { branch "feature" }
+        c4 = mergeCommit "merge"
+      }
+      c1 -> c2
+      c2 -> c3
+      c3 -> c4
+    }
+    views { view g "History" { include * autolayout lr } }`)
+    const { nodes, edges } = modelToFlow(m, view(m))
+    const center = (id: string) => {
+      const node = nodes.find(candidate => candidate.id === id)!
+      return { x: node.position.x + node.width! / 2, y: node.position.y + node.height! / 2 }
+    }
+    const ys = ['c1', 'c2', 'c3', 'c4'].map(id => center(id).y)
+    expect([...ys].sort((a, b) => a - b)).toEqual(ys)
+    expect(center('c1').x).toBe(center('c4').x)
+    expect(center('c2').x).toBe(center('c3').x)
+    expect(center('c1').x).not.toBe(center('c2').x)
+    expect(edges.filter(edge => m.relations[edge.id]).every(edge => edge.data?.gitOrientation === 'vertical')).toBe(true)
+
+    const frame = nodes.find(node => node.id === 'hist')!
+    expect(frame.height).toBeGreaterThan(frame.width!)
+    expect(frame.data.chartFrame!.lines.every(line => line.x1 === line.x2)).toBe(true)
+
+    const curve = gitFlowCurve({ x: 0, y: 0 }, { x: 60, y: 120 }, 'vertical')
+    expect(curve.controls[0].x).toBe(0)
+    expect(curve.controls[1].x).toBe(60)
+    expect(curve.controls[0].y).toBeGreaterThan(0)
+    expect(curve.controls[1].y).toBeLessThan(120)
   })
 })
 
@@ -270,6 +317,27 @@ describe('timeline graph container', () => {
     expect(pos('e3').y).toBeLessThan(pos('e2').y)
     // dates from properties print on the spine
     const frame = nodes.find(n => n.id === 'tl')!
+    expect(frame.data.chartFrame!.texts.map(t => t.text)).toEqual(['2019', '2021', '2023'])
+  })
+
+  it('orders events top to bottom around a vertical spine', () => {
+    const m = parse(`model {
+      tl = timelineGraph "History" { orientation "vertical"
+        e1 = timelineEvent "Founded" { date "2019" }
+        e2 = timelineEvent "Seed round" { date "2021" }
+        e3 = timelineEvent "Launch" { date "2023" }
+      }
+    }
+    views { view t "History" { include * autolayout lr } }`)
+    const { nodes } = modelToFlow(m, view(m))
+    const pos = (id: string) => nodes.find(n => n.id === id)!.position
+    const ys = ['e1', 'e2', 'e3'].map(id => pos(id).y)
+    expect([...ys].sort((a, b) => a - b)).toEqual(ys)
+    expect(pos('e1').x).toBeLessThan(pos('e2').x)
+    expect(pos('e3').x).toBeLessThan(pos('e2').x)
+
+    const frame = nodes.find(n => n.id === 'tl')!
+    expect(frame.height).toBeGreaterThan(frame.width!)
     expect(frame.data.chartFrame!.texts.map(t => t.text)).toEqual(['2019', '2021', '2023'])
   })
 })

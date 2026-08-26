@@ -87,6 +87,31 @@ export interface ResizeSnapshot {
   size: Size
 }
 
+/** Lock an activity bar's established width and snap its vertical edge to nearby messages. */
+export function activityBarResize<T extends { x: number; y: number; width: number; height: number }>(
+  start: T,
+  end: T,
+  connectionYs: number[],
+  threshold = 10,
+): T {
+  const result = { ...end, x: start.x, width: start.width }
+  const startBottom = start.y + start.height
+  const endBottom = end.y + end.height
+  const movingTop = Math.abs(end.y - start.y) > Math.abs(endBottom - startBottom)
+  const movingEdge = movingTop ? end.y : endBottom
+  const nearest = connectionYs.reduce<number | undefined>((best, point) => (
+    best === undefined || Math.abs(point - movingEdge) < Math.abs(best - movingEdge) ? point : best
+  ), undefined)
+  if (nearest === undefined || Math.abs(nearest - movingEdge) > threshold) return result
+  if (movingTop) {
+    result.y = nearest
+    result.height = Math.max(24, endBottom - nearest)
+  } else {
+    result.height = Math.max(24, nearest - end.y)
+  }
+  return result
+}
+
 /** Translate one or more root nodes so their combined bounds are centered on the pointer. */
 export function positionsCenteredAt(
   point: Position,

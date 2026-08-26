@@ -134,7 +134,13 @@ function AccentColorField({ value, fallback, nodeColor, containerColor, onChange
 }
 
 /** Custom-property fields shown per element type, grouped under a labelled box. */
-interface PropFieldSpec { key: string; label: string; placeholder: string; multiline?: boolean }
+interface PropFieldSpec {
+  key: string
+  label: string
+  placeholder: string
+  multiline?: boolean
+  options?: { value: string; label: string }[]
+}
 const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[] }> = {
   ganttGraph: { group: 'Schedule axis', fields: [
     { key: 'prefix', label: 'Unit prefix', placeholder: 'e.g. PI, Sprint, D' },
@@ -157,6 +163,18 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   ] },
   timelineEvent: { group: 'Timeline', fields: [
     { key: 'date', label: 'Date', placeholder: 'e.g. 2026 or 2026-03' },
+  ] },
+  timelineGraph: { group: 'Timeline', fields: [
+    { key: 'orientation', label: 'Orientation', placeholder: 'horizontal', options: [
+      { value: 'horizontal', label: 'Horizontal' },
+      { value: 'vertical', label: 'Vertical' },
+    ] },
+  ] },
+  gitGraph: { group: 'Git graph', fields: [
+    { key: 'orientation', label: 'Orientation', placeholder: 'horizontal', options: [
+      { value: 'horizontal', label: 'Horizontal' },
+      { value: 'vertical', label: 'Vertical' },
+    ] },
   ] },
   activityBar: { group: 'Sequence', fields: [
     { key: 'y', label: 'Vertical position', placeholder: 'e.g. 140' },
@@ -478,7 +496,13 @@ function ElementProperties({ elementId }: { elementId: string }) {
       {custom && (
         <div className="flex flex-col gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 p-2.5">
           <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">{custom.group}</span>
-          {custom.fields.map(f => (
+          {custom.fields.map(f => f.options ? (
+            <FieldRow key={f.key} label={f.label}>
+              <Select value={properties?.[f.key] ?? f.options[0].value} onChange={event => setProp(f.key, event.target.value)}>
+                {f.options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </Select>
+            </FieldRow>
+          ) : (
             <PropField
               key={f.key}
               label={f.label}

@@ -326,6 +326,17 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
       if (existing) Object.assign(existing, command.payload)
       break
     }
+    case 'REORDER_RELATION': {
+      const { id, targetId, position } = command.payload
+      if (id === targetId || !model.relations[id] || !model.relations[targetId]) break
+      const moving = model.relations[id]
+      const entries = Object.entries(model.relations).filter(([relationId]) => relationId !== id)
+      const targetIndex = entries.findIndex(([relationId]) => relationId === targetId)
+      if (targetIndex < 0) break
+      entries.splice(targetIndex + (position === 'after' ? 1 : 0), 0, [id, moving])
+      model.relations = Object.fromEntries(entries)
+      break
+    }
     case 'DELETE_RELATION': {
       delete model.relations[command.payload.id]
       break

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, filterRoutingObstacles, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
+import { routeOrthogonal, pointsToRoundedPath, polylineSegments, clipRouteInputs, filterRoutingObstacles, segmentCrossesRect, type Rect, type Point, type Segment } from '@/features/editor-graph/edges/orthogonal-router'
 import { END_LABEL_DISTANCE, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from '@/features/editor-graph/edges/edge-label-position'
 import { Position } from '@xyflow/react'
 
@@ -19,6 +19,15 @@ function hitsAny(pts: Point[], obstacles: Rect[]): boolean {
 }
 
 describe('routeOrthogonal', () => {
+  it('emits square polyline corners when the radius is zero', () => {
+    expect(pointsToRoundedPath([{ x: 0, y: 0 }, { x: 20, y: 0 }, { x: 20, y: 30 }], 0))
+      .toBe('M 0,0 L 20,0 L 20,30')
+  })
+  it('detects a node crossing in a diagonal relation corridor', () => {
+    const node = { x: 40, y: 40, width: 40, height: 40 }
+    expect(segmentCrossesRect({ x: 0, y: 0 }, { x: 120, y: 120 }, node, 4)).toBe(true)
+    expect(segmentCrossesRect({ x: 0, y: 0 }, { x: 120, y: 20 }, node, 4)).toBe(false)
+  })
   it('returns a straight 2-point route when nothing blocks', () => {
     const pts = routeOrthogonal({ x: 0, y: 0 }, { x: 100, y: 0 }, [])
     expect(pts).not.toBeNull()

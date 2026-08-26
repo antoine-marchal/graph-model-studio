@@ -15,6 +15,32 @@ export interface NodeRect {
   rect: Rect
 }
 
+/** True when an arbitrary line segment crosses the strict interior of a box. */
+export function segmentCrossesRect(a: Point, b: Point, rect: Rect, margin = 0): boolean {
+  const left = rect.x - margin
+  const right = rect.x + rect.width + margin
+  const top = rect.y - margin
+  const bottom = rect.y + rect.height + margin
+  const dx = b.x - a.x
+  const dy = b.y - a.y
+  let near = 0
+  let far = 1
+  for (const [p, q] of [
+    [-dx, a.x - left], [dx, right - a.x],
+    [-dy, a.y - top], [dy, bottom - a.y],
+  ] as const) {
+    if (p === 0) {
+      if (q <= 0) return false
+      continue
+    }
+    const ratio = q / p
+    if (p < 0) near = Math.max(near, ratio)
+    else far = Math.min(far, ratio)
+    if (near >= far) return false
+  }
+  return far > 0 && near < 1
+}
+
 const MARGIN = 14 // keep this far away from node borders
 const BEND_PENALTY = 18 // discourage corners (≈ favouring straighter routes)
 const MAX_OBSTACLES = 60 // above this, A* gets too heavy — caller should fall back
@@ -310,6 +336,7 @@ export function routeOrthogonal(source: Point, target: Point, obstacles: Rect[],
 /** Build an SVG path from poly-line points, rounding corners by `r`. */
 export function pointsToRoundedPath(pts: Point[], r = 8): string {
   if (pts.length < 2) return ''
+  if (r <= 0) return `M ${pts.map(point => `${point.x},${point.y}`).join(' L ')}`
   if (pts.length === 2) return `M ${pts[0].x},${pts[0].y} L ${pts[1].x},${pts[1].y}`
   let d = `M ${pts[0].x},${pts[0].y}`
   for (let i = 1; i < pts.length - 1; i++) {

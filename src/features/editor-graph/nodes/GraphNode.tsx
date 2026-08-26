@@ -11,7 +11,7 @@ import { NodeIcon } from './NodeIcons'
 import { AnalyticChartView } from './AnalyticChartView'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
-import { resizeSelection, type ResizeSnapshot } from '../graph-interactions'
+import { activityBarResize, resizeSelection, type ResizeSnapshot } from '../graph-interactions'
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string
@@ -144,13 +144,14 @@ function SpecialGraphHeader({ data, stroke, accent }: { data: GraphNodeData; str
 function Label({ data, small }: { data: GraphNodeData; small?: boolean }) {
   const { label, text } = data
   const sub = metaText(data)
+  const fullSequenceLabel = data.elementType === 'participant' || data.elementType === 'seqActor'
   return (
-    <div className="flex flex-col items-center justify-center px-2 text-center leading-tight">
-      <span className={cn('font-semibold', small ? 'text-[10px]' : 'text-xs')} style={{ color: text }}>
+    <div className={cn('flex flex-col items-center justify-center px-2 text-center leading-tight', fullSequenceLabel && 'overflow-visible')}>
+      <span className={cn('font-semibold', small ? 'text-[10px]' : 'text-xs', fullSequenceLabel && 'whitespace-normal break-words')} style={{ color: text }}>
         {label}
       </span>
       {sub && !small && (
-        <span className="mt-0.5 line-clamp-2 text-[9px] opacity-70" style={{ color: text }}>{sub}</span>
+        <span className={cn('mt-0.5 text-[9px] opacity-70', !fullSequenceLabel && 'line-clamp-2', fullSequenceLabel && 'whitespace-normal break-words')} style={{ color: text }}>{sub}</span>
       )}
     </div>
   )
@@ -541,7 +542,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           <line x1="23" y1="40" x2="8" y2="60" stroke={stroke} strokeWidth="2.5" />
           <line x1="23" y1="40" x2="38" y2="60" stroke={stroke} strokeWidth="2.5" />
         </svg>
-        <span className="mt-1 max-w-full truncate px-1 text-center text-xs font-semibold" style={{ color: 'var(--fg)' }}>{d.label}</span>
+        <div className="mt-1 flex max-w-full flex-col px-1 text-center leading-tight" style={{ color: 'var(--fg)' }}>
+          <span className="whitespace-normal break-words text-xs font-semibold">{d.label}</span>
+          {metaText(d) && <span className="mt-0.5 whitespace-normal break-words text-[9px] font-normal opacity-70">{metaText(d)}</span>}
+        </div>
       </div>
     )
   } else if (shape === 'pertBox') {
@@ -700,13 +704,20 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             height: node.measured?.height ?? node.height ?? 70,
           },
         }))
-        const selectedNodes = isGanttTask ? all.filter(node => node.id === id) : all.filter(node => selectedIds.has(node.id))
+        const selectedNodes = isGanttTask || isActivityBar ? all.filter(node => node.id === id) : all.filter(node => selectedIds.has(node.id))
         resizeSession.current = { start: p, selected: selectedNodes.length ? selectedNodes : all.filter(node => node.id === id), all }
       }}
       onResize={(_, p) => {
         const session = resizeSession.current
         if (!session) return
-        const mutation = resizeSelection(id, session.start, p, session.selected, session.all)
+        const element = useModelStore.getState().model.elements[id]
+        const connectionYs = isActivityBar
+          ? getNodes()
+            .filter(node => node.type === 'seqPoint' && (node.data as { participantId?: string }).participantId === element?.parentId)
+            .map(node => node.position.y + (node.measured?.height ?? node.height ?? 2) / 2)
+          : []
+        const resized = isActivityBar ? activityBarResize(session.start, p, connectionYs) : p
+        const mutation = resizeSelection(id, session.start, resized, session.selected, session.all)
         setNodes(current => current.map(node => {
           const size = mutation.sizes[node.id]
           const position = mutation.positions[node.id]
@@ -731,7 +742,14 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           const duration = formatGanttDuration(p.width / (d.ganttPixelsPerUnit ?? GANTT_PX_PER_DAY), element?.properties?.start, element?.properties?.duration)
           dispatch({ type: 'UPDATE_ELEMENT', payload: { id, properties: { ...element?.properties, duration } } })
         } else if (activeViewId && session) {
-          const mutation = resizeSelection(id, session.start, p, session.selected, session.all)
+          const element = useModelStore.getState().model.elements[id]
+          const connectionYs = isActivityBar
+            ? getNodes()
+              .filter(node => node.type === 'seqPoint' && (node.data as { participantId?: string }).participantId === element?.parentId)
+              .map(node => node.position.y + (node.measured?.height ?? node.height ?? 2) / 2)
+            : []
+          const resized = isActivityBar ? activityBarResize(session.start, p, connectionYs) : p
+          const mutation = resizeSelection(id, session.start, resized, session.selected, session.all)
           dispatch({ type: 'RESIZE_NODES', payload: { viewId: activeViewId, ...mutation } })
         }
       }}

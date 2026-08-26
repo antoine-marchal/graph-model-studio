@@ -58,6 +58,8 @@ const MINDMAP_DEEP = '#71767A'
 /** A sequence message drawn between two lifeline points (container-local). */
 export interface SeqMessage {
   relId: string
+  sourceId: string
+  targetId: string
   sx: number
   sy: number
   tx: number
@@ -123,13 +125,24 @@ export function layoutSequenceGraph(elements: GraphElement[], relations: GraphRe
     const size = nodeSizes[activity.id] ?? defSize(activity, 14, 96)
     const requestedY = Number(activity.properties?.['y'])
     const y = Math.max(lifelineStart, Number.isFinite(requestedY) && requestedY > 0 ? requestedY : firstY)
+    const endpointYs = msgs.flatMap((relation, relationIndex) => {
+      const messageY = firstY + relationIndex * STEP
+      const points: number[] = []
+      if (relation.sourceId === activity.parentId) points.push(messageY)
+      if (relation.targetId === activity.parentId) points.push(relation.sourceId === relation.targetId ? messageY + 22 : messageY)
+      return points
+    })
+    const autoHeight = endpointYs
+      .filter(endpointY => endpointY >= y)
+      .sort((left, right) => left - right)
+      .reduce((height, endpointY) => endpointY <= y + height + 24 ? Math.max(height, endpointY - y + 2) : height, size.height)
     out.placements[activity.id] = {
       x: centerX(participantIndex) - size.width / 2,
       y,
       width: size.width,
-      height: size.height,
+      height: autoHeight,
     }
-    return Math.max(bottom, y + size.height)
+    return Math.max(bottom, y + autoHeight)
   }, 0)
   const messageBottom = firstY + Math.max(msgs.length, 1) * STEP
   const height = Math.max(messageBottom, activityBottom) + PADY + 6
@@ -148,7 +161,7 @@ export function layoutSequenceGraph(elements: GraphElement[], relations: GraphRe
     const sy = firstY + k * STEP
     const tx = selfLoop ? sx : centerX(idx.get(r.targetId)!)
     const ty = selfLoop ? sy + 22 : sy
-    out.messages.push({ relId: r.id, sx, sy, tx, ty, selfLoop })
+    out.messages.push({ relId: r.id, sourceId: r.sourceId, targetId: r.targetId, sx, sy, tx, ty, selfLoop })
   })
 
   out.width = width
@@ -157,10 +170,10 @@ export function layoutSequenceGraph(elements: GraphElement[], relations: GraphRe
 }
 
 /**
- * Git graph: commits flow left→right in declaration order; the `branch`
- * property assigns each a horizontal lane.
+ * Git graph: commits follow the selected axis in declaration order; the
+ * `branch` property assigns each a lane across that axis.
  */
-export function layoutGitGraphFrame(commits: GraphElement[]): ChartLayout {
+export function layoutGitGraphFrame(graph: GraphElement, commits: GraphElement[]): ChartLayout {
   const out = { ...empty(), width: 240, height: 140 } as ChartLayout
   if (commits.length === 0) return out
 
@@ -174,6 +187,32 @@ export function layoutGitGraphFrame(commits: GraphElement[]): ChartLayout {
     if (!lanes.includes(b)) lanes.push(b)
     laneOf.set(c.id, lanes.indexOf(b))
   }
+  if (graph.properties?.['orientation'] === 'vertical') {
+    const LABH = 36
+    const ROWH = 105
+    const LANEW = 92
+    const top = TITLE + PADY
+    const laneMid = (lane: number) => PADX + lane * LANEW + LANEW / 2
+
+    commits.forEach((commit, index) => {
+      const size = defSize(commit, commit.type === 'mergeCommit' ? 30 : 26, commit.type === 'mergeCommit' ? 30 : 26)
+      const cx = laneMid(laneOf.get(commit.id)!)
+      const cy = top + LABH + ROWH / 2 + index * ROWH
+      out.placements[commit.id] = { x: cx - size.width / 2, y: cy - size.height / 2, width: size.width, height: size.height }
+    })
+
+    const width = PADX * 2 + lanes.length * LANEW
+    const height = top + LABH + commits.length * ROWH + PADY
+    lanes.forEach((branch, lane) => {
+      out.frame.lines.push({ x1: laneMid(lane), y1: top + LABH - 8, x2: laneMid(lane), y2: height - 8, dash: '2 6', color: EDGE_COLOR })
+      out.frame.texts.push({ x: laneMid(lane), y: top + 11, text: branch, size: 10, anchor: 'middle', bold: true, color: TEXT_COLOR })
+    })
+
+    out.width = width
+    out.height = height
+    return out
+  }
+
   const top = TITLE + PADY
   const laneMid = (l: number) => top + l * LANEH + LANEH / 2
 
@@ -498,10 +537,10 @@ export function layoutTreeGraph(model: GraphModel, containerId: string, hostedId
 }
 
 /**
- * Timeline: events run left→right in declaration order, alternating above and
- * below a horizontal spine; the `date` property prints on the spine.
+ * Timeline: events follow the selected axis in declaration order, alternating
+ * across the spine; the `date` property prints on the spine.
  */
-export function layoutTimelineGraph(events: GraphElement[]): ChartLayout {
+export function layoutTimelineGraph(graph: GraphElement, events: GraphElement[]): ChartLayout {
   const out = { ...empty(), width: 240, height: 200 } as ChartLayout
   if (events.length === 0) return out
 
@@ -509,6 +548,34 @@ export function layoutTimelineGraph(events: GraphElement[]): ChartLayout {
   const MARGIN = 28
   const STEP = 190
   const sizes = events.map(e => defSize(e, 150, 64))
+  const vertical = graph.properties?.['orientation'] === 'vertical'
+  if (vertical) {
+    const maxCardW = Math.max(...sizes.map(s => s.width))
+    const maxCardH = Math.max(...sizes.map(s => s.height))
+    const spineX = PADX + MARGIN + maxCardW + 46
+    const firstY = TITLE + MARGIN + maxCardH / 2
+    const tickY = (i: number) => firstY + i * STEP
+
+    events.forEach((e, i) => {
+      const s = sizes[i]
+      const left = i % 2 === 0
+      const x = left ? spineX - 46 - s.width : spineX + 46
+      const y = tickY(i) - s.height / 2
+      out.placements[e.id] = { x, y, width: s.width, height: s.height }
+      out.frame.lines.push({ x1: left ? x + s.width : x, y1: tickY(i), x2: spineX, y2: tickY(i), color: EDGE_COLOR })
+      out.frame.lines.push({ x1: spineX - 5, y1: tickY(i), x2: spineX + 5, y2: tickY(i), width: 3, color: EDGE_COLOR })
+      const date = e.properties?.['date']
+      if (date) out.frame.texts.push({ x: left ? spineX + 10 : spineX - 10, y: tickY(i) + 4, text: date, size: 10, anchor: left ? 'start' : 'end', bold: true, color: TEXT_COLOR })
+    })
+
+    const width = spineX + 46 + maxCardW + MARGIN + PADX
+    const height = tickY(events.length - 1) + maxCardH / 2 + MARGIN + PADY
+    out.frame.lines.push({ x1: spineX, y1: TITLE + MARGIN / 2, x2: spineX, y2: height - PADY - MARGIN / 2, width: 2.4, color: EDGE_COLOR })
+    out.width = width
+    out.height = height
+    return out
+  }
+
   const maxCardH = Math.max(...sizes.map(s => s.height))
   const spineY = TITLE + MARGIN + maxCardH + 46
   const firstX = PADX + MARGIN + Math.max(...sizes.map(s => s.width)) / 2

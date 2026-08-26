@@ -223,13 +223,13 @@ export function computeNestedLayout(
         seqMessagesByHost[el.id] = layout.messages
         for (const rid of layout.suppressed) suppressedRelations.add(rid)
       } else if (el.type === 'gitGraph') {
-        layout = layoutGitGraphFrame(kids)
+        layout = layoutGitGraphFrame(el, kids)
       } else if (el.type === 'mindmapGraph') {
         layout = layoutMindmapGraph(model, el.id, hosted)
       } else if (el.type === 'snakeGraph') {
         layout = layoutSnakeGraph(el, kids, relations)
       } else {
-        layout = layoutTimelineGraph(kids)
+        layout = layoutTimelineGraph(el, kids)
       }
       for (const rid of layout.suppressed) suppressedRelations.add(rid)
       chartFrames[el.id] = layout.frame
@@ -874,7 +874,10 @@ export function modelToFlow(
           zIndex: 1200,
           width: 2,
           height: 2,
-          data: {},
+          data: {
+            relationId: msg.relId,
+            participantId: suffix === 's' ? msg.sourceId : msg.targetId,
+          },
         } as unknown as GraphNode)
       }
     }
@@ -986,6 +989,9 @@ export function modelToFlow(
         && (targetType === 'commit' || targetType === 'mergeCommit')
         && hostOf[rel.sourceId] !== undefined
         && hostOf[rel.sourceId] === hostOf[rel.targetId]
+      const gitOrientation = gitRelation && model.elements[hostOf[rel.sourceId]!]?.properties?.['orientation'] === 'vertical'
+        ? 'vertical'
+        : 'horizontal'
       const snakeSourceSide = snakeSides.get(rel.sourceId)?.source
       const snakeTargetSide = snakeSides.get(rel.targetId)?.target
       if (snakeRelation) { markerStart = undefined; markerEnd = undefined }
@@ -1015,6 +1021,7 @@ export function modelToFlow(
           snakeSourceSide: snakeRelation ? snakeSourceSide : undefined,
           snakeTargetSide: snakeRelation ? snakeTargetSide : undefined,
           chartRelation: ganttRelation ? 'gantt' : gitRelation ? 'git' : undefined,
+          gitOrientation: gitRelation ? gitOrientation : undefined,
           ganttTargetMilestone: ganttRelation && targetType === 'ganttMilestone',
         },
         markerStart: markerStart || undefined,
@@ -1048,7 +1055,7 @@ export function modelToFlow(
 
   // sequence messages: straight edges between the lifeline points, keyed by the
   // relation id so selection/deletion still hit the model
-  for (const msgs of Object.values(seqMessagesByHost)) {
+  for (const [hostId, msgs] of Object.entries(seqMessagesByHost)) {
     for (const msg of msgs) {
       const rel = model.relations[msg.relId]
       if (!rel) continue
@@ -1064,6 +1071,7 @@ export function modelToFlow(
           label: rel.label,
           selectedStroke: relationColors?.secondary,
           chartRelation: msg.selfLoop ? 'sequenceLoop' : undefined,
+          sequenceHostId: hostId,
         },
         markerEnd: rdef?.markerEnd ?? 'gms-arrow-filled',
         markerStart: rdef?.markerStart,

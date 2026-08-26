@@ -1,9 +1,10 @@
-import { memo, useEffect, useReducer } from 'react'
+import { memo, useEffect, useReducer, useRef } from 'react'
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
   useInternalNode,
+  useReactFlow,
   useStore,
   type EdgeProps,
   type InternalNode,
@@ -11,7 +12,7 @@ import {
   Position,
 } from '@xyflow/react'
 import { useModelStore } from '@/store'
-import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
+import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, segmentCrossesRect, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
 import { END_LABEL_DISTANCE, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from './edge-label-position'
 
 // Routes of currently-mounted edges, so each edge can pay a malus for running
@@ -70,6 +71,16 @@ const SIDE_POS: Record<string, Position> = {
   t: Position.Top, b: Position.Bottom, l: Position.Left, r: Position.Right,
 }
 
+/** Auto anchors always use obstacle-aware orthogonal routing. */
+export function shouldRouteOrthogonally(
+  routing: 'curved' | 'orthogonal',
+  sourceHandle?: string | null,
+  targetHandle?: string | null,
+  directHitsNode = false,
+): boolean {
+  return (!sourceHandle || !targetHandle) || routing === 'orthogonal' || directHitsNode
+}
+
 /** Midpoint of a pinned side ('t'|'b'|'l'|'r') of a node. */
 function getHandlePoint(node: InternalNode<Node>, side: string) {
   const x = node.internals.positionAbsolute.x
@@ -83,6 +94,45 @@ function getHandlePoint(node: InternalNode<Node>, side: string) {
     case 'r': return { x: x + w, y: y + h / 2 }
     default: return { x: x + w / 2, y: y + h / 2 }
   }
+}
+
+function outwardPoint(point: Point, side: Position, distance = 24): Point {
+  switch (side) {
+    case Position.Top: return { x: point.x, y: point.y - distance }
+    case Position.Bottom: return { x: point.x, y: point.y + distance }
+    case Position.Left: return { x: point.x - distance, y: point.y }
+    default: return { x: point.x + distance, y: point.y }
+  }
+}
+
+/** Pick a node side whose outward stub is not trapped behind a nearby sibling. */
+function openAutoSide(node: InternalNode<Node>, other: InternalNode<Node>, preferred: Position, scene: RoutingScene) {
+  const alternatives: Record<Position, Position[]> = {
+    [Position.Top]: [Position.Top, Position.Left, Position.Right, Position.Bottom],
+    [Position.Bottom]: [Position.Bottom, Position.Left, Position.Right, Position.Top],
+    [Position.Left]: [Position.Left, Position.Top, Position.Bottom, Position.Right],
+    [Position.Right]: [Position.Right, Position.Top, Position.Bottom, Position.Left],
+  }
+  const sideKey: Record<Position, 't' | 'b' | 'l' | 'r'> = {
+    [Position.Top]: 't', [Position.Bottom]: 'b', [Position.Left]: 'l', [Position.Right]: 'r',
+  }
+  const center = (candidate: InternalNode<Node>) => ({
+    x: candidate.internals.positionAbsolute.x + (candidate.measured.width ?? 1) / 2,
+    y: candidate.internals.positionAbsolute.y + (candidate.measured.height ?? 1) / 2,
+  })
+  const nodeCenter = center(node)
+  const otherCenter = center(other)
+  const encloses = (rect: Rect, point: Point) => point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
+  const obstacles = scene.nodeRects.filter(candidate =>
+    candidate.id !== node.id && candidate.id !== other.id
+    && candidate.rect.width >= 8 && candidate.rect.height >= 8
+    && !encloses(candidate.rect, nodeCenter) && !encloses(candidate.rect, otherCenter))
+  for (const side of alternatives[preferred]) {
+    const point = getHandlePoint(node, sideKey[side])
+    const stub = outwardPoint(point, side)
+    if (!obstacles.some(obstacle => segmentCrossesRect(point, stub, obstacle.rect, 14))) return { point, side }
+  }
+  return { point: getHandlePoint(node, sideKey[preferred]), side: preferred }
 }
 
 function getEdgeParams(
@@ -251,8 +301,26 @@ export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | '
   }
 }
 
-/** Git branch/merge curve with horizontal tangents through commit centres. */
-export function gitFlowCurve(source: Point, target: Point) {
+/** Git branch/merge curve with tangents aligned to the graph's flow axis. */
+export function gitFlowCurve(source: Point, target: Point, orientation: 'horizontal' | 'vertical' = 'horizontal') {
+  if (orientation === 'vertical') {
+    const dy = target.y - source.y
+    const direction = dy >= 0 ? 1 : -1
+    const control = Math.max(20, Math.min(Math.abs(dy) * 0.46, 72))
+    const c1 = { x: source.x, y: source.y + direction * control }
+    const c2 = { x: target.x, y: target.y - direction * control }
+    const midpoint = cubicPoint(source, c1, c2, target, 0.5)
+    const before = cubicPoint(source, c1, c2, target, 0.47)
+    const after = cubicPoint(source, c1, c2, target, 0.53)
+    return {
+      path: `M ${source.x},${source.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${target.x},${target.y}`,
+      midpoint,
+      sourceLabelPoint: cubicPoint(source, c1, c2, target, 0.12),
+      targetLabelPoint: cubicPoint(source, c1, c2, target, 0.88),
+      angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
+      controls: [c1, c2] as const,
+    }
+  }
   const dx = target.x - source.x
   const direction = dx >= 0 ? 1 : -1
   const control = Math.max(20, Math.min(Math.abs(dx) * 0.46, 72))
@@ -274,7 +342,7 @@ export function gitFlowCurve(source: Point, target: Point) {
 interface SelfLoopRect extends Point { width: number; height: number }
 
 /** Stable loop geometry shared by every node type. */
-export function selfLoopCurve(rect: SelfLoopRect, side: 't' | 'b' | 'l' | 'r' = 'r') {
+export function selfLoopCurve(rect: SelfLoopRect, side: 't' | 'b' | 'l' | 'r' = 'r', cornerRadius = 8) {
   const gap = 48
   let points: Point[]
   let sourcePos: Position
@@ -313,7 +381,7 @@ export function selfLoopCurve(rect: SelfLoopRect, side: 't' | 'b' | 'l' | 'r' = 
     sourcePos = targetPos = Position.Right
   }
   return {
-    path: pointsToRoundedPath(points, 8),
+    path: pointsToRoundedPath(points, cornerRadius),
     points,
     start: points[0],
     end: points[points.length - 1],
@@ -355,6 +423,10 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   const routing = useModelStore(s => s.edgeRouting)
   const nodeLookup = useStore(s => s.nodeLookup)
   const rfEdges = useStore(s => s.edges)
+  const dispatch = useModelStore(s => s.dispatch)
+  const selectRelation = useModelStore(s => s.selectRelation)
+  const { screenToFlowPosition } = useReactFlow()
+  const sequenceDrag = useRef<{ pointerId: number; startY: number } | null>(null)
   const scene = sceneFor(nodeLookup, rfEdges)
   useEffect(() => () => { routedEdges.delete(id); routeCache.delete(id) }, [id])
   // settle pass: the first render of each edge happens before later edges are
@@ -380,7 +452,9 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     snakeSourceSide?: 'l' | 'r'
     snakeTargetSide?: 'l' | 'r'
     chartRelation?: 'gantt' | 'git' | 'sequenceLoop'
+    gitOrientation?: 'horizontal' | 'vertical'
     ganttTargetMilestone?: boolean
+    sequenceHostId?: string
   } | undefined
 
   const loopSide = (sourceHandleId ?? targetHandleId ?? 'r') as 't' | 'b' | 'l' | 'r'
@@ -390,7 +464,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       y: sourceNode.internals.positionAbsolute.y,
       width: sourceNode.measured.width ?? 1,
       height: sourceNode.measured.height ?? 1,
-    }, loopSide)
+    }, loopSide, 8)
     : undefined
   let { sx, sy, tx, ty, sourcePos, targetPos } = selfCurve
     ? {
@@ -400,6 +474,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     }
     : getEdgeParams(sourceNode, targetNode, sourceHandleId, targetHandleId)
   const chartRelation = edgeData?.chartRelation
+  if (!selfCurve && !chartRelation && !sourceHandleId) {
+    const choice = openAutoSide(sourceNode, targetNode, sourcePos, scene)
+    sx = choice.point.x; sy = choice.point.y; sourcePos = choice.side
+  }
+  if (!selfCurve && !chartRelation && !targetHandleId) {
+    const choice = openAutoSide(targetNode, sourceNode, targetPos, scene)
+    tx = choice.point.x; ty = choice.point.y; targetPos = choice.side
+  }
   if (!selfCurve && !sourceHandleId && !chartRelation) {
     const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
     sx = p.x; sy = p.y
@@ -440,15 +522,24 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     // Stop at each disc boundary. This is visually equivalent to drawing under
     // opaque bubbles, while remaining correct even if React Flow changes the
     // relative SVG/node stacking order.
-    sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 1)
-    sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 1) / 2
-    tx = targetNode.internals.positionAbsolute.x
-    ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 1) / 2
-    sourcePos = Position.Right
-    targetPos = Position.Left
+    if (edgeData?.gitOrientation === 'vertical') {
+      sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 1) / 2
+      sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 1)
+      tx = targetNode.internals.positionAbsolute.x + (targetNode.measured.width ?? 1) / 2
+      ty = targetNode.internals.positionAbsolute.y
+      sourcePos = Position.Bottom
+      targetPos = Position.Top
+    } else {
+      sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 1)
+      sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 1) / 2
+      tx = targetNode.internals.positionAbsolute.x
+      ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 1) / 2
+      sourcePos = Position.Right
+      targetPos = Position.Left
+    }
   }
   const snakeCurve = edgeData?.snakeRelation && edgeData.snakeSourceSide && edgeData.snakeTargetSide
-  const gitCurve = chartRelation === 'git' ? gitFlowCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
+  const gitCurve = chartRelation === 'git' ? gitFlowCurve({ x: sx, y: sy }, { x: tx, y: ty }, edgeData?.gitOrientation) : undefined
   const sequenceCurve = chartRelation === 'sequenceLoop' ? sequenceLoopCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
 
   let path: string
@@ -472,12 +563,18 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     routed = middle
       ? dedupeColinear([src, ...middle, tgt])
       : dedupeColinear([src, sourceStub, { x: sourceStub.x, y: targetStub.y }, targetStub, tgt])
-  } else if (!selfCurve && !sequenceCurve && !snakeCurve && routing === 'orthogonal') {
+  } else if (!selfCurve && !sequenceCurve && !snakeCurve) {
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
       scene.nodeRects, source, target, { x: sx, y: sy }, { x: tx, y: ty },
     )
+    const directObstacles = filterRoutingObstacles(
+      scene.nodeRects.filter(node => node.id !== source && node.id !== target && node.rect.width >= 8 && node.rect.height >= 8),
+      source, target, { x: sx, y: sy }, { x: tx, y: ty },
+    )
+    const directHitsNode = directObstacles.some(obstacle => segmentCrossesRect({ x: sx, y: sy }, { x: tx, y: ty }, obstacle, 4))
+    if (shouldRouteOrthogonally(routing, sourceHandleId, targetHandleId, directHitsNode)) {
     // segments of every other already-routed relation — soft-avoided so two
     // relations never sit on the same pixel line (staggered by ≥ 5px)
     const occupied: Segment[] = []
@@ -532,8 +629,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
         // corridor too tight (rare) — retry against the full scene, uncached so
         // the result can't go stale when far-away nodes move
         routed = tryRoute(obstacles, occupied)
+        // A pinned source/target may be forced to share its initial stub with an
+        // existing relation. Edge overlap is preferable to abandoning obstacle
+        // avoidance and falling back to a node-crossing Bézier curve.
+        if (!routed) routed = tryRoute(clipped.obstacles, [])
+        if (!routed) routed = tryRoute(obstacles, [])
         if (!routed) routeCache.set(id, { key: cacheKey, pts: null })
       }
+    }
     }
   }
 
@@ -594,6 +697,30 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   }
 
   const d2 = edgeData
+  const sequenceSortable = d2?.sequenceHostId !== undefined
+  const finishSequenceDrag = (event: React.PointerEvent<SVGPathElement>) => {
+    const drag = sequenceDrag.current
+    sequenceDrag.current = null
+    if (!drag) return
+    event.currentTarget.releasePointerCapture?.(drag.pointerId)
+    if (Math.abs(event.clientY - drag.startY) < 5) {
+      selectRelation(id)
+      return
+    }
+    const y = screenToFlowPosition({ x: event.clientX, y: event.clientY }).y
+    const candidates = rfEdges
+      .filter(edge => edge.id !== id && (edge.data as { sequenceHostId?: string } | undefined)?.sequenceHostId === d2?.sequenceHostId)
+      .map(edge => {
+        const sourcePoint = nodeLookup.get(edge.source)
+        const targetPoint = nodeLookup.get(edge.target)
+        const middleY = ((sourcePoint?.internals.positionAbsolute.y ?? 0) + (targetPoint?.internals.positionAbsolute.y ?? 0)) / 2
+        return { id: edge.id, y: middleY }
+      })
+      .sort((left, right) => left.y - right.y)
+    if (!candidates.length) return
+    const nearest = candidates.reduce((best, candidate) => Math.abs(candidate.y - y) < Math.abs(best.y - y) ? candidate : best)
+    dispatch({ type: 'REORDER_RELATION', payload: { id, targetId: nearest.id, position: y < nearest.y ? 'before' : 'after' } })
+  }
   const label = d2?.label
   const renderedStyle = selected && d2?.selectedStroke
     ? { ...style, stroke: d2.selectedStroke, strokeWidth: Math.max(Number(style?.strokeWidth) || 1.6, 2.4) }
@@ -612,6 +739,22 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     <>
       {d2?.underlayStroke && <BaseEdge id={`${id}-underlay`} path={path} style={{ stroke: d2.underlayStroke, strokeWidth: d2.underlayWidth ?? 18 }} />}
       <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={renderedStyle} />
+      {sequenceSortable && (
+        <path
+          d={path}
+          fill="none"
+          stroke="transparent"
+          strokeWidth={16}
+          style={{ cursor: 'ns-resize', pointerEvents: 'stroke' }}
+          onPointerDown={event => {
+            event.stopPropagation()
+            sequenceDrag.current = { pointerId: event.pointerId, startY: event.clientY }
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onPointerUp={finishSequenceDrag}
+          onPointerCancel={() => { sequenceDrag.current = null }}
+        />
+      )}
       {d2?.middleArrow && (
         <EdgeLabelRenderer>
           <div

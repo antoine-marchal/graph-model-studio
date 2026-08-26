@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   absoluteNodePosition,
+  activityBarResize,
   constrainDragPosition,
   droppedPosition,
   positionsCenteredAt,
@@ -48,6 +49,24 @@ describe('graph interactions', () => {
     ]
     expect(sequenceActivityDrop({ x: 275, y: 180 }, 14, participants)).toEqual({ participantId: 'right', y: 180 })
     expect(sequenceActivityDrop({ x: 90, y: 60 }, 14, participants)).toEqual({ participantId: 'left', y: 94 })
+  })
+
+  it('locks activity-bar width and snaps its resized edge to a message endpoint', () => {
+    const start = { x: 177, y: 126, width: 14, height: 96 }
+    expect(activityBarResize(start, { x: 170, y: 126, width: 28, height: 113 }, [240]))
+      .toEqual({ x: 177, y: 126, width: 14, height: 114 })
+    expect(activityBarResize(start, { x: 177, y: 160, width: 14, height: 62 }, [164]))
+      .toEqual({ x: 177, y: 164, width: 14, height: 58 })
+  })
+
+  it('reorders relations without changing their content', () => {
+    const model = createEmptyModel()
+    model.views.default = createDefaultView()
+    for (const id of ['a', 'b']) model.elements[id] = { id, name: id, type: 'node', notation: 'generic', tags: [], properties: {}, children: [] }
+    for (const id of ['r1', 'r2', 'r3']) model.relations[id] = { id, sourceId: 'a', targetId: 'b', type: 'rel', notation: 'generic', direction: 'directed', tags: [], properties: {} }
+    useModelStore.getState().loadModel(model)
+    useModelStore.getState().dispatch({ type: 'REORDER_RELATION', payload: { id: 'r3', targetId: 'r1', position: 'before' } })
+    expect(Object.keys(useModelStore.getState().model.relations)).toEqual(['r3', 'r1', 'r2'])
   })
 
   it('resizes every selected node and reduces container left/top padding', () => {

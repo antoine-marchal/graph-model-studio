@@ -68,6 +68,7 @@ export type ModelCommand =
   | { type: 'DELETE_ELEMENTS'; payload: { ids: string[] } }
   | { type: 'ADD_RELATION'; payload: AddRelationPayload }
   | { type: 'UPDATE_RELATION'; payload: UpdateRelationPayload }
+  | { type: 'REORDER_RELATION'; payload: { id: string; targetId: string; position: 'before' | 'after' } }
   | { type: 'DELETE_RELATION'; payload: DeleteRelationPayload }
   | { type: 'DELETE_RELATIONS'; payload: { ids: string[] } }
   | { type: 'ADD_VIEW'; payload: GraphView }
