@@ -48,6 +48,7 @@ import {
   sequenceActivityDrop,
   type DragAxis,
 } from './graph-interactions'
+import { isNodeOnTop } from './node-layering'
 import {
   copyElementFormat,
   copyRelationFormat,
@@ -320,6 +321,10 @@ function GraphEditorInner() {
       }
       if (dragged.length === 1) {
         const el = model.elements[node.id]
+        if (isNodeOnTop(el?.properties)) {
+          dispatch({ type: 'APPLY_LAYOUT', payload: { viewId, positions: { [node.id]: node.position } } })
+          return
+        }
         if (el?.type === 'activityBar' && node.parentId) {
           const participants = nodes
             .filter(candidate => candidate.parentId === node.parentId && ['participant', 'seqActor'].includes(candidate.data.elementType))

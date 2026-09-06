@@ -381,6 +381,10 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
         if (!view.nodeSizes) view.nodeSizes = {}
         Object.assign(view.nodeSizes, command.payload.sizes)
         Object.assign(view.layoutPositions, command.payload.positions)
+        for (const [id, properties] of Object.entries(command.payload.elementProperties ?? {})) {
+          const element = model.elements[id]
+          if (element) element.properties = { ...element.properties, ...properties }
+        }
       }
       break
     }

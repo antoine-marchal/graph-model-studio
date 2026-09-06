@@ -15,6 +15,7 @@ import {
   relationFormatFor,
 } from '@/features/editor-graph/style-clipboard'
 import { parseXyPointList } from './xy-series-points'
+import { supportsTransparentBackground } from '@/features/editor-graph/node-appearance'
 
 /** Searchable element-type selector — same picker as the canvas add-node menu. */
 function TypeField({ value, onPick }: { value: string; onPick: (type: string) => void }) {
@@ -413,6 +414,10 @@ function ElementProperties({ elementId }: { elementId: string }) {
   if (!element) return null
 
   const custom = CUSTOM_PROP_FIELDS[element.type]
+  const definition = notationRegistry.getElementDef(element.type)
+  const canUseTransparentBackground = definition
+    ? supportsTransparentBackground(element.type, definition.shape, element.children.length)
+    : element.type === 'drawing' || element.children.length > 0
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -480,6 +485,34 @@ function ElementProperties({ elementId }: { elementId: string }) {
         </Select>
       </FieldRow>
 
+      <label className="flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 px-2.5 py-2 text-xs text-[var(--fg)]">
+        <span>
+          <span className="block font-semibold">On top</span>
+          <span className="block text-[9px] text-[var(--fg-subtle)]">Float above other nodes and do not embed on drop</span>
+        </span>
+        <input
+          type="checkbox"
+          checked={properties?.onTop === 'true'}
+          onChange={event => setProp('onTop', event.target.checked ? 'true' : '')}
+          className="h-4 w-4 accent-[var(--accent)]"
+        />
+      </label>
+
+      {canUseTransparentBackground && (
+        <label className="flex items-center justify-between gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 px-2.5 py-2 text-xs text-[var(--fg)]">
+          <span>
+            <span className="block font-semibold">Transparent background</span>
+            <span className="block text-[9px] text-[var(--fg-subtle)]">Keep the border and contents visible</span>
+          </span>
+          <input
+            type="checkbox"
+            checked={properties?.transparentBackground === 'true'}
+            onChange={event => setProp('transparentBackground', event.target.checked ? 'true' : '')}
+            className="h-4 w-4 accent-[var(--accent)]"
+          />
+        </label>
+      )}
+
       <FieldRow label="Accent color">
         <AccentColorField
           value={properties?.accentColor}
@@ -513,6 +546,27 @@ function ElementProperties({ elementId }: { elementId: string }) {
             />
           ))}
           {element.type === 'xySeries' && <XySeriesPointGenerator seriesId={elementId} />}
+        </div>
+      )}
+
+      {element.type === 'drawing' && (
+        <div className="flex flex-col gap-3 rounded border border-[var(--border)] bg-[var(--surface-2)]/40 p-2.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--fg-subtle)]">Drawing</span>
+          <FieldRow label={`Stroke smoothing (${properties?.smoothing ?? '35'}%)`}>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              step="1"
+              value={properties?.smoothing ?? '35'}
+              onChange={event => setProp('smoothing', event.target.value)}
+              className="w-full accent-[var(--accent)]"
+              aria-label="Stroke smoothing"
+            />
+          </FieldRow>
+          <span className="text-[9px] leading-snug text-[var(--fg-subtle)]">Select the drawing node, then paste an image. Images use base64; strokes use gzip + base64 in the DSL.</span>
+          <Button type="button" size="sm" variant="outline" disabled={!properties?.image} onClick={() => setProp('image', '')}>Remove pasted image</Button>
+          <Button type="button" size="sm" variant="outline" disabled={!properties?.strokes} onClick={() => setProp('strokes', '')}>Clear drawing</Button>
         </div>
       )}
 

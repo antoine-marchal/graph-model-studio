@@ -2,7 +2,7 @@
   "name": "graph-model-studio",
   "displayName": "Graph Model Studio + Markdown Toolkit",
   "description": "Full GMC tooling with live Markdown diagrams, recursive code/Markdown embeds, and rich-text paste as Markdown.",
-  "version": "3.7.0",
+  "version": "3.7.1",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
   "engines": {

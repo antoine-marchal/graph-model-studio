@@ -12,6 +12,8 @@ import {
 } from '@/core/layout'
 import type { GraphNodeData } from './nodes/GraphNode'
 import { quadrantItemPosition } from './quadrant-position'
+import { isNodeOnTop, ON_TOP_Z_INDEX } from './node-layering'
+import { hasTransparentBackground, supportsTransparentBackground } from './node-appearance'
 
 export interface LayoutSettings {
   engine: LayoutEngine
@@ -737,10 +739,14 @@ export function modelToFlow(
     const placed = !!hostOf[id]
     const nodeColor = normalizeHexColor(el.properties?.backgroundColor)
     const containerColor = normalizeHexColor(el.properties?.containerColor)
-    const fill = container && !placed
+    const transparentBackground = hasTransparentBackground(el.properties)
+      && supportsTransparentBackground(el.type, def.shape, el.children.length)
+    const fill = transparentBackground
+      ? 'transparent'
+      : container && !placed
       ? containerColor ?? nodeColor ?? accentColors?.container ?? def.fill
       : nodeColor ?? accentColors?.tertiary ?? def.fill
-    const hasCustomColor = !!(accentColors || nodeColor || containerColor)
+    const hasCustomColor = !!(accentColors || nodeColor || containerColor || transparentBackground)
     // containers auto-size around children; chart-placed children are chart-sized;
     // other leaves honour a per-view manual size override
     const size = (container && sizes[id]?.width) || (placed && sizes[id])
@@ -751,6 +757,7 @@ export function modelToFlow(
     const rfParent = hostOf[id] ?? (el.parentId && visible.has(el.parentId) ? el.parentId : undefined)
     const useParent = !!rfParent
     const d = depth(id)
+    const onTop = isNodeOnTop(el.properties)
     return {
       id,
       type: 'graphNode',
@@ -764,7 +771,7 @@ export function modelToFlow(
       } as CSSProperties,
       // Snake lanes deliberately run through bullet centres. Keep the complete
       // bullet node (disc, title and metadata) above every relation layer.
-      zIndex: el.type === 'ganttTask' || el.type === 'ganttMilestone'
+      zIndex: onTop ? ON_TOP_Z_INDEX + d : el.type === 'ganttTask' || el.type === 'ganttMilestone'
         ? 3000 + d
         : el.type === 'activityBar'
           ? 2000 + d
@@ -784,6 +791,7 @@ export function modelToFlow(
         text: hasCustomColor ? contrastTextColor(fill) : def.text,
         accent: accentColors?.primary ?? def.accent,
         customAccent: hasCustomColor,
+        transparentBackground,
         icon: def.icon,
         iconSrc: def.iconSrc,
         width: size.width,
@@ -815,6 +823,13 @@ export function modelToFlow(
         embeddedSeries: !!embeddedSeries,
         seriesColor: embeddedSeries?.color,
         seriesStroke: embeddedSeries?.stroke,
+        drawingStrokes: el.type === 'drawing' ? el.properties?.strokes : undefined,
+        drawingSmoothing: el.type === 'drawing' ? Number(el.properties?.smoothing ?? 35) : undefined,
+        drawingImage: el.type === 'drawing' ? el.properties?.image : undefined,
+        drawingCanvasWidth: el.type === 'drawing' ? Number(el.properties?.canvasWidth) || undefined : undefined,
+        drawingCanvasHeight: el.type === 'drawing' ? Number(el.properties?.canvasHeight) || undefined : undefined,
+        drawingCropX: el.type === 'drawing' ? Number(el.properties?.cropX) || 0 : undefined,
+        drawingCropY: el.type === 'drawing' ? Number(el.properties?.cropY) || 0 : undefined,
       },
       ...(useParent ? { parentId: rfParent } : {}),
     }

@@ -106,7 +106,7 @@ export const TimelineElementTypes = ['timelineGraph', 'timelineEvent'] as const
 
 export const SnakeElementTypes = ['snakeGraph', 'snakeBullet'] as const
 
-export const GenericElementTypes = ['node', 'group', 'external'] as const
+export const GenericElementTypes = ['node', 'group', 'external', 'drawing'] as const
 
 export type C4ElementType = (typeof C4ElementTypes)[number]
 export type ArchiMateElementType = (typeof ArchiMateElementTypes)[number]

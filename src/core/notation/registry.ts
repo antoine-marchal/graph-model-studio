@@ -30,6 +30,7 @@ export type NodeShape =
   | 'gridGraph'
   | 'note'
   | 'analyticChart'
+  | 'drawing'
 
 export type IconKind =
   // ArchiMate generic-by-category
@@ -393,6 +394,7 @@ const GENERIC_ELEMENTS: ElementTypeDefinition[] = [
   { type: 'node', label: 'Node', notation: 'generic', shape: 'roundedRectangle', fill: '#374151', stroke: '#1F2937', text: '#F3F4F6', accent: '#6B7280', icon: 'none', ...RECT },
   { type: 'group', label: 'Group', notation: 'generic', shape: 'container', fill: 'rgba(107,114,128,0.07)', stroke: '#6B7280', text: '#9CA3AF', accent: '#9CA3AF', icon: 'none', defaultWidth: 360, defaultHeight: 220 },
   { type: 'external', label: 'External', notation: 'generic', shape: 'rectangle', fill: '#4B5563', stroke: '#374151', text: '#E5E7EB', accent: '#9CA3AF', icon: 'none', ...RECT },
+  { type: 'drawing', label: 'Drawing', notation: 'generic', shape: 'drawing', fill: '#FFFFFF', stroke: '#4B5563', text: '#111827', accent: '#6B7280', icon: 'none', defaultWidth: 320, defaultHeight: 240 },
 ]
 
 const ALL_ELEMENTS = [

@@ -12,6 +12,8 @@ import { AnalyticChartView } from './AnalyticChartView'
 import { cn } from '@/ui/primitives/cn'
 import { useModelStore } from '@/store'
 import { activityBarResize, resizeSelection, type ResizeSnapshot } from '../graph-interactions'
+import { DrawingNode } from './DrawingNode'
+import { drawingCanvasHeight, resizedDrawingCrop, type DrawingCropFrame } from '../drawing-strokes'
 
 export interface GraphNodeData extends Record<string, unknown> {
   label: string
@@ -26,6 +28,7 @@ export interface GraphNodeData extends Record<string, unknown> {
   text: string
   accent: string
   customAccent?: boolean
+  transparentBackground?: boolean
   icon: IconKind
   iconSrc?: string
   width: number
@@ -67,6 +70,13 @@ export interface GraphNodeData extends Record<string, unknown> {
   embeddedSeries?: boolean
   seriesColor?: string
   seriesStroke?: string
+  drawingStrokes?: string
+  drawingSmoothing?: number
+  drawingImage?: string
+  drawingCanvasWidth?: number
+  drawingCanvasHeight?: number
+  drawingCropX?: number
+  drawingCropY?: number
 }
 
 /** Renders a raster glyph (iconSrc) when present, else the built-in SVG icon. */
@@ -135,7 +145,7 @@ function metaText(data: GraphNodeData): string | null {
 
 function SpecialGraphHeader({ data, stroke, accent }: { data: GraphNodeData; stroke: string; accent: string }) {
   const meta = metaText(data)
-  return <div className="flex min-h-8 flex-col justify-center px-2.5 py-1" style={{ background: accent + '22', borderBottom: `1px solid ${stroke}55`, color: data.text }}>
+  return <div className="flex min-h-8 flex-col justify-center px-2.5 py-1" style={{ background: data.transparentBackground ? 'transparent' : accent + '22', borderBottom: `1px solid ${stroke}55`, color: data.text }}>
     <span className="truncate text-[11px] font-bold uppercase tracking-wide">{data.label}</span>
     {meta && <span className="truncate text-[9px] font-normal opacity-70">{meta}</span>}
   </div>
@@ -162,7 +172,7 @@ export function BpmnGatewayName({ data }: { data: GraphNodeData }) {
 }
 
 /** Inline rename overlay shown when this node is being edited. */
-function NameEditor({ id, initial, atTop }: { id: string; initial: string; atTop?: boolean }) {
+function NameEditor({ id, initial, atTop, allowEmpty = false }: { id: string; initial: string; atTop?: boolean; allowEmpty?: boolean }) {
   const dispatch = useModelStore(s => s.dispatch)
   const setEditingElement = useModelStore(s => s.setEditingElement)
   const [value, setValue] = useState(initial)
@@ -175,7 +185,7 @@ function NameEditor({ id, initial, atTop }: { id: string; initial: string; atTop
 
   const commit = () => {
     const v = value.trim()
-    if (v && v !== initial) dispatch({ type: 'UPDATE_ELEMENT', payload: { id, name: v } })
+    if ((v || allowEmpty) && v !== initial) dispatch({ type: 'UPDATE_ELEMENT', payload: { id, name: v } })
     setEditingElement(null)
   }
 
@@ -209,13 +219,25 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
   const activeViewId = useModelStore(s => s.activeViewId)
   const setActiveView = useModelStore(s => s.setActiveView)
   const { getNodes, setNodes } = useReactFlow()
-  const resizeSession = useRef<{ start: ResizeParams; selected: ResizeSnapshot[]; all: ResizeSnapshot[] } | null>(null)
+  const resizeSession = useRef<{ start: ResizeParams; selected: ResizeSnapshot[]; all: ResizeSnapshot[]; drawing?: DrawingCropFrame } | null>(null)
+  const [drawingActive, setDrawingActive] = useState(false)
   const ring = selected ? 'ring-2 ring-offset-1 ring-[var(--node-selection)] dark:ring-offset-zinc-900' : ''
+
+  useEffect(() => {
+    if (!selected) setDrawingActive(false)
+  }, [selected])
 
   let body: JSX.Element
 
   // ── UML class / interface / enum (compartmented box) ──
-  if (shape === 'umlClass') {
+  if (shape === 'drawing') {
+    body = (
+      <div className="relative h-full w-full">
+        <Handles stroke={stroke} />
+        <DrawingNode id={id} label={d.label} width={width} height={height} fill={fill} stroke={stroke} selected={selected} sketching={drawingActive} onSketchingChange={setDrawingActive} encodedStrokes={d.drawingStrokes} smoothing={d.drawingSmoothing ?? 35} imageDataUrl={d.drawingImage} canvasWidth={d.drawingCanvasWidth} canvasHeight={d.drawingCanvasHeight} cropX={d.drawingCropX} cropY={d.drawingCropY} />
+      </div>
+    )
+  } else if (shape === 'umlClass') {
     body = (
       <div className={cn('relative flex h-full w-full flex-col overflow-hidden rounded-sm', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
@@ -378,10 +400,10 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       <div className={cn('relative h-full w-full overflow-hidden rounded-md', ring)} style={{ background: fill, border: `1.5px solid ${stroke}` }}>
         <Handles stroke={stroke} />
         <svg className="absolute inset-0" width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-          <rect x={width / 2} y={0} width={width / 2} height={height / 2} fill={accent} opacity="0.16" />
-          <rect x={0} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity="0.16" />
-          <rect x={0} y={0} width={width / 2} height={height / 2} fill={accent} opacity="0.07" />
-          <rect x={width / 2} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity="0.07" />
+          <rect x={width / 2} y={0} width={width / 2} height={height / 2} fill={accent} opacity={d.transparentBackground ? 0 : 0.16} />
+          <rect x={0} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity={d.transparentBackground ? 0 : 0.16} />
+          <rect x={0} y={0} width={width / 2} height={height / 2} fill={accent} opacity={d.transparentBackground ? 0 : 0.07} />
+          <rect x={width / 2} y={height / 2} width={width / 2} height={height / 2} fill={accent} opacity={d.transparentBackground ? 0 : 0.07} />
           <line x1={width / 2} y1={0} x2={width / 2} y2={height} stroke={stroke} strokeWidth="1" opacity="0.5" />
           <line x1={0} y1={height / 2} x2={width} y2={height / 2} stroke={stroke} strokeWidth="1" opacity="0.5" />
         </svg>
@@ -406,7 +428,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="absolute inset-y-0 left-0 flex w-7 items-center justify-center text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '24', color: text, borderRight: `1px solid ${stroke}66` }}
+          style={{ background: d.transparentBackground ? 'transparent' : accent + '24', color: text, borderRight: `1px solid ${stroke}66` }}
         >
           <span style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}>{d.label}</span>
         </div>
@@ -432,7 +454,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
+          style={{ background: d.transparentBackground ? 'transparent' : accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
         >
           <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>
@@ -705,7 +727,17 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           },
         }))
         const selectedNodes = isGanttTask || isActivityBar ? all.filter(node => node.id === id) : all.filter(node => selectedIds.has(node.id))
-        resizeSession.current = { start: p, selected: selectedNodes.length ? selectedNodes : all.filter(node => node.id === id), all }
+        resizeSession.current = {
+          start: p,
+          selected: selectedNodes.length ? selectedNodes : all.filter(node => node.id === id),
+          all,
+          ...(shape === 'drawing' && drawingActive ? { drawing: {
+            canvasWidth: d.drawingCanvasWidth ?? p.width,
+            canvasHeight: d.drawingCanvasHeight ?? drawingCanvasHeight(d.label, p.height),
+            cropX: d.drawingCropX ?? 0,
+            cropY: d.drawingCropY ?? 0,
+          } } : {}),
+        }
       }}
       onResize={(_, p) => {
         const session = resizeSession.current
@@ -729,7 +761,19 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
               width: size.width,
               height: size.height,
               style: { ...node.style, width: size.width, height: size.height },
-              data: { ...node.data, width: size.width, height: size.height },
+              data: {
+                ...node.data,
+                width: size.width,
+                height: size.height,
+                ...(node.id === id && shape === 'drawing'
+                  ? drawingActive && session.drawing
+                    ? (() => {
+                      const crop = resizedDrawingCrop(session.drawing, session.start, p)
+                      return { drawingCanvasWidth: crop.canvasWidth, drawingCanvasHeight: crop.canvasHeight, drawingCropX: crop.cropX, drawingCropY: crop.cropY }
+                    })()
+                    : { drawingCanvasWidth: size.width, drawingCanvasHeight: drawingCanvasHeight(d.label, size.height), drawingCropX: 0, drawingCropY: 0 }
+                  : {}),
+              },
             } : {}),
           }
         }))
@@ -750,7 +794,19 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             : []
           const resized = isActivityBar ? activityBarResize(session.start, p, connectionYs) : p
           const mutation = resizeSelection(id, session.start, resized, session.selected, session.all)
-          dispatch({ type: 'RESIZE_NODES', payload: { viewId: activeViewId, ...mutation } })
+          let elementProperties: Record<string, Record<string, string>> | undefined
+          if (shape === 'drawing') {
+            const drawing = drawingActive && session.drawing
+              ? resizedDrawingCrop(session.drawing, session.start, p)
+              : { canvasWidth: p.width, canvasHeight: drawingCanvasHeight(d.label, p.height), cropX: 0, cropY: 0 }
+            elementProperties = { [id]: {
+              canvasWidth: String(Math.round(drawing.canvasWidth)),
+              canvasHeight: String(Math.round(drawing.canvasHeight)),
+              cropX: String(Math.round(drawing.cropX)),
+              cropY: String(Math.round(drawing.cropY)),
+            } }
+          }
+          dispatch({ type: 'RESIZE_NODES', payload: { viewId: activeViewId, ...mutation, elementProperties } })
         }
       }}
     />
@@ -781,7 +837,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       {resizer}
       {body}
       {viewLink}
-      {editing && <NameEditor id={id} initial={d.label} atTop={isContainer} />}
+      {editing && <NameEditor id={id} initial={d.label} atTop={isContainer} allowEmpty={d.elementType === 'drawing'} />}
     </>
   )
 })

@@ -31,6 +31,8 @@ export type ResizeNodesPayload = {
   viewId: string
   sizes: Record<string, Size>
   positions: Record<string, Position>
+  /** Optional element-property updates committed atomically with the resize. */
+  elementProperties?: Record<string, Record<string, string>>
 }
 
 export type ReparentElementPayload = {

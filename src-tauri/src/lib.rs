@@ -1,4 +1,6 @@
 use std::sync::Mutex;
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use image::{codecs::png::PngEncoder, ImageEncoder};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -58,6 +60,28 @@ fn write_text_file(path: String, content: String) -> Result<(), String> {
 #[tauri::command]
 fn write_binary_file(path: String, contents: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, contents).map_err(|e| e.to_string())
+}
+
+/// Read image formats such as the Windows Snipping Tool bitmap directly from
+/// the system clipboard when WebView2 does not expose them on ClipboardEvent.
+#[tauri::command]
+fn read_clipboard_image() -> Result<Option<String>, String> {
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
+    let image = match clipboard.get_image() {
+        Ok(image) => image,
+        Err(arboard::Error::ContentNotAvailable) => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png)
+        .write_image(
+            image.bytes.as_ref(),
+            image.width as u32,
+            image.height as u32,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|error| error.to_string())?;
+    Ok(Some(format!("data:image/png;base64,{}", BASE64.encode(png))))
 }
 
 fn read_launch_file() -> Option<(String, String)> {
@@ -169,7 +193,8 @@ pub fn run() {
             finish_export,
             read_text_file,
             write_text_file,
-            write_binary_file
+            write_binary_file,
+            read_clipboard_image
         ])
         .setup(move |app| {
             // headless export: keep the window off-screen / hidden
