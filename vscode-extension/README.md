@@ -190,6 +190,8 @@ from the Explorer) with both rich HTML and plain Markdown clipboard formats.
 
 | Command | Description |
 |---|---|
+| **Slides: Preview** | Builds active Markdown with presentation-md and opens standalone Slidev preview beside editor. Toolbar selects CEA or Blueprint theme and exports HTML. CEA is default. |
+| **Slides: Export Standalone HTML** | Saves current generated Slidev preview as portable HTML. |
 | **GMC: Open Graph Preview to the Side** | Opens the synchronized interactive graph for a `.gmc` document or the GMC Markdown fence under the cursor. |
 | **GMC: Export Diagram as PNG** | Exports the active GMC diagram to a chosen PNG file. |
 | **GMC: Export Markdown Diagram as PNG** | Exports the GMC fence under the cursor. |

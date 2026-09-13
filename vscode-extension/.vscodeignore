@@ -1,4 +1,5 @@
 node_modules/**
+!integrations/slides/vendor/**
 .playwright-cli/**
 output/**
 src/**

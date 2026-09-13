@@ -37,7 +37,9 @@
     "onCommand:markdownToolkit.exportPdf",
     "onCommand:markdownToolkit.exportPng",
     "onCommand:markdownToolkit.exportDocx",
-    "onCommand:markdownToolkit.export"
+    "onCommand:markdownToolkit.export",
+    "onCommand:slides.preview",
+    "onCommand:slides.exportHtml"
   ],
   "contributes": {
     "markdown.markdownItPlugins": true,
@@ -76,6 +78,16 @@
       }
     ],
     "commands": [
+      {
+        "command": "slides.preview",
+        "title": "Slides: Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "slides.exportHtml",
+        "title": "Slides: Export Standalone HTML",
+        "icon": "$(export)"
+      },
       {
         "command": "gmc.openPreview",
         "title": "GMC: Open Graph Preview to the Side",
@@ -163,6 +175,11 @@
     "menus": {
       "editor/title": [
         {
+          "command": "slides.preview",
+          "when": "resourceLangId == markdown",
+          "group": "navigation@9"
+        },
+        {
           "command": "gmc.openPreview",
           "when": "resourceLangId == gmc || resourceLangId == markdown",
           "group": "navigation@10"
@@ -224,6 +241,15 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically open the graph preview when a GMC file becomes active."
+        },
+        "slides.theme": {
+          "type": "string",
+          "enum": [
+            "cea",
+            "blueprint"
+          ],
+          "default": "cea",
+          "description": "Theme used for slide preview and standalone HTML export."
         },
         "gmc.export.width": {
           "type": "number",
@@ -318,6 +344,9 @@
     "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview",
     "build": "node ./build-combined.mjs",
     "package": "node ./package-vsix.mjs"
+  },
+  "dependencies": {
+    "@pptxascode/presentation-md": "file:../../presentation-md"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
