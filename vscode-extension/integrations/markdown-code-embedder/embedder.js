@@ -94,6 +94,12 @@ class MarkdownEmbedder {
         }
         return `\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
     }
+    indentReplacement(content, text, index) {
+        if (content === null) return null;
+        const prefix = text.slice(text.lastIndexOf('\n', index - 1) + 1, index);
+        if (!/^[ \t]+$/.test(prefix)) return content;
+        return content.split('\n').map((line, i) => i === 0 ? line : prefix + line).join('\n');
+    }
     generateEditsForIndex(document, targetIndex) {
         return __awaiter(this, void 0, void 0, function* () {
             return this.generateEdits(document, targetIndex);
@@ -155,7 +161,7 @@ class MarkdownEmbedder {
                 promises.push((() => __awaiter(this, void 0, void 0, function* () {
                     try {
                         const currentContent = document.getText(capturedRange);
-                        const newContent = yield this.buildNewContent(document, capturedAttributes, new Set(), undefined, true, currentContent);
+                        const newContent = this.indentReplacement(yield this.buildNewContent(document, capturedAttributes, new Set(), undefined, true, currentContent), text, matchIndex);
                         if (newContent === null) {
                             return;
                         }
@@ -226,7 +232,7 @@ class MarkdownEmbedder {
                 const capturedCurrentContent = currentContent;
                 promises.push((() => __awaiter(this, void 0, void 0, function* () {
                     try {
-                        const expectedContent = yield this.buildNewContent(document, capturedAttrs, new Set(), undefined, false);
+                        const expectedContent = this.indentReplacement(yield this.buildNewContent(document, capturedAttrs, new Set(), undefined, false), text, capturedIndex);
                         if (expectedContent !== null && capturedCurrentContent !== expectedContent) {
                             staleSet.add(capturedIndex);
                         }
@@ -247,6 +253,24 @@ class MarkdownEmbedder {
     buildNewContent(document, attributes, ancestors = new Set(), outputPath, refreshAssets = true, currentContent = '') {
         return __awaiter(this, void 0, void 0, function* () {
             try {
+                const rootPath = outputPath || document.uri.fsPath || document.uri.toString();
+                if (attributes['mode'] === 'link' && !this.expandLinkEmbeds) {
+                    const sourcePath = document.uri.fsPath || document.uri.toString();
+                    const target = (0, markdown_paths_1.rebaseRelativePath)(attributes['file'], sourcePath, rootPath);
+                    const filename = attributes['file'].split(/[\\/]/).pop();
+                    let title = path.basename(filename, path.extname(filename));
+                    try {
+                        const source = yield this.resolveContent(document, { file: attributes['file'], 'strip-comments': 'false' });
+                        const firstLine = source.content.replace(/^\uFEFF/, '').replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '').split(/\r?\n/, 1)[0];
+                        const heading = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(firstLine);
+                        if (heading) title = heading[1];
+                    }
+                    catch (_) {
+                        // Keep links usable when the target cannot be read.
+                    }
+                    const label = title.replace(/\\/g, '\\\\').replace(/[\[\]]/g, '\\$&');
+                    return `\n[${label}](<${target.replace(/>/g, '%3E').replace(/</g, '%3C')}>)\n<!-- embed:end -->`;
+                }
                 const embedResult = yield this.resolveContent(document, attributes);
                 const lang = (0, utils_1.getLanguageId)(attributes['file']);
                 const rootOutputPath = outputPath || ((0, utils_1.isUrl)(document.uri.toString())
@@ -260,7 +284,7 @@ class MarkdownEmbedder {
                     }
                     const nestedAncestors = new Set(ancestors);
                     nestedAncestors.add(sourceKey);
-                    const rebasedContent = (0, markdown_paths_1.rewriteMarkdownLinks)(embedResult.content, sourceKey, rootOutputPath);
+                    const rebasedContent = (0, markdown_paths_1.rewriteMarkdownLinks)(embedResult.content.replace(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, ''), sourceKey, rootOutputPath);
                     renderedContent = yield this.expandNestedMarkdown(rebasedContent, sourceKey, nestedAncestors, rootOutputPath, refreshAssets);
                     const headingIndent = parseInt(attributes['indent'], 10);
                     if (!isNaN(headingIndent) && headingIndent > 0) {
@@ -311,6 +335,7 @@ class MarkdownEmbedder {
                 return newContent;
             }
             catch (error) {
+                if (this.expandLinkEmbeds) throw error;
                 console.error(`Error building embed content for ${attributes['file']}: ${error.message}`);
                 return null;
             }
@@ -380,7 +405,7 @@ class MarkdownEmbedder {
                     regex.lastIndex = end;
                     continue;
                 }
-                result += replacement;
+                result += this.indentReplacement(replacement, content, match.index);
                 cursor = closeMatch ? closeMatch.end : match.index + match[0].length;
                 regex.lastIndex = cursor;
             }

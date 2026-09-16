@@ -142,7 +142,7 @@ export function registerEmbedFolding(context: vscode.ExtensionContext): void {
   }))
 
   let timer: ReturnType<typeof setTimeout> | undefined
-  const foldedVersions = new Map<string, number>()
+  const foldedDocuments = new Set<string>()
   const scheduleCollapse = (editor = vscode.window.activeTextEditor) => {
     if (timer) clearTimeout(timer)
     if (!editor || editor.document.languageId !== 'markdown') return
@@ -153,10 +153,12 @@ export function registerEmbedFolding(context: vscode.ExtensionContext): void {
       timer = undefined
       if (vscode.window.activeTextEditor !== editor) return
       const key = editor.document.uri.toString()
-      if (foldedVersions.get(key) === editor.document.version) return
-      const selectionLines = embedFoldingRanges(editor.document).map(range => range.start)
-      foldedVersions.set(key, editor.document.version)
+      if (foldedDocuments.has(key)) return
+      const selectionLines = embedFoldingRanges(editor.document)
+        .filter(range => range.kind === vscode.FoldingRangeKind.Region)
+        .map(range => range.start)
       if (selectionLines.length) {
+        foldedDocuments.add(key)
         // Supplying neither direction nor levels makes VS Code fold the first
         // uncollapsed parent when a requested region is already folded. For a
         // TOC below an H1 that parent is the whole Markdown section. A bounded
@@ -178,7 +180,7 @@ export function registerEmbedFolding(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument(event => {
       if (event.document === vscode.window.activeTextEditor?.document) scheduleCollapse()
     }),
-    vscode.workspace.onDidCloseTextDocument(document => foldedVersions.delete(document.uri.toString())),
+    vscode.workspace.onDidCloseTextDocument(document => foldedDocuments.delete(document.uri.toString())),
     { dispose: () => { if (timer) clearTimeout(timer) } },
   )
   scheduleCollapse()

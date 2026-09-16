@@ -5542,6 +5542,842 @@ ${before}${html}${after}`;
   }
 });
 
+// integrations/markdown-code-embedder/utils.js
+var require_utils = __commonJS({
+  "integrations/markdown-code-embedder/utils.js"(exports2) {
+    "use strict";
+    var __awaiter = exports2 && exports2.__awaiter || function(thisArg, _arguments, P, generator) {
+      function adopt(value) {
+        return value instanceof P ? value : new P(function(resolve) {
+          resolve(value);
+        });
+      }
+      return new (P || (P = Promise))(function(resolve, reject) {
+        function fulfilled(value) {
+          try {
+            step(generator.next(value));
+          } catch (e) {
+            reject(e);
+          }
+        }
+        function rejected(value) {
+          try {
+            step(generator["throw"](value));
+          } catch (e) {
+            reject(e);
+          }
+        }
+        function step(result) {
+          result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+        }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+      });
+    };
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.resolveFilePath = exports2.isInCodeFence = exports2.getCodeFenceRanges = exports2.getCommentPrefix = exports2.getLanguageId = exports2.fetchUrl = exports2.isUrl = void 0;
+    var path = require("path");
+    var fs = require("fs");
+    var https = require("https");
+    var http = require("http");
+    var vscode2 = require("vscode");
+    function isUrl(str) {
+      return str.startsWith("http://") || str.startsWith("https://");
+    }
+    exports2.isUrl = isUrl;
+    function fetchUrl(url, redirectCount = 0) {
+      if (redirectCount > 5) {
+        return Promise.reject(new Error(`Too many redirects fetching ${url}`));
+      }
+      return new Promise((resolve, reject) => {
+        const client = url.startsWith("https://") ? https : http;
+        const req = client.get(url, (res) => {
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            resolve(fetchUrl(res.headers.location, redirectCount + 1));
+            return;
+          }
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP ${res.statusCode} fetching ${url}`));
+            res.resume();
+            return;
+          }
+          res.setEncoding("utf8");
+          let data = "";
+          res.on("data", (chunk) => {
+            data += chunk;
+          });
+          res.on("end", () => resolve(data));
+        });
+        req.setTimeout(1e4, () => {
+          req.destroy();
+          reject(new Error(`Timeout fetching ${url}`));
+        });
+        req.on("error", reject);
+      });
+    }
+    exports2.fetchUrl = fetchUrl;
+    function getLanguageId(filePath) {
+      let cleanPath = filePath;
+      if (isUrl(filePath)) {
+        cleanPath = filePath.split("?")[0].split("#")[0];
+      }
+      const ext = path.extname(cleanPath).toLowerCase();
+      const map = {
+        ".js": "javascript",
+        ".ts": "typescript",
+        ".py": "python",
+        ".java": "java",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".h": "c",
+        ".css": "css",
+        ".html": "html",
+        ".json": "json",
+        ".md": "markdown",
+        ".markdown": "markdown",
+        ".gmc": "gmc",
+        ".graphmodel": "gmc",
+        ".sh": "bash",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".xml": "xml",
+        ".go": "go",
+        ".rs": "rust",
+        ".php": "php",
+        ".rb": "ruby",
+        ".lua": "lua"
+      };
+      return map[ext] || "";
+    }
+    exports2.getLanguageId = getLanguageId;
+    function getCommentPrefix(languageId) {
+      const formats = {
+        "javascript": ["//", ""],
+        "typescript": ["//", ""],
+        "c": ["//", ""],
+        "cpp": ["//", ""],
+        "csharp": ["//", ""],
+        "java": ["//", ""],
+        "go": ["//", ""],
+        "rust": ["//", ""],
+        "php": ["//", ""],
+        "python": ["#", ""],
+        "ruby": ["#", ""],
+        "perl": ["#", ""],
+        "yaml": ["#", ""],
+        "shellscript": ["#", ""],
+        "bash": ["#", ""],
+        "html": ["<!--", " -->"],
+        "xml": ["<!--", " -->"],
+        "css": ["/*", " */"],
+        "sql": ["--", ""],
+        "lua": ["--", ""]
+      };
+      return formats[languageId] || ["//", ""];
+    }
+    exports2.getCommentPrefix = getCommentPrefix;
+    function getCodeFenceRanges(text) {
+      const ranges = [];
+      const fenceRegex = /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm;
+      let m;
+      while ((m = fenceRegex.exec(text)) !== null) {
+        ranges.push([m.index, m.index + m[0].length]);
+      }
+      return ranges;
+    }
+    exports2.getCodeFenceRanges = getCodeFenceRanges;
+    function isInCodeFence(index, ranges) {
+      return ranges.some(([start, end]) => index >= start && index < end);
+    }
+    exports2.isInCodeFence = isInCodeFence;
+    function resolveFilePath(document, relPath) {
+      return __awaiter(this, void 0, void 0, function* () {
+        let targetPath = path.resolve(path.dirname(document.uri.fsPath), relPath);
+        try {
+          yield fs.promises.access(targetPath);
+          return targetPath;
+        } catch (_a) {
+          const workspaceFolder = vscode2.workspace.getWorkspaceFolder(document.uri);
+          if (workspaceFolder) {
+            targetPath = path.resolve(workspaceFolder.uri.fsPath, relPath);
+            try {
+              yield fs.promises.access(targetPath);
+              return targetPath;
+            } catch (_b) {
+              throw new Error(`File not found: ${relPath}`);
+            }
+          } else {
+            throw new Error(`File not found: ${relPath}`);
+          }
+        }
+      });
+    }
+    exports2.resolveFilePath = resolveFilePath;
+  }
+});
+
+// integrations/markdown-code-embedder/markdown-paths.js
+var require_markdown_paths = __commonJS({
+  "integrations/markdown-code-embedder/markdown-paths.js"(exports2, module2) {
+    "use strict";
+    var path = require("path");
+    function isUrl(value) {
+      return /^https?:\/\//i.test(value);
+    }
+    function isExternalOrAbsolute(value) {
+      return !value || value.startsWith("#") || value.startsWith("/") || value.startsWith("\\") || /^[a-z][a-z0-9+.-]*:/i.test(value) || /^[a-z]:[\\/]/i.test(value);
+    }
+    function splitSuffix(value) {
+      const index = value.search(/[?#]/);
+      return index === -1 ? { pathname: value, suffix: "" } : { pathname: value.slice(0, index), suffix: value.slice(index) };
+    }
+    function rebaseRelativePath(value, sourcePath, outputPath) {
+      if (isExternalOrAbsolute(value)) {
+        return value;
+      }
+      if (isUrl(sourcePath)) {
+        return new URL(value, sourcePath).href;
+      }
+      if (!outputPath || isUrl(outputPath)) {
+        return value;
+      }
+      const { pathname, suffix } = splitSuffix(value);
+      if (!pathname) {
+        return value;
+      }
+      const absoluteTarget = path.resolve(path.dirname(sourcePath), pathname);
+      let relativeTarget = path.relative(path.dirname(outputPath), absoluteTarget).split(path.sep).join("/");
+      if (!relativeTarget.startsWith(".")) {
+        relativeTarget = `./${relativeTarget}`;
+      }
+      return relativeTarget + suffix;
+    }
+    function rewriteTarget(rawTarget, sourcePath, outputPath) {
+      const angled = rawTarget.startsWith("<") && rawTarget.endsWith(">");
+      const target = angled ? rawTarget.slice(1, -1) : rawTarget;
+      const rewritten = rebaseRelativePath(target, sourcePath, outputPath);
+      return angled ? `<${rewritten}>` : rewritten;
+    }
+    function rewriteMarkdownSegment(segment, sourcePath, outputPath) {
+      let rewritten = segment.replace(
+        /(!?\[[^\]\r\n]*\]\(\s*)(<[^>\r\n]+>|[^\s)]+)([^)\r\n]*\))/g,
+        (_match, prefix, target, suffix) => prefix + rewriteTarget(target, sourcePath, outputPath) + suffix
+      );
+      rewritten = rewritten.replace(
+        /^(\s{0,3}\[[^\]\r\n]+\]:\s*)(<[^>\r\n]+>|\S+)(.*)$/gm,
+        (_match, prefix, target, suffix) => prefix + rewriteTarget(target, sourcePath, outputPath) + suffix
+      );
+      rewritten = rewritten.replace(
+        /(<(?:a|img)\b[^>]*?\s(?:href|src)\s*=\s*["'])([^"']+)(["'])/gi,
+        (_match, prefix, target, suffix) => prefix + rebaseRelativePath(target, sourcePath, outputPath) + suffix
+      );
+      return rewritten;
+    }
+    function rewriteMarkdownLinks(content, sourcePath, outputPath) {
+      const fenceRegex = /^(`{3,}|~{3,})[^\n]*(?:\n|$)[\s\S]*?^\1\s*$/gm;
+      let cursor = 0;
+      let result = "";
+      let match;
+      while ((match = fenceRegex.exec(content)) !== null) {
+        result += rewriteMarkdownSegment(content.slice(cursor, match.index), sourcePath, outputPath);
+        result += match[0];
+        cursor = match.index + match[0].length;
+      }
+      return result + rewriteMarkdownSegment(content.slice(cursor), sourcePath, outputPath);
+    }
+    function rewriteEmbedTag(tag, sourcePath, outputPath) {
+      return tag.replace(
+        /(\bfile\s*=\s*["'])([^"']+)(["'])/i,
+        (_match, prefix, target, suffix) => prefix + rebaseRelativePath(target, sourcePath, outputPath) + suffix
+      );
+    }
+    module2.exports = {
+      rebaseRelativePath,
+      rewriteEmbedTag,
+      rewriteMarkdownLinks
+    };
+  }
+});
+
+// integrations/markdown-code-embedder/embedder.js
+var require_embedder = __commonJS({
+  "integrations/markdown-code-embedder/embedder.js"(exports2) {
+    "use strict";
+    var __awaiter = exports2 && exports2.__awaiter || function(thisArg, _arguments, P, generator) {
+      function adopt(value) {
+        return value instanceof P ? value : new P(function(resolve) {
+          resolve(value);
+        });
+      }
+      return new (P || (P = Promise))(function(resolve, reject) {
+        function fulfilled(value) {
+          try {
+            step(generator.next(value));
+          } catch (e) {
+            reject(e);
+          }
+        }
+        function rejected(value) {
+          try {
+            step(generator["throw"](value));
+          } catch (e) {
+            reject(e);
+          }
+        }
+        function step(result) {
+          result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+        }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+      });
+    };
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.MarkdownEmbedder = void 0;
+    var vscode2 = require("vscode");
+    var fs = require("fs");
+    var path = require("path");
+    var crypto = require("crypto");
+    var utils_1 = require_utils();
+    var markdown_paths_1 = require_markdown_paths();
+    var REGION_MARKER_REGEX = /^\s*(?:\/\/|--|#|<!--|\/\*)\s*#(?:region|endregion)\b.*(?:-->|\*\/)?$/;
+    var MarkdownEmbedder = class {
+      constructor() {
+        this.embedRegex = /<!--\s*embed:([^\s]+)(.*?)-->/g;
+        this.endEmbedRegex = /<!--\s*embed:end\s*-->/;
+      }
+      /** Find the end marker paired with an embed, accounting for nested embeds. */
+      findMatchingEnd(text, fromIndex) {
+        const tokenRegex = /<!--\s*embed:(end\b|[^\s]+)(.*?)-->/g;
+        const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
+        tokenRegex.lastIndex = fromIndex;
+        let depth = 0;
+        let token;
+        while ((token = tokenRegex.exec(text)) !== null) {
+          if ((0, utils_1.isInCodeFence)(token.index, fenceRanges)) {
+            continue;
+          }
+          if (/^end\b/i.test(token[1])) {
+            if (depth === 0) {
+              return { index: token.index, end: token.index + token[0].length };
+            }
+            depth--;
+          } else if (/:end$/i.test(token[1])) {
+            if (depth > 0)
+              depth--;
+          } else {
+            depth++;
+          }
+        }
+        return void 0;
+      }
+      findTocEnd(text, fromIndex) {
+        const regex = /<!--\s*embed:toc:end\s*-->/gi;
+        regex.lastIndex = fromIndex;
+        const match = regex.exec(text);
+        return match ? { index: match.index, end: match.index + match[0].length } : void 0;
+      }
+      buildTocContent(document, attributes = {}) {
+        const text = document.getText();
+        const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
+        const requestedMin = parseInt(attributes["min-level"] || attributes["minLevel"] || "1", 10);
+        const minLevel = Math.max(1, Math.min(6, isNaN(requestedMin) ? 1 : requestedMin));
+        const requestedDepth = parseInt(attributes["depth"] || "", 10);
+        const requestedMax = parseInt(attributes["max-level"] || attributes["maxLevel"] || "6", 10);
+        const maxLevel = Math.max(minLevel, Math.min(6, !isNaN(requestedDepth) ? minLevel + requestedDepth - 1 : isNaN(requestedMax) ? 6 : requestedMax));
+        const duplicates = /* @__PURE__ */ new Map();
+        const entries = [];
+        const headingRegex = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
+        let match;
+        while ((match = headingRegex.exec(text)) !== null) {
+          if ((0, utils_1.isInCodeFence)(match.index, fenceRanges))
+            continue;
+          const level = match[1].length;
+          if (level < minLevel || level > maxLevel)
+            continue;
+          const label = match[2].replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/<[^>]+>/g, "").replace(/[`*_~]/g, "").trim();
+          if (!label)
+            continue;
+          const baseSlug = label.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").trim().replace(/\s+/g, "-");
+          const count = duplicates.get(baseSlug) || 0;
+          duplicates.set(baseSlug, count + 1);
+          const slug = count ? `${baseSlug}-${count}` : baseSlug;
+          entries.push(`${"  ".repeat(level - minLevel)}- [${label}](#${slug})`);
+        }
+        return `
+
+${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
+      }
+      indentReplacement(content, text, index) {
+        if (content === null) return null;
+        const prefix = text.slice(text.lastIndexOf("\n", index - 1) + 1, index);
+        if (!/^[ \t]+$/.test(prefix)) return content;
+        return content.split("\n").map((line, i) => i === 0 ? line : prefix + line).join("\n");
+      }
+      generateEditsForIndex(document, targetIndex) {
+        return __awaiter(this, void 0, void 0, function* () {
+          return this.generateEdits(document, targetIndex);
+        });
+      }
+      generateEdits(document, onlyIndex) {
+        return __awaiter(this, void 0, void 0, function* () {
+          const text = document.getText();
+          const edits = [];
+          const promises = [];
+          const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
+          let match;
+          const regex = new RegExp(this.embedRegex);
+          while ((match = regex.exec(text)) !== null) {
+            const fullMatch = match[0];
+            const primaryKey = match[1];
+            const remainingAttributes = match[2];
+            const matchIndex = match.index;
+            const matchLen = fullMatch.length;
+            if (onlyIndex !== void 0 && matchIndex !== onlyIndex) {
+              continue;
+            }
+            if ((0, utils_1.isInCodeFence)(matchIndex, fenceRanges)) {
+              continue;
+            }
+            const attributeString = primaryKey + remainingAttributes;
+            const attributes = this.parseAttributes(attributeString);
+            if (primaryKey.toLowerCase() === "toc") {
+              if (attributes["lock"] === "true")
+                continue;
+              const closeMatch2 = this.findTocEnd(text, matchIndex + matchLen);
+              const replaceRange2 = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(closeMatch2 ? closeMatch2.end : matchIndex + matchLen));
+              if (closeMatch2)
+                regex.lastIndex = closeMatch2.end;
+              const newContent = this.buildTocContent(document, attributes);
+              if (document.getText(replaceRange2) !== newContent)
+                edits.push(vscode2.TextEdit.replace(replaceRange2, newContent));
+              continue;
+            }
+            if (!attributes["file"]) {
+              continue;
+            }
+            if (attributes["lock"] === "true") {
+              continue;
+            }
+            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen);
+            let replaceRange;
+            if (closeMatch) {
+              replaceRange = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(closeMatch.end));
+              regex.lastIndex = closeMatch.end;
+            } else {
+              replaceRange = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(matchIndex + matchLen));
+            }
+            const capturedAttributes = Object.assign({}, attributes);
+            const capturedRange = replaceRange;
+            promises.push((() => __awaiter(this, void 0, void 0, function* () {
+              try {
+                const currentContent = document.getText(capturedRange);
+                const newContent = this.indentReplacement(yield this.buildNewContent(document, capturedAttributes, /* @__PURE__ */ new Set(), void 0, true, currentContent), text, matchIndex);
+                if (newContent === null) {
+                  return;
+                }
+                if (currentContent !== newContent) {
+                  edits.push(vscode2.TextEdit.replace(capturedRange, newContent));
+                }
+              } catch (error) {
+                console.error(`Error embedding ${capturedAttributes["file"]}: ${error.message}`);
+              }
+            }))());
+          }
+          yield Promise.all(promises);
+          return edits;
+        });
+      }
+      /**
+       * Returns match indices of embeds whose current document content differs from source.
+       * Used for stale detection in CodeLens.
+       */
+      getStaleMatchIndices(document) {
+        return __awaiter(this, void 0, void 0, function* () {
+          const text = document.getText();
+          const staleSet = /* @__PURE__ */ new Set();
+          const promises = [];
+          const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
+          let match;
+          const regex = new RegExp(this.embedRegex);
+          while ((match = regex.exec(text)) !== null) {
+            const fullMatch = match[0];
+            const primaryKey = match[1];
+            const remainingAttributes = match[2];
+            const matchIndex = match.index;
+            const matchLen = fullMatch.length;
+            const attributeString = primaryKey + remainingAttributes;
+            const attributes = this.parseAttributes(attributeString);
+            if ((0, utils_1.isInCodeFence)(matchIndex, fenceRanges)) {
+              continue;
+            }
+            if (primaryKey.toLowerCase() === "toc") {
+              if (attributes["lock"] === "true")
+                continue;
+              const closeMatch2 = this.findTocEnd(text, matchIndex + matchLen);
+              if (!closeMatch2) {
+                staleSet.add(matchIndex);
+                continue;
+              }
+              const replaceRange2 = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(closeMatch2.end));
+              regex.lastIndex = closeMatch2.end;
+              if (document.getText(replaceRange2) !== this.buildTocContent(document, attributes))
+                staleSet.add(matchIndex);
+              continue;
+            }
+            if (!attributes["file"] || attributes["lock"] === "true") {
+              continue;
+            }
+            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen);
+            if (!closeMatch) {
+              staleSet.add(matchIndex);
+              continue;
+            }
+            const replaceRange = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(closeMatch.end));
+            regex.lastIndex = closeMatch.end;
+            const currentContent = document.getText(replaceRange);
+            const capturedIndex = matchIndex;
+            const capturedAttrs = Object.assign({}, attributes);
+            const capturedCurrentContent = currentContent;
+            promises.push((() => __awaiter(this, void 0, void 0, function* () {
+              try {
+                const expectedContent = this.indentReplacement(yield this.buildNewContent(document, capturedAttrs, /* @__PURE__ */ new Set(), void 0, false), text, capturedIndex);
+                if (expectedContent !== null && capturedCurrentContent !== expectedContent) {
+                  staleSet.add(capturedIndex);
+                }
+              } catch (_a) {
+              }
+            }))());
+          }
+          yield Promise.all(promises);
+          return staleSet;
+        });
+      }
+      /**
+       * Builds the full replacement string for an embed (link + fenced code + end tag).
+       * Returns null on error.
+       */
+      buildNewContent(document, attributes, ancestors = /* @__PURE__ */ new Set(), outputPath, refreshAssets = true, currentContent = "") {
+        return __awaiter(this, void 0, void 0, function* () {
+          try {
+            const rootPath = outputPath || document.uri.fsPath || document.uri.toString();
+            if (attributes["mode"] === "link" && !this.expandLinkEmbeds) {
+              const sourcePath = document.uri.fsPath || document.uri.toString();
+              const target = (0, markdown_paths_1.rebaseRelativePath)(attributes["file"], sourcePath, rootPath);
+              const filename = attributes["file"].split(/[\\/]/).pop();
+              let title = path.basename(filename, path.extname(filename));
+              try {
+                const source = yield this.resolveContent(document, { file: attributes["file"], "strip-comments": "false" });
+                const firstLine = source.content.replace(/^\uFEFF/, "").replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "").split(/\r?\n/, 1)[0];
+                const heading = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(firstLine);
+                if (heading) title = heading[1];
+              } catch (_) {
+              }
+              const label = title.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
+              return `
+[${label}](<${target.replace(/>/g, "%3E").replace(/</g, "%3C")}>)
+<!-- embed:end -->`;
+            }
+            const embedResult = yield this.resolveContent(document, attributes);
+            const lang = (0, utils_1.getLanguageId)(attributes["file"]);
+            const rootOutputPath = outputPath || ((0, utils_1.isUrl)(document.uri.toString()) ? document.uri.toString() : document.uri.fsPath);
+            let renderedContent;
+            if (lang === "markdown") {
+              const sourceKey = embedResult.resolvedPath;
+              if (ancestors.has(sourceKey)) {
+                throw new Error(`Circular Markdown embed detected at ${sourceKey}`);
+              }
+              const nestedAncestors = new Set(ancestors);
+              nestedAncestors.add(sourceKey);
+              const rebasedContent = (0, markdown_paths_1.rewriteMarkdownLinks)(embedResult.content.replace(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, ""), sourceKey, rootOutputPath);
+              renderedContent = yield this.expandNestedMarkdown(rebasedContent, sourceKey, nestedAncestors, rootOutputPath, refreshAssets);
+              const headingIndent = parseInt(attributes["indent"], 10);
+              if (!isNaN(headingIndent) && headingIndent > 0) {
+                renderedContent = this.shiftMarkdownHeadings(renderedContent, headingIndent);
+              }
+            } else if (lang === "gmc" && !(0, utils_1.isUrl)(embedResult.resolvedPath)) {
+              const requestedView = attributes["view"];
+              const viewSuffix = requestedView ? `-${requestedView.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "view"}` : "";
+              const pngPath = path.join(
+                path.dirname(embedResult.resolvedPath),
+                `${path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath))}${viewSuffix}.png`
+              );
+              const hashInput = requestedView ? `${embedResult.content}\0view=${requestedView}` : embedResult.content;
+              const sourceHash = crypto.createHash("sha256").update(hashInput, "utf8").digest("hex");
+              const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
+              if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
+                yield vscode2.commands.executeCommand(
+                  "gmc.renderFilePng",
+                  vscode2.Uri.file(embedResult.resolvedPath),
+                  vscode2.Uri.file(pngPath),
+                  requestedView
+                );
+              }
+              const imagePath = (0, markdown_paths_1.rebaseRelativePath)(
+                `./${path.basename(pngPath)}`,
+                embedResult.resolvedPath,
+                rootOutputPath
+              );
+              const imageLabel = path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath));
+              renderedContent = `![${imageLabel}](${imagePath})
+<!-- gmc-source-sha256:${sourceHash} -->`;
+            } else {
+              renderedContent = `\`\`\`${lang}
+${embedResult.content}
+\`\`\``;
+            }
+            let newContent = `
+${renderedContent}
+<!-- embed:end -->`;
+            if (lang !== "markdown" && attributes["indent"]) {
+              const spaces = parseInt(attributes["indent"], 10);
+              if (!isNaN(spaces) && spaces > 0) {
+                const prefix = " ".repeat(spaces);
+                newContent = newContent.split("\n").map((line, i) => i === 0 ? line : prefix + line).join("\n");
+              }
+            }
+            return newContent;
+          } catch (error) {
+            if (this.expandLinkEmbeds) throw error;
+            console.error(`Error building embed content for ${attributes["file"]}: ${error.message}`);
+            return null;
+          }
+        });
+      }
+      /** Increase ATX heading depth without touching headings inside code fences. */
+      shiftMarkdownHeadings(content, amount) {
+        let fence;
+        return content.split(/\r?\n/).map((line) => {
+          const marker = /^\s*(`{3,}|~{3,})/.exec(line);
+          if (marker) {
+            const character = marker[1][0];
+            if (!fence) {
+              fence = { character, length: marker[1].length };
+            } else if (fence.character === character && marker[1].length >= fence.length) {
+              fence = void 0;
+            }
+            return line;
+          }
+          if (fence) {
+            return line;
+          }
+          return line.replace(/^(\s*)(#{1,6})([ \t]+)/, (_match, prefix, hashes, spacing) => {
+            return prefix + "#".repeat(Math.min(6, hashes.length + amount)) + spacing;
+          });
+        }).join("\n");
+      }
+      /** Expand Markdown includes recursively, resolving children relative to their parent file. */
+      expandNestedMarkdown(content, resolvedPath, ancestors, outputPath, refreshAssets = true) {
+        return __awaiter(this, void 0, void 0, function* () {
+          const regex = new RegExp(this.embedRegex.source, "g");
+          const fenceRanges = (0, utils_1.getCodeFenceRanges)(content);
+          const document = { uri: (0, utils_1.isUrl)(resolvedPath) ? vscode2.Uri.parse(resolvedPath) : vscode2.Uri.file(resolvedPath) };
+          let cursor = 0;
+          let result = "";
+          let match;
+          while ((match = regex.exec(content)) !== null) {
+            if ((0, utils_1.isInCodeFence)(match.index, fenceRanges)) {
+              continue;
+            }
+            const attributes = this.parseAttributes(match[1] + match[2]);
+            if (!attributes["file"]) {
+              continue;
+            }
+            if ((0, utils_1.isUrl)(resolvedPath) && !(0, utils_1.isUrl)(attributes["file"])) {
+              attributes["file"] = new URL(attributes["file"], resolvedPath).href;
+            }
+            const closeMatch = this.findMatchingEnd(content, match.index + match[0].length);
+            const outputTag = (0, markdown_paths_1.rewriteEmbedTag)(match[0], resolvedPath, outputPath);
+            result += content.slice(cursor, match.index) + outputTag;
+            if (attributes["lock"] === "true") {
+              const end = closeMatch ? closeMatch.end : match.index + match[0].length;
+              result += content.slice(match.index + match[0].length, end);
+              cursor = end;
+              regex.lastIndex = end;
+              continue;
+            }
+            const existingContent = closeMatch ? content.slice(match.index + match[0].length, closeMatch.end) : "";
+            const replacement = yield this.buildNewContent(document, attributes, ancestors, outputPath, refreshAssets, existingContent);
+            if (replacement === null) {
+              const end = closeMatch ? closeMatch.end : match.index + match[0].length;
+              result += content.slice(match.index + match[0].length, end);
+              cursor = end;
+              regex.lastIndex = end;
+              continue;
+            }
+            result += this.indentReplacement(replacement, content, match.index);
+            cursor = closeMatch ? closeMatch.end : match.index + match[0].length;
+            regex.lastIndex = cursor;
+          }
+          return result + content.slice(cursor);
+        });
+      }
+      /**
+       * Removes any legacy `<!-- Error embedding ... -->` comments written by older versions.
+       */
+      cleanLegacyErrorComments(document) {
+        const text = document.getText();
+        const edits = [];
+        const errorRegex = /\n?<!--\s*Error embedding [^>]+-->/g;
+        let match;
+        while ((match = errorRegex.exec(text)) !== null) {
+          const start = document.positionAt(match.index);
+          const end = document.positionAt(match.index + match[0].length);
+          edits.push(vscode2.TextEdit.delete(new vscode2.Range(start, end)));
+        }
+        return edits;
+      }
+      parseAttributes(str) {
+        const attrs = {};
+        const attrRegex = /([a-zA-Z0-9-_]+)=["']([^"']+)["']/g;
+        let match;
+        while ((match = attrRegex.exec(str)) !== null) {
+          attrs[match[1]] = match[2];
+        }
+        return attrs;
+      }
+      resolveContent(document, attrs) {
+        return __awaiter(this, void 0, void 0, function* () {
+          let fileContent;
+          let resolvedPath;
+          if ((0, utils_1.isUrl)(attrs["file"])) {
+            fileContent = yield (0, utils_1.fetchUrl)(attrs["file"]);
+            resolvedPath = attrs["file"];
+          } else {
+            resolvedPath = yield (0, utils_1.resolveFilePath)(document, attrs["file"]);
+            fileContent = yield fs.promises.readFile(resolvedPath, "utf-8");
+          }
+          const lines = fileContent.split(/\r?\n/);
+          let content = fileContent;
+          let startLine;
+          let endLine;
+          if (attrs["line"]) {
+            const [start, end] = attrs["line"].split("-").map((n) => parseInt(n, 10));
+            if (isNaN(start) || isNaN(end)) {
+              throw new Error("Invalid line format");
+            }
+            content = lines.slice(start - 1, end).join("\n");
+            startLine = start;
+            endLine = end;
+          } else if (attrs["region"]) {
+            const includeMarkers = attrs["strip-comments"] === "false";
+            const regionData = this.extractRegion(lines, attrs["region"], includeMarkers);
+            content = regionData.content;
+            startLine = regionData.startLine;
+            endLine = regionData.endLine;
+          }
+          if (!attrs["region"] && attrs["strip-comments"] !== "false") {
+            content = content.split(/\r?\n/).filter((line) => !REGION_MARKER_REGEX.test(line)).join("\n");
+          }
+          content = this.stripIndentation(content);
+          if (attrs["new"]) {
+            const newLines = /* @__PURE__ */ new Set();
+            attrs["new"].split(",").forEach((part) => {
+              if (part.includes("-")) {
+                const [start, end] = part.split("-").map((n) => parseInt(n.trim(), 10));
+                if (!isNaN(start) && !isNaN(end)) {
+                  for (let i = start; i <= end; i++) {
+                    newLines.add(i);
+                  }
+                }
+              } else {
+                const line = parseInt(part.trim(), 10);
+                if (!isNaN(line)) {
+                  newLines.add(line);
+                }
+              }
+            });
+            const langId = (0, utils_1.getLanguageId)(resolvedPath);
+            const [commentPrefix, commentSuffix] = (0, utils_1.getCommentPrefix)(langId);
+            const linesToProcess = content.split(/\r?\n/);
+            let maxLineLength = 0;
+            linesToProcess.forEach((line) => {
+              if (line.length > maxLineLength) {
+                maxLineLength = line.length;
+              }
+            });
+            const processedLines = linesToProcess.map((line, index) => {
+              const originalLineNumber = (startLine || 1) + index;
+              if (newLines.has(originalLineNumber)) {
+                const padding = " ".repeat(maxLineLength - line.length + 1);
+                const suffix = `${padding}${commentPrefix} NEW${commentSuffix}`;
+                return line + suffix;
+              }
+              return line;
+            });
+            content = processedLines.join("\n");
+          }
+          if (attrs["withLineNumbers"] === "true") {
+            const linesToProcess = content.split(/\r?\n/);
+            const maxLineNumber = (startLine || 1) + linesToProcess.length - 1;
+            const maxLineNumberWidth = maxLineNumber.toString().length;
+            const processedLines = linesToProcess.map((line, index) => {
+              const originalLineNumber = (startLine || 1) + index;
+              const paddedLineNumber = originalLineNumber.toString().padStart(maxLineNumberWidth, " ");
+              return `${paddedLineNumber}: ${line}`;
+            });
+            content = processedLines.join("\n");
+          }
+          return {
+            content,
+            resolvedPath,
+            startLine,
+            endLine
+          };
+        });
+      }
+      extractRegion(lines, regionName, includeMarkers = false) {
+        const regionStartRegex = new RegExp(`^\\s*(?:\\/\\/|--|#|<!--|\\/\\*)\\s*#region\\s+${regionName}\\s*(?:-->|\\*\\/)?$`);
+        const regionEndRegex = new RegExp(`^\\s*(?:\\/\\/|--|#|<!--|\\/\\*)\\s*#endregion\\s*(?:-->|\\*\\/)?`);
+        let startIdx = -1;
+        let endIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (regionStartRegex.test(lines[i])) {
+            startIdx = i;
+            continue;
+          }
+          if (startIdx !== -1 && regionEndRegex.test(lines[i])) {
+            endIdx = i;
+            break;
+          }
+        }
+        if (startIdx !== -1 && endIdx !== -1) {
+          const sliceFrom = includeMarkers ? startIdx : startIdx + 1;
+          const sliceTo = includeMarkers ? endIdx + 1 : endIdx;
+          return {
+            content: lines.slice(sliceFrom, sliceTo).join("\n"),
+            startLine: startIdx + 2,
+            endLine: endIdx
+            // 1-based, last content line
+          };
+        }
+        throw new Error(`Region ${regionName} not found`);
+      }
+      stripIndentation(content) {
+        const lines = content.split(/\r?\n/);
+        let minIndent = Infinity;
+        for (const line of lines) {
+          if (line.trim().length === 0) {
+            continue;
+          }
+          const match = line.match(/^(\s*)/);
+          if (match) {
+            minIndent = Math.min(minIndent, match[1].length);
+          }
+        }
+        if (minIndent === Infinity || minIndent === 0) {
+          return content;
+        }
+        return lines.map((line) => {
+          if (line.length < minIndent) {
+            return "";
+          }
+          return line.substring(minIndent);
+        }).join("\n");
+      }
+    };
+    exports2.MarkdownEmbedder = MarkdownEmbedder;
+  }
+});
+
 // integrations/markdown-toolkit/source/export.js
 var require_export = __commonJS({
   "integrations/markdown-toolkit/source/export.js"(exports2, module2) {
@@ -5553,6 +6389,7 @@ var require_export = __commonJS({
     var path = require("node:path");
     var { pathToFileURL } = require("node:url");
     var MarkdownIt = require_index_cjs4();
+    var { MarkdownEmbedder } = require_embedder();
     var md = new MarkdownIt({ html: true, linkify: true, typographer: false });
     function parseOptions(info) {
       const options = {};
@@ -5699,12 +6536,26 @@ var require_export = __commonJS({
 @page{margin:18mm}*{box-sizing:border-box}body{${colors};font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;max-width:1100px;margin:0 auto;padding:32px}a{color:var(--link)}img{max-width:100%;height:auto}h1,h2{border-bottom:1px solid var(--border);padding-bottom:.3em}pre{background:var(--code);padding:16px;overflow:auto;border-radius:6px}code{background:var(--code);padding:.15em .35em;border-radius:3px}pre code{padding:0}blockquote{border-left:4px solid var(--border);margin-left:0;padding-left:16px}table{border-collapse:collapse;width:max-content;max-width:100%;margin:16px 0}th,td{border:1px solid var(--border);padding:6px 13px}th{background:var(--code)}.gmc-export-diagram{margin:24px 0;text-align:center}.gmc-export-diagram img{display:block;margin:auto}@media print{body{max-width:none;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>${body}</body></html>`;
     }
-    async function renderMarkdownDocument(context, document) {
+    async function chooseEmbedMode(document) {
+      if (!/<!--\s*embed:file=/.test(document.getText())) return false;
+      const choice = await vscode2.window.showQuickPick([
+        { label: "Keep file links", description: 'Preserve embed:file mode="link" as hyperlinks', value: false },
+        { label: "Embed linked file contents", description: "Include linked files recursively, without YAML front matter", value: true }
+      ], { placeHolder: "Choose how to export embedded files" });
+      return choice?.value;
+    }
+    async function prepareExportSource(document, embedLinks = false) {
+      const embedder = new MarkdownEmbedder();
+      embedder.expandLinkEmbeds = embedLinks;
+      return embedder.expandNestedMarkdown(document.getText(), document.fileName, /* @__PURE__ */ new Set([document.fileName]), document.fileName);
+    }
+    async function renderMarkdownDocument(context, document, embedLinks = false) {
       const dark = vscode2.window.activeColorTheme.kind !== vscode2.ColorThemeKind.Light && vscode2.window.activeColorTheme.kind !== vscode2.ColorThemeKind.HighContrastLight;
       let renderer;
       try {
-        if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(document.getText())) renderer = new GmcExportRenderer(context);
-        const source = renderer ? await replaceGmcFences(document.getText(), renderer) : document.getText();
+        const prepared = await prepareExportSource(document, embedLinks);
+        if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(prepared)) renderer = new GmcExportRenderer(context);
+        const source = renderer ? await replaceGmcFences(prepared, renderer) : prepared;
         const body = md.render(source).replace(/(<img\b[^>]*\bsrc=")([^"]+)(")/gi, (match, before, value, after) => {
           if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) return match;
           try {
@@ -5808,10 +6659,12 @@ var require_export = __commonJS({
       if (!document || document.languageId !== "markdown") {
         return vscode2.window.showInformationMessage("Open a Markdown document before exporting its preview.");
       }
+      const embedLinks = await chooseEmbedMode(document);
+      if (embedLinks === void 0) return;
       const target = await chooseTarget(document, format, format.toUpperCase());
       if (!target) return;
       await vscode2.window.withProgress({ location: vscode2.ProgressLocation.Notification, title: `Exporting Markdown preview to ${format.toUpperCase()}\u2026` }, async () => {
-        const html = await renderMarkdownDocument(context, document);
+        const html = await renderMarkdownDocument(context, document, embedLinks);
         if (format === "html") {
           await vscode2.workspace.fs.writeFile(target, Buffer.from(html, "utf8"));
           return;
@@ -5844,6 +6697,8 @@ var require_export = __commonJS({
       if (!document) return vscode2.window.showInformationMessage("Open a Markdown document before exporting it.");
       const pandoc = findPandoc();
       if (!pandoc) throw new Error("Pandoc was not found. Install Pandoc or configure markdownToolkit.pandoc.path.");
+      const embedLinks = await chooseEmbedMode(document);
+      if (embedLinks === void 0) return;
       const referenceDoc = await chooseReferenceDoc();
       if (referenceDoc === void 0) return;
       const target = await chooseTarget(document, "docx", "Word document");
@@ -5853,7 +6708,7 @@ var require_export = __commonJS({
         const input = path.join(temporaryDirectory, "document.md");
         let renderer;
         try {
-          let source = document.getText();
+          let source = await prepareExportSource(document, embedLinks);
           if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(source)) {
             renderer = new GmcExportRenderer(context);
             source = await replaceGmcFencesWithFiles(source, renderer, temporaryDirectory);
@@ -5901,6 +6756,8 @@ var require_export = __commonJS({
       );
     }
     module2.exports = {
+      prepareExportSource,
+      chooseEmbedMode,
       GmcExportRenderer,
       documentHtml,
       exportDocx,
@@ -6199,7 +7056,7 @@ var require_config = __commonJS({
 });
 
 // node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/utils.js
-var require_utils = __commonJS({
+var require_utils2 = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/utils.js"(exports2) {
     "use strict";
     var DOMException = require_DOMException();
@@ -6319,7 +7176,7 @@ var require_EventTarget = __commonJS({
     "use strict";
     var Event = require_Event();
     var MouseEvent = require_MouseEvent();
-    var utils = require_utils();
+    var utils = require_utils2();
     module2.exports = EventTarget;
     function EventTarget() {
     }
@@ -6563,7 +7420,7 @@ var require_EventTarget = __commonJS({
 var require_LinkedList = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/LinkedList.js"(exports2, module2) {
     "use strict";
-    var utils = require_utils();
+    var utils = require_utils2();
     var LinkedList = module2.exports = {
       // basic validity tests on a circular linked list a
       valid: function(a) {
@@ -6632,7 +7489,7 @@ var require_NodeUtils = __commonJS({
       \u0275escapeClosingCommentTag: escapeClosingCommentTag,
       \u0275escapeProcessingInstructionContent: escapeProcessingInstructionContent
     };
-    var utils = require_utils();
+    var utils = require_utils2();
     var NAMESPACE = utils.NAMESPACE;
     var hasRawContent = {
       STYLE: true,
@@ -6817,7 +7674,7 @@ var require_Node = __commonJS({
     var EventTarget = require_EventTarget();
     var LinkedList = require_LinkedList();
     var NodeUtils = require_NodeUtils();
-    var utils = require_utils();
+    var utils = require_utils2();
     function Node() {
       EventTarget.call(this);
       this.parentNode = null;
@@ -7578,7 +8435,7 @@ var require_xmlnames = __commonJS({
 var require_attributes = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/attributes.js"(exports2) {
     "use strict";
-    var utils = require_utils();
+    var utils = require_utils2();
     exports2.property = function(attr) {
       if (Array.isArray(attr.type)) {
         var valid = /* @__PURE__ */ Object.create(null);
@@ -7782,7 +8639,7 @@ var require_FilteredElementList = __commonJS({
 var require_DOMTokenList = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/DOMTokenList.js"(exports2, module2) {
     "use strict";
-    var utils = require_utils();
+    var utils = require_utils2();
     module2.exports = DOMTokenList;
     function DOMTokenList(getter, setter) {
       this._getString = getter;
@@ -8811,7 +9668,7 @@ var require_NamedNodeMap = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/NamedNodeMap.js"(exports2, module2) {
     "use strict";
     module2.exports = NamedNodeMap;
-    var utils = require_utils();
+    var utils = require_utils2();
     function NamedNodeMap(element) {
       this.element = element;
     }
@@ -8852,7 +9709,7 @@ var require_Element = __commonJS({
     "use strict";
     module2.exports = Element;
     var xml = require_xmlnames();
-    var utils = require_utils();
+    var utils = require_utils2();
     var NAMESPACE = utils.NAMESPACE;
     var attributes = require_attributes();
     var Node = require_Node();
@@ -9889,7 +10746,7 @@ var require_Leaf = __commonJS({
     module2.exports = Leaf;
     var Node = require_Node();
     var NodeList = require_NodeList();
-    var utils = require_utils();
+    var utils = require_utils2();
     var HierarchyRequestError = utils.HierarchyRequestError;
     var NotFoundError = utils.NotFoundError;
     function Leaf() {
@@ -9929,7 +10786,7 @@ var require_CharacterData = __commonJS({
     "use strict";
     module2.exports = CharacterData;
     var Leaf = require_Leaf();
-    var utils = require_utils();
+    var utils = require_utils2();
     var ChildNode = require_ChildNode();
     var NonDocumentTypeChildNode = require_NonDocumentTypeChildNode();
     function CharacterData() {
@@ -10039,7 +10896,7 @@ var require_Text = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/Text.js"(exports2, module2) {
     "use strict";
     module2.exports = Text;
-    var utils = require_utils();
+    var utils = require_utils2();
     var Node = require_Node();
     var CharacterData = require_CharacterData();
     function Text(doc, data) {
@@ -10167,7 +11024,7 @@ var require_DocumentFragment = __commonJS({
     var ContainerNode = require_ContainerNode();
     var Element = require_Element();
     var select = require_select();
-    var utils = require_utils();
+    var utils = require_utils2();
     function DocumentFragment(doc) {
       ContainerNode.call(this);
       this.nodeType = Node.DOCUMENT_FRAGMENT_NODE;
@@ -10382,7 +11239,7 @@ var require_TreeWalker = __commonJS({
     var Node = require_Node();
     var NodeFilter = require_NodeFilter();
     var NodeTraversal = require_NodeTraversal();
-    var utils = require_utils();
+    var utils = require_utils2();
     var mapChild = {
       first: "firstChild",
       last: "lastChild",
@@ -10662,7 +11519,7 @@ var require_NodeIterator = __commonJS({
     module2.exports = NodeIterator;
     var NodeFilter = require_NodeFilter();
     var NodeTraversal = require_NodeTraversal();
-    var utils = require_utils();
+    var utils = require_utils2();
     function move(node, stayWithin, directionIsNext) {
       if (directionIsNext) {
         return NodeTraversal.next(node, stayWithin);
@@ -11593,7 +12450,7 @@ var require_htmlelts = __commonJS({
     var Node = require_Node();
     var Element = require_Element();
     var CSSStyleDeclaration = require_CSSStyleDeclaration();
-    var utils = require_utils();
+    var utils = require_utils2();
     var URLUtils = require_URLUtils();
     var defineElement = require_defineElement();
     var htmlElements = exports2.elements = {};
@@ -13147,7 +14004,7 @@ var require_svg = __commonJS({
     "use strict";
     var Element = require_Element();
     var defineElement = require_defineElement();
-    var utils = require_utils();
+    var utils = require_utils2();
     var CSSStyleDeclaration = require_CSSStyleDeclaration();
     var svgElements = exports2.elements = {};
     var svgNameToImpl = /* @__PURE__ */ Object.create(null);
@@ -13315,7 +14172,7 @@ var require_Document = __commonJS({
     var xml = require_xmlnames();
     var html = require_htmlelts();
     var svg = require_svg();
-    var utils = require_utils();
+    var utils = require_utils2();
     var MUTATE = require_MutationConstants();
     var NAMESPACE = utils.NAMESPACE;
     var isApiWritable = require_config().isApiWritable;
@@ -14082,7 +14939,7 @@ var require_HTMLParser = __commonJS({
     var Document = require_Document();
     var DocumentType = require_DocumentType();
     var Node = require_Node();
-    var NAMESPACE = require_utils().NAMESPACE;
+    var NAMESPACE = require_utils2().NAMESPACE;
     var html = require_htmlelts();
     var impl = html.elements;
     var pushAll = Function.prototype.apply.bind(Array.prototype.push);
@@ -22244,7 +23101,7 @@ var require_DOMImplementation = __commonJS({
     var Document = require_Document();
     var DocumentType = require_DocumentType();
     var HTMLParser = require_HTMLParser();
-    var utils = require_utils();
+    var utils = require_utils2();
     var xml = require_xmlnames();
     function DOMImplementation(contextObject) {
       this.contextObject = contextObject;
@@ -22395,7 +23252,7 @@ var require_WindowTimers = __commonJS({
 var require_impl = __commonJS({
   "node_modules/.pnpm/@mixmark-io+domino@2.2.0/node_modules/@mixmark-io/domino/lib/impl.js"(exports2, module2) {
     "use strict";
-    var utils = require_utils();
+    var utils = require_utils2();
     exports2 = module2.exports = {
       CSSStyleDeclaration: require_CSSStyleDeclaration(),
       CharacterData: require_CharacterData(),
@@ -22429,7 +23286,7 @@ var require_Window = __commonJS({
     var DOMImplementation = require_DOMImplementation();
     var EventTarget = require_EventTarget();
     var Location = require_Location();
-    var utils = require_utils();
+    var utils = require_utils2();
     module2.exports = Window;
     function Window(document) {
       this.document = document || new DOMImplementation(null).createHTMLDocument("");

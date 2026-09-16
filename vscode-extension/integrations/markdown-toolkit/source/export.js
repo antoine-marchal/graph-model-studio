@@ -7,6 +7,7 @@ const os = require('node:os')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const MarkdownIt = require('markdown-it')
+const { MarkdownEmbedder } = require('../../markdown-code-embedder/embedder')
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false })
 
@@ -138,13 +139,29 @@ function documentHtml(title, body, dark) {
 </style></head><body>${body}</body></html>`
 }
 
-async function renderMarkdownDocument(context, document) {
+async function chooseEmbedMode(document) {
+  if (!/<!--\s*embed:file=/.test(document.getText())) return false
+  const choice = await vscode.window.showQuickPick([
+    { label: 'Keep file links', description: 'Preserve embed:file mode="link" as hyperlinks', value: false },
+    { label: 'Embed linked file contents', description: 'Include linked files recursively, without YAML front matter', value: true },
+  ], { placeHolder: 'Choose how to export embedded files' })
+  return choice?.value
+}
+
+async function prepareExportSource(document, embedLinks = false) {
+  const embedder = new MarkdownEmbedder()
+  embedder.expandLinkEmbeds = embedLinks
+  return embedder.expandNestedMarkdown(document.getText(), document.fileName, new Set([document.fileName]), document.fileName)
+}
+
+async function renderMarkdownDocument(context, document, embedLinks = false) {
   const dark = vscode.window.activeColorTheme.kind !== vscode.ColorThemeKind.Light
     && vscode.window.activeColorTheme.kind !== vscode.ColorThemeKind.HighContrastLight
   let renderer
   try {
-    if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(document.getText())) renderer = new GmcExportRenderer(context)
-    const source = renderer ? await replaceGmcFences(document.getText(), renderer) : document.getText()
+    const prepared = await prepareExportSource(document, embedLinks)
+    if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(prepared)) renderer = new GmcExportRenderer(context)
+    const source = renderer ? await replaceGmcFences(prepared, renderer) : prepared
     const body = md.render(source).replace(/(<img\b[^>]*\bsrc=")([^"]+)(")/gi, (match, before, value, after) => {
       if (/^(?:[a-z][a-z0-9+.-]*:|#)/i.test(value)) return match
       try {
@@ -250,10 +267,12 @@ async function exportDocument(context, format) {
   if (!document || document.languageId !== 'markdown') {
     return vscode.window.showInformationMessage('Open a Markdown document before exporting its preview.')
   }
+  const embedLinks = await chooseEmbedMode(document)
+  if (embedLinks === undefined) return
   const target = await chooseTarget(document, format, format.toUpperCase())
   if (!target) return
   await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Exporting Markdown preview to ${format.toUpperCase()}…` }, async () => {
-    const html = await renderMarkdownDocument(context, document)
+    const html = await renderMarkdownDocument(context, document, embedLinks)
     if (format === 'html') {
       await vscode.workspace.fs.writeFile(target, Buffer.from(html, 'utf8'))
       return
@@ -284,6 +303,8 @@ async function exportDocx(context) {
   if (!document) return vscode.window.showInformationMessage('Open a Markdown document before exporting it.')
   const pandoc = findPandoc()
   if (!pandoc) throw new Error('Pandoc was not found. Install Pandoc or configure markdownToolkit.pandoc.path.')
+  const embedLinks = await chooseEmbedMode(document)
+  if (embedLinks === undefined) return
   const referenceDoc = await chooseReferenceDoc()
   if (referenceDoc === undefined) return
   const target = await chooseTarget(document, 'docx', 'Word document')
@@ -293,7 +314,7 @@ async function exportDocx(context) {
     const input = path.join(temporaryDirectory, 'document.md')
     let renderer
     try {
-      let source = document.getText()
+      let source = await prepareExportSource(document, embedLinks)
       if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(source)) {
         renderer = new GmcExportRenderer(context)
         source = await replaceGmcFencesWithFiles(source, renderer, temporaryDirectory)
@@ -341,6 +362,6 @@ function registerExports(context) {
 }
 
 module.exports = {
-  GmcExportRenderer, documentHtml, exportDocx, findPandoc, registerExports,
+  prepareExportSource, chooseEmbedMode, GmcExportRenderer, documentHtml, exportDocx, findPandoc, registerExports,
   renderMarkdownDocument, replaceGmcFences, replaceGmcFencesWithFiles, showExportPicker,
 }

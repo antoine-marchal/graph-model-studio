@@ -1192,7 +1192,7 @@ dependencies = [
 
 [[package]]
 name = "graph-model-studio"
-version = "3.7.1"
+version = "3.7.2"
 dependencies = [
  "arboard",
  "base64 0.22.1",

@@ -34,6 +34,7 @@ Module._load = function (request, parent, isMain) {
     return originalLoad.call(this, request, parent, isMain);
 };
 const { MarkdownEmbedder } = require('../integrations/markdown-code-embedder/embedder');
+const { prepareExportSource } = require('../integrations/markdown-toolkit/source/export');
 Module._load = originalLoad;
 
 test('a GMC embed renders a sibling PNG and emits a Markdown image', async () => {
@@ -139,5 +140,60 @@ test('a GMC embed forwards view and invalidates the PNG when view changes', asyn
         assert.equal(renderCalls.length, callCount, 'the same source and view must reuse the PNG');
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+});
+
+
+test('link labels use only the first line after optional YAML, otherwise the filename stem', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'md-link-title-'));
+    try {
+        const document = { uri: vscodeStub.Uri.file(path.join(root, 'index.md')) };
+        const embedder = new MarkdownEmbedder();
+        for (const [content, label] of [
+            ['# First title\n# Second title', 'First title'],
+            ['\uFEFF---\r\ntitle: Ignored\r\n...\r\n## Heading [one] ##\r\n', 'Heading \\[one\\]'],
+            ['Plain text\n# Later heading', 'child.notes'],
+            ['---\ntitle: Ignored\n---\n\n# Later heading', 'child.notes'],
+            ['', 'child.notes'],
+        ]) {
+            fs.writeFileSync(path.join(root, 'child.notes.md'), content);
+            assert.equal(await embedder.buildNewContent(document, { file: './child.notes.md', mode: 'link' }), `\n[${label}](<./child.notes.md>)\n<!-- embed:end -->`);
+        }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('Markdown link mode uses the first heading; inclusion strips YAML and shifts headings', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'md-embed-'));
+    try {
+        const filename = path.join(root, 'index.md');
+        const document = { uri: vscodeStub.Uri.file(filename) };
+        const embedder = new MarkdownEmbedder();
+        const link = await embedder.buildNewContent(document, { file: './missing.md', mode: 'link' });
+        assert.equal(link, '\n[missing](<./missing.md>)\n<!-- embed:end -->');
+        fs.writeFileSync(path.join(root, 'child.md'), '---\ntitle: Hidden\n---\n# Child\n\n```md\n# Example\n```\n');
+        assert.equal(await embedder.buildNewContent(document, { file: './child.md', mode: 'link' }), '\n[Child](<./child.md>)\n<!-- embed:end -->');
+        const included = await embedder.buildNewContent(document, { file: './child.md', indent: '2' });
+        assert.match(included, /### Child/);
+        assert.match(included, /```md\n# Example\n```/);
+        assert.doesNotMatch(included, /Hidden|---/);
+        embedder.expandLinkEmbeds = true;
+        const expanded = await embedder.expandNestedMarkdown('  <!-- embed:file="./child.md" mode="link" -->', filename, new Set([filename]), filename);
+        assert.match(expanded, /\n  # Child/);
+        assert.doesNotMatch(expanded, /Hidden|\[child.md\]/);
+        const exportDocument = {
+            fileName: filename,
+            getText: () => '<!-- embed:file="./child.md" mode="link" -->\nOld generated content\n<!-- embed:end -->',
+        };
+        assert.match(await prepareExportSource(exportDocument, false), /\[Child\]/);
+        const exported = await prepareExportSource(exportDocument, true);
+        assert.match(exported, /# Child/);
+        assert.doesNotMatch(exported, /Hidden|Old generated content/);
+        fs.writeFileSync(path.join(root, 'child.md'), '<!-- embed:file="./index.md" mode="link" -->');
+        fs.writeFileSync(filename, 'root');
+        await assert.rejects(embedder.buildNewContent(document, { file: './child.md', mode: 'link' }, new Set([filename])), /Circular Markdown embed/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
     }
 });
