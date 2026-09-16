@@ -14,6 +14,10 @@ class FoldingRange {
 }
 
 const vscodeStub = {
+    languages: {},
+    window: {},
+    workspace: {},
+    commands: {},
     FoldingRange,
     FoldingRangeKind: { Region: 'region' },
 };
@@ -36,7 +40,7 @@ Module._load = function (request, parent, isMain) {
 foldingModule._compile(built.outputFiles[0].text, 'embed-folding-test.cjs');
 Module._load = originalLoad;
 
-const { embedFoldingRanges } = foldingModule.exports;
+const { embedFoldingRanges, registerEmbedFolding } = foldingModule.exports;
 
 function documentFrom(lines) {
     return {
@@ -89,4 +93,57 @@ test('headings in fenced generated code do not create folding guards', () => {
         embedFoldingRanges(document).map(({ start, end }) => [start, end]),
         [[0, 4]],
     );
+});
+
+test('automatic folding preserves manual expansion during edits and editor switches', async () => {
+    const document = Object.assign(documentFrom([
+        '# Main', '<!-- embed:file="./child.md" -->', '# Child', 'content', '<!-- embed:end -->',
+    ]), { languageId: 'markdown', version: 1, uri: { toString: () => 'file:///index.md' } });
+    const editor = { document };
+    const listeners = {};
+    const calls = [];
+    const subscribe = name => callback => {
+        listeners[name] = callback;
+        return { dispose() {} };
+    };
+    Object.assign(vscodeStub.languages, { registerFoldingRangeProvider: () => ({ dispose() {} }) });
+    Object.assign(vscodeStub.window, { activeTextEditor: editor, onDidChangeActiveTextEditor: subscribe('active') });
+    Object.assign(vscodeStub.workspace, {
+        getConfiguration: () => ({ get: () => true }),
+        onDidOpenTextDocument: subscribe('open'),
+        onDidChangeTextDocument: subscribe('change'),
+        onDidCloseTextDocument: subscribe('close'),
+    });
+    Object.assign(vscodeStub.commands, { executeCommand: (...args) => calls.push(args) });
+    const context = { subscriptions: [] };
+    const settle = () => new Promise(resolve => setTimeout(resolve, 220));
+    try {
+        registerEmbedFolding(context);
+        await settle();
+        assert.equal(calls.length, 1);
+        assert.deepEqual(calls[0][1].selectionLines, [1]);
+        document.version++;
+        listeners.change({ document });
+        await settle();
+        listeners.active(editor);
+        await settle();
+        assert.equal(calls.length, 1, 'editing or returning to the editor must not refold expanded embeds');
+        listeners.close(document);
+        listeners.open(document);
+        await settle();
+        assert.equal(calls.length, 2, 'reopening the document restores initial automatic folding');
+    } finally {
+        context.subscriptions.forEach(subscription => subscription.dispose());
+    }
+});
+
+test('indented links fold inside embeds', () => {
+    const document = documentFrom([
+        '<!-- embed:file="./outer.md" -->',
+        '  <!-- link:file="./child.md" indent="2" -->',
+        '    [Child](<./child.md>)',
+        '    <!-- link:end -->',
+        '<!-- embed:end -->',
+    ]);
+    assert.deepEqual(embedFoldingRanges(document).map(({ start, end }) => [start, end]), [[0, 4], [1, 3]]);
 });

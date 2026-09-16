@@ -115,18 +115,33 @@ exports.getCommentPrefix = getCommentPrefix;
  */
 function getCodeFenceRanges(text) {
     const ranges = [];
-    // Match opening fence (3+ backticks or tildes) followed by any info string,
-    // then content, then a closing fence with the same or more characters.
-    const fenceRegex = /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm;
-    let m;
-    while ((m = fenceRegex.exec(text)) !== null) {
-        ranges.push([m.index, m.index + m[0].length]);
+    const fenceRegex = /^[ \t]*(`{3,}|~{3,})([^\r\n]*)/gm;
+    let opening;
+    let match;
+    while ((match = fenceRegex.exec(text)) !== null) {
+        const marker = match[1];
+        if (!opening) {
+            if (marker[0] === '`' && match[2].includes('`')) continue;
+            opening = { index: match.index, marker };
+        } else if (marker[0] === opening.marker[0] && marker.length >= opening.marker.length && !match[2].trim()) {
+            ranges.push([opening.index, match.index + match[0].length]);
+            opening = undefined;
+        }
     }
+    if (opening) ranges.push([opening.index, text.length]);
     return ranges;
 }
 exports.getCodeFenceRanges = getCodeFenceRanges;
 function isInCodeFence(index, ranges) {
-    return ranges.some(([start, end]) => index >= start && index < end);
+    let low = 0, high = ranges.length - 1;
+    while (low <= high) {
+        const middle = (low + high) >>> 1;
+        const [start, end] = ranges[middle];
+        if (index < start) high = middle - 1;
+        else if (index >= end) low = middle + 1;
+        else return true;
+    }
+    return false;
 }
 exports.isInCodeFence = isInCodeFence;
 function resolveFilePath(document, relPath) {
@@ -157,3 +172,22 @@ function resolveFilePath(document, relPath) {
 }
 exports.resolveFilePath = resolveFilePath;
 //# sourceMappingURL=utils.js.map
+
+// Scope I/O reuse to one operation: concurrent/nested embeds share reads, but
+// the next update always sees fresh files and remote content.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const sourceReads = new AsyncLocalStorage();
+exports.withSourceReads = callback => sourceReads.getStore()
+    ? callback() : sourceReads.run(new Map(), callback);
+exports.readSource = (document, file) => {
+    const cache = sourceReads.getStore();
+    const key = JSON.stringify([document.uri.toString(), file]);
+    if (cache?.has(key)) return cache.get(key);
+    const result = (async () => {
+        const resolvedPath = isUrl(file) ? file : await resolveFilePath(document, file);
+        const content = isUrl(file) ? await fetchUrl(file) : await fs.promises.readFile(resolvedPath, 'utf-8');
+        return { resolvedPath, content };
+    })();
+    cache?.set(key, result);
+    return result;
+};

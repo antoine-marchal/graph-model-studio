@@ -20,7 +20,7 @@ const REGION_END_REGEX = /^\s*(?:\/\/|--|#|<!--|\/\*)\s*#endregion\s*(?:-->|\*\/
 class EmbedHoverProvider {
     provideHover(document, position) {
         return __awaiter(this, void 0, void 0, function* () {
-            const range = document.getWordRangeAtPosition(position, /<!--\s*embed:.*?-->/);
+            const range = document.getWordRangeAtPosition(position, /<!--\s*(?:embed|link):.*?-->/);
             if (!range) {
                 return undefined;
             }

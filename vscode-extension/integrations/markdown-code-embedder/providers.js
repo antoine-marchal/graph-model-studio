@@ -18,7 +18,7 @@ class EmbedDefinitionProvider {
         return __awaiter(this, void 0, void 0, function* () {
             console.log('[DefinitionProvider] provideDefinition called');
             // Matches any embed tag roughly to see if we are inside one
-            const range = document.getWordRangeAtPosition(position, /<!--\s*embed:.*?-->/);
+            const range = document.getWordRangeAtPosition(position, /<!--\s*(?:embed|link):.*?-->/);
             if (!range) {
                 return undefined;
             }

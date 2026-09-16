@@ -649,7 +649,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
           {d.badge}
         </div>
         <span className="absolute left-1/2 top-full z-10 mt-2 flex -translate-x-1/2 flex-col items-center whitespace-nowrap text-[11px] font-semibold" style={{ color: 'var(--fg)' }}>
-          <span>{d.label}</span>{metaText(d) && <span className="max-w-40 whitespace-normal text-center text-[9px] font-normal opacity-70">{metaText(d)}</span>}
+          <span>{d.label}</span>{metaText(d) && <span className="w-[140px] max-w-[140px] whitespace-normal break-words text-center text-[9px] font-normal opacity-70">{metaText(d)}</span>}
         </span>
       </div>
     )
