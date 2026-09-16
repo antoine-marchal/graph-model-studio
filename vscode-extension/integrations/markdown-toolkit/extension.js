@@ -5678,16 +5678,33 @@ var require_utils = __commonJS({
     exports2.getCommentPrefix = getCommentPrefix;
     function getCodeFenceRanges(text) {
       const ranges = [];
-      const fenceRegex = /^(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\s*$/gm;
-      let m;
-      while ((m = fenceRegex.exec(text)) !== null) {
-        ranges.push([m.index, m.index + m[0].length]);
+      const fenceRegex = /^[ \t]*(`{3,}|~{3,})([^\r\n]*)/gm;
+      let opening;
+      let match;
+      while ((match = fenceRegex.exec(text)) !== null) {
+        const marker = match[1];
+        if (!opening) {
+          if (marker[0] === "`" && match[2].includes("`")) continue;
+          opening = { index: match.index, marker };
+        } else if (marker[0] === opening.marker[0] && marker.length >= opening.marker.length && !match[2].trim()) {
+          ranges.push([opening.index, match.index + match[0].length]);
+          opening = void 0;
+        }
       }
+      if (opening) ranges.push([opening.index, text.length]);
       return ranges;
     }
     exports2.getCodeFenceRanges = getCodeFenceRanges;
     function isInCodeFence(index, ranges) {
-      return ranges.some(([start, end]) => index >= start && index < end);
+      let low = 0, high = ranges.length - 1;
+      while (low <= high) {
+        const middle = low + high >>> 1;
+        const [start, end] = ranges[middle];
+        if (index < start) high = middle - 1;
+        else if (index >= end) low = middle + 1;
+        else return true;
+      }
+      return false;
     }
     exports2.isInCodeFence = isInCodeFence;
     function resolveFilePath(document, relPath) {
@@ -5713,6 +5730,21 @@ var require_utils = __commonJS({
       });
     }
     exports2.resolveFilePath = resolveFilePath;
+    var { AsyncLocalStorage } = require("node:async_hooks");
+    var sourceReads = new AsyncLocalStorage();
+    exports2.withSourceReads = (callback) => sourceReads.getStore() ? callback() : sourceReads.run(/* @__PURE__ */ new Map(), callback);
+    exports2.readSource = (document, file) => {
+      const cache = sourceReads.getStore();
+      const key = JSON.stringify([document.uri.toString(), file]);
+      if (cache?.has(key)) return cache.get(key);
+      const result = (async () => {
+        const resolvedPath = isUrl(file) ? file : await resolveFilePath(document, file);
+        const content = isUrl(file) ? await fetchUrl(file) : await fs.promises.readFile(resolvedPath, "utf-8");
+        return { resolvedPath, content };
+      })();
+      cache?.set(key, result);
+      return result;
+    };
   }
 });
 
@@ -5841,36 +5873,33 @@ var require_embedder = __commonJS({
     var REGION_MARKER_REGEX = /^\s*(?:\/\/|--|#|<!--|\/\*)\s*#(?:region|endregion)\b.*(?:-->|\*\/)?$/;
     var MarkdownEmbedder = class {
       constructor() {
-        this.embedRegex = /<!--\s*embed:([^\s]+)(.*?)-->/g;
-        this.endEmbedRegex = /<!--\s*embed:end\s*-->/;
+        this.endMarkers = /* @__PURE__ */ new WeakMap();
+        this.embedRegex = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
+        this.endEmbedRegex = /<!--\s*(?:embed|link):end\s*-->/;
       }
       /** Find the end marker paired with an embed, accounting for nested embeds. */
-      findMatchingEnd(text, fromIndex) {
-        const tokenRegex = /<!--\s*embed:(end\b|[^\s]+)(.*?)-->/g;
-        const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
-        tokenRegex.lastIndex = fromIndex;
-        let depth = 0;
-        let token;
-        while ((token = tokenRegex.exec(text)) !== null) {
-          if ((0, utils_1.isInCodeFence)(token.index, fenceRanges)) {
-            continue;
-          }
-          if (/^end\b/i.test(token[1])) {
-            if (depth === 0) {
-              return { index: token.index, end: token.index + token[0].length };
+      findMatchingEnd(text, fromIndex, fenceRanges = (0, utils_1.getCodeFenceRanges)(text)) {
+        let ends = this.endMarkers.get(fenceRanges);
+        if (!ends) {
+          ends = /* @__PURE__ */ new Map();
+          const stack = [];
+          const tokenRegex = /<!--\s*(?:embed|link):(end\b|[^\s]+)(.*?)-->/g;
+          let token;
+          while ((token = tokenRegex.exec(text)) !== null) {
+            if ((0, utils_1.isInCodeFence)(token.index, fenceRanges)) continue;
+            if (/^end\b/i.test(token[1]) || /:end$/i.test(token[1])) {
+              const opener = stack.pop();
+              if (opener !== void 0) ends.set(opener, { index: token.index, end: token.index + token[0].length });
+            } else {
+              stack.push(token.index + token[0].length);
             }
-            depth--;
-          } else if (/:end$/i.test(token[1])) {
-            if (depth > 0)
-              depth--;
-          } else {
-            depth++;
           }
+          this.endMarkers.set(fenceRanges, ends);
         }
-        return void 0;
+        return ends.get(fromIndex);
       }
       findTocEnd(text, fromIndex) {
-        const regex = /<!--\s*embed:toc:end\s*-->/gi;
+        const regex = /<!--\s*(?:embed|link):toc:end\s*-->/gi;
         regex.lastIndex = fromIndex;
         const match = regex.exec(text);
         return match ? { index: match.index, end: match.index + match[0].length } : void 0;
@@ -5918,6 +5947,9 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
         });
       }
       generateEdits(document, onlyIndex) {
+        return (0, utils_1.withSourceReads)(() => this._generateEdits(document, onlyIndex));
+      }
+      _generateEdits(document, onlyIndex) {
         return __awaiter(this, void 0, void 0, function* () {
           const text = document.getText();
           const edits = [];
@@ -5938,7 +5970,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
               continue;
             }
             const attributeString = primaryKey + remainingAttributes;
-            const attributes = this.parseAttributes(attributeString);
+            const attributes = this.parseAttributes(fullMatch);
             if (primaryKey.toLowerCase() === "toc") {
               if (attributes["lock"] === "true")
                 continue;
@@ -5957,7 +5989,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
             if (attributes["lock"] === "true") {
               continue;
             }
-            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen);
+            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen, fenceRanges);
             let replaceRange;
             if (closeMatch) {
               replaceRange = new vscode2.Range(document.positionAt(matchIndex + matchLen), document.positionAt(closeMatch.end));
@@ -5991,6 +6023,9 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
        * Used for stale detection in CodeLens.
        */
       getStaleMatchIndices(document) {
+        return (0, utils_1.withSourceReads)(() => this._getStaleMatchIndices(document));
+      }
+      _getStaleMatchIndices(document) {
         return __awaiter(this, void 0, void 0, function* () {
           const text = document.getText();
           const staleSet = /* @__PURE__ */ new Set();
@@ -6005,7 +6040,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
             const matchIndex = match.index;
             const matchLen = fullMatch.length;
             const attributeString = primaryKey + remainingAttributes;
-            const attributes = this.parseAttributes(attributeString);
+            const attributes = this.parseAttributes(fullMatch);
             if ((0, utils_1.isInCodeFence)(matchIndex, fenceRanges)) {
               continue;
             }
@@ -6026,7 +6061,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
             if (!attributes["file"] || attributes["lock"] === "true") {
               continue;
             }
-            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen);
+            const closeMatch = this.findMatchingEnd(text, matchIndex + matchLen, fenceRanges);
             if (!closeMatch) {
               staleSet.add(matchIndex);
               continue;
@@ -6058,23 +6093,26 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
       buildNewContent(document, attributes, ancestors = /* @__PURE__ */ new Set(), outputPath, refreshAssets = true, currentContent = "") {
         return __awaiter(this, void 0, void 0, function* () {
           try {
+            const endTag = attributes.link ? "<!-- link:end -->" : "<!-- embed:end -->";
             const rootPath = outputPath || document.uri.fsPath || document.uri.toString();
-            if (attributes["mode"] === "link" && !this.expandLinkEmbeds) {
+            if (attributes.link && !this.expandLinkEmbeds) {
               const sourcePath = document.uri.fsPath || document.uri.toString();
               const target = (0, markdown_paths_1.rebaseRelativePath)(attributes["file"], sourcePath, rootPath);
               const filename = attributes["file"].split(/[\\/]/).pop();
               let title = path.basename(filename, path.extname(filename));
               try {
-                const source = yield this.resolveContent(document, { file: attributes["file"], "strip-comments": "false" });
+                const source = yield (0, utils_1.readSource)(document, attributes.file);
                 const firstLine = source.content.replace(/^\uFEFF/, "").replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, "").split(/\r?\n/, 1)[0];
                 const heading = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(firstLine);
                 if (heading) title = heading[1];
               } catch (_) {
               }
               const label = title.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
+              const indent = Number(attributes.indent || 0);
+              const prefix = Number.isInteger(indent) && indent > 0 && indent <= 1e3 ? " ".repeat(indent) : "";
               return `
-[${label}](<${target.replace(/>/g, "%3E").replace(/</g, "%3C")}>)
-<!-- embed:end -->`;
+${prefix}[${label}](<${target.replace(/>/g, "%3E").replace(/</g, "%3C")}>)
+${prefix}${endTag}`;
             }
             const embedResult = yield this.resolveContent(document, attributes);
             const lang = (0, utils_1.getLanguageId)(attributes["file"]);
@@ -6087,7 +6125,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
               }
               const nestedAncestors = new Set(ancestors);
               nestedAncestors.add(sourceKey);
-              const rebasedContent = (0, markdown_paths_1.rewriteMarkdownLinks)(embedResult.content.replace(/^\uFEFF?---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, ""), sourceKey, rootOutputPath);
+              const rebasedContent = (0, markdown_paths_1.rewriteMarkdownLinks)(embedResult.content.replace(/^(?:\uFEFF)?---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, ""), sourceKey, rootOutputPath);
               renderedContent = yield this.expandNestedMarkdown(rebasedContent, sourceKey, nestedAncestors, rootOutputPath, refreshAssets);
               const headingIndent = parseInt(attributes["indent"], 10);
               if (!isNaN(headingIndent) && headingIndent > 0) {
@@ -6126,7 +6164,7 @@ ${embedResult.content}
             }
             let newContent = `
 ${renderedContent}
-<!-- embed:end -->`;
+${endTag}`;
             if (lang !== "markdown" && attributes["indent"]) {
               const spaces = parseInt(attributes["indent"], 10);
               if (!isNaN(spaces) && spaces > 0) {
@@ -6166,6 +6204,9 @@ ${renderedContent}
       }
       /** Expand Markdown includes recursively, resolving children relative to their parent file. */
       expandNestedMarkdown(content, resolvedPath, ancestors, outputPath, refreshAssets = true) {
+        return (0, utils_1.withSourceReads)(() => this._expandNestedMarkdown(content, resolvedPath, ancestors, outputPath, refreshAssets));
+      }
+      _expandNestedMarkdown(content, resolvedPath, ancestors, outputPath, refreshAssets = true) {
         return __awaiter(this, void 0, void 0, function* () {
           const regex = new RegExp(this.embedRegex.source, "g");
           const fenceRanges = (0, utils_1.getCodeFenceRanges)(content);
@@ -6177,14 +6218,14 @@ ${renderedContent}
             if ((0, utils_1.isInCodeFence)(match.index, fenceRanges)) {
               continue;
             }
-            const attributes = this.parseAttributes(match[1] + match[2]);
+            const attributes = this.parseAttributes(match[0]);
             if (!attributes["file"]) {
               continue;
             }
             if ((0, utils_1.isUrl)(resolvedPath) && !(0, utils_1.isUrl)(attributes["file"])) {
               attributes["file"] = new URL(attributes["file"], resolvedPath).href;
             }
-            const closeMatch = this.findMatchingEnd(content, match.index + match[0].length);
+            const closeMatch = this.findMatchingEnd(content, match.index + match[0].length, fenceRanges);
             const outputTag = (0, markdown_paths_1.rewriteEmbedTag)(match[0], resolvedPath, outputPath);
             result += content.slice(cursor, match.index) + outputTag;
             if (attributes["lock"] === "true") {
@@ -6227,6 +6268,7 @@ ${renderedContent}
       }
       parseAttributes(str) {
         const attrs = {};
+        if (/^<!--\s*link:/.test(str)) attrs.link = true;
         const attrRegex = /([a-zA-Z0-9-_]+)=["']([^"']+)["']/g;
         let match;
         while ((match = attrRegex.exec(str)) !== null) {
@@ -6236,15 +6278,7 @@ ${renderedContent}
       }
       resolveContent(document, attrs) {
         return __awaiter(this, void 0, void 0, function* () {
-          let fileContent;
-          let resolvedPath;
-          if ((0, utils_1.isUrl)(attrs["file"])) {
-            fileContent = yield (0, utils_1.fetchUrl)(attrs["file"]);
-            resolvedPath = attrs["file"];
-          } else {
-            resolvedPath = yield (0, utils_1.resolveFilePath)(document, attrs["file"]);
-            fileContent = yield fs.promises.readFile(resolvedPath, "utf-8");
-          }
+          const { content: fileContent, resolvedPath } = yield (0, utils_1.readSource)(document, attrs.file);
           const lines = fileContent.split(/\r?\n/);
           let content = fileContent;
           let startLine;
@@ -6537,9 +6571,9 @@ var require_export = __commonJS({
 </style></head><body>${body}</body></html>`;
     }
     async function chooseEmbedMode(document) {
-      if (!/<!--\s*embed:file=/.test(document.getText())) return false;
+      if (!/<!--\s*link:file=/.test(document.getText())) return false;
       const choice = await vscode2.window.showQuickPick([
-        { label: "Keep file links", description: 'Preserve embed:file mode="link" as hyperlinks', value: false },
+        { label: "Keep file links", description: "Preserve link:file as hyperlinks", value: false },
         { label: "Embed linked file contents", description: "Include linked files recursively, without YAML front matter", value: true }
       ], { placeHolder: "Choose how to export embedded files" });
       return choice?.value;

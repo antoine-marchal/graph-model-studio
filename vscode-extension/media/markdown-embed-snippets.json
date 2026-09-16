@@ -33,5 +33,12 @@
             "<!-- embed:toc -->"
         ],
         "description": "Generate and automatically update a Markdown table of contents"
+    },
+    "Link File": {
+        "prefix": "link:file",
+        "body": [
+            "<!-- link:file=\"${1:./document.md}\" indent=\"${2:0}\" -->"
+        ],
+        "description": "Generate a file link, optionally indented with spaces"
     }
 }

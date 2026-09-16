@@ -140,9 +140,9 @@ function documentHtml(title, body, dark) {
 }
 
 async function chooseEmbedMode(document) {
-  if (!/<!--\s*embed:file=/.test(document.getText())) return false
+  if (!/<!--\s*link:file=/.test(document.getText())) return false
   const choice = await vscode.window.showQuickPick([
-    { label: 'Keep file links', description: 'Preserve embed:file mode="link" as hyperlinks', value: false },
+    { label: 'Keep file links', description: 'Preserve link:file as hyperlinks', value: false },
     { label: 'Embed linked file contents', description: 'Include linked files recursively, without YAML front matter', value: true },
   ], { placeHolder: 'Choose how to export embedded files' })
   return choice?.value

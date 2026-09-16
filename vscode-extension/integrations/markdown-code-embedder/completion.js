@@ -20,7 +20,7 @@ class EmbedCompletionProvider {
             const lineText = document.lineAt(position).text;
             const textBeforeCursor = lineText.substring(0, position.character);
             // Only activate inside embed tags
-            if (!textBeforeCursor.includes('<!-- embed:') && !textBeforeCursor.includes('<!--embed:')) {
+            if (!/<!--\s*(?:embed|link):/.test(textBeforeCursor)) {
                 return undefined;
             }
             // Check if completing a file path: file="<cursor>

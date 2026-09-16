@@ -139,6 +139,21 @@ Embeds** (or use the CodeLens above the directive):
 <!-- embed:file="./model.gmc" -->
 ```
 
+Use `link:file` to generate a hyperlink instead of including file contents:
+
+```markdown
+<!-- link:file="./chapter.md" indent="2" -->
+```
+
+Saving generates the link and a `<!-- link:end -->` marker. `indent` adds spaces
+before the generated link; indentation before the directive is also preserved.
+Labels use the first heading after optional YAML front matter, falling back to
+the filename stem. Export can retain links or expand their contents; when
+expanded, `indent` shifts Markdown heading levels like a regular embed.
+Replace old `embed:file="..." mode="link"` directives with `link:file="..."`
+and change their closing marker to `link:end`; remove `mode`.
+
+
 Generated embed content is inserted directly without an additional visible
 `Source: filename` link. Source navigation remains available from CodeLens.
 

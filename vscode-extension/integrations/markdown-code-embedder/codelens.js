@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.EmbedCodeLensProvider = void 0;
 const vscode = require("vscode");
 const utils_1 = require("./utils");
-const EMBED_REGEX = /<!--\s*embed:([^\s]+)(.*?)-->/g;
+const EMBED_REGEX = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
 const ATTR_REGEX = /([a-zA-Z0-9-_]+)=["']([^"']+)["']/g;
 class EmbedCodeLensProvider {
     constructor() {
@@ -16,7 +16,10 @@ class EmbedCodeLensProvider {
         this._onDidChangeCodeLenses.fire();
     }
     updateStaleIndices(docUri, indices) {
+        const previous = this.staleIndices.get(docUri);
+        if (previous && previous.size === indices.size && [...indices].every(index => previous.has(index))) return false;
         this.staleIndices.set(docUri, indices);
+        return true;
     }
     clearStaleIndices(docUri) {
         this.staleIndices.delete(docUri);

@@ -136,3 +136,14 @@ test('automatic folding preserves manual expansion during edits and editor switc
         context.subscriptions.forEach(subscription => subscription.dispose());
     }
 });
+
+test('indented links fold inside embeds', () => {
+    const document = documentFrom([
+        '<!-- embed:file="./outer.md" -->',
+        '  <!-- link:file="./child.md" indent="2" -->',
+        '    [Child](<./child.md>)',
+        '    <!-- link:end -->',
+        '<!-- embed:end -->',
+    ]);
+    assert.deepEqual(embedFoldingRanges(document).map(({ start, end }) => [start, end]), [[0, 4], [1, 3]]);
+});

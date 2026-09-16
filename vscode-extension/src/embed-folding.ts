@@ -100,7 +100,7 @@ export function embedFoldingRanges(document: vscode.TextDocument): vscode.Foldin
 
   for (let line = 0; line < document.lineCount; line++) {
     const text = document.lineAt(line).text
-    for (const match of text.matchAll(/<!--\s*embed:([^\s>]+)(?:\s[^>]*)?-->/gi)) {
+    for (const match of text.matchAll(/<!--\s*(?:embed|link):([^\s>]+)(?:\s[^>]*)?-->/gi)) {
       const token = match[1].toLowerCase()
       const namedEnd = /^(.+):end$/.exec(token)
       if (token === 'end' || namedEnd) {

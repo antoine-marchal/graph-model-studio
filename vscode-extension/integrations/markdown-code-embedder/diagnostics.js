@@ -13,27 +13,48 @@ exports.EmbedDiagnosticsProvider = void 0;
 const vscode = require("vscode");
 const fs = require("fs");
 const utils_1 = require("./utils");
-const EMBED_REGEX = /<!--\s*embed:([^\s]+)(.*?)-->/g;
+const EMBED_REGEX = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
 const ATTR_REGEX = /([a-zA-Z0-9-_]+)=["']([^"']+)["']/g;
 const REGION_START_REGEX = (name) => new RegExp(`^\\s*(?:\\/\\/|--|#|<!--|\\/\\*)\\s*#region\\s+${name}\\s*(?:-->|\\*\\/)?$`);
 class EmbedDiagnosticsProvider {
     constructor() {
+        this.timers = new Map();
+        this.requests = new Map();
         this.collection = vscode.languages.createDiagnosticCollection('markdown-embed');
     }
     get diagnosticCollection() {
         return this.collection;
     }
     updateDiagnostics(document) {
+        if (document.languageId !== 'markdown') return;
+        const key = document.uri.toString();
+        clearTimeout(this.timers.get(key));
+        const request = {};
+        this.requests.set(key, request);
+        this.timers.set(key, setTimeout(() => {
+            this.timers.delete(key);
+            this.computeDiagnostics(document, key, request).catch(console.error);
+        }, 180));
+    }
+    computeDiagnostics(document, key, request) {
         return __awaiter(this, void 0, void 0, function* () {
             if (document.languageId !== 'markdown') {
                 return;
             }
+            const version = document.version;
             const text = document.getText();
+            const reads = new Map();
+            const paths = new Map();
+            const read = filename => {
+                if (!reads.has(filename)) reads.set(filename, fs.promises.readFile(filename, 'utf-8'));
+                return reads.get(filename);
+            };
             const diagnostics = [];
             const fenceRanges = (0, utils_1.getCodeFenceRanges)(text);
             const regex = new RegExp(EMBED_REGEX.source, 'g');
             let match;
             while ((match = regex.exec(text)) !== null) {
+                if (document.isClosed || document.version !== version || this.requests.get(key) !== request) return;
                 const fullMatch = match[0];
                 const primaryKey = match[1];
                 const remainingAttributes = match[2];
@@ -61,7 +82,8 @@ class EmbedDiagnosticsProvider {
                 // Check file exists
                 let resolvedPath;
                 try {
-                    resolvedPath = yield (0, utils_1.resolveFilePath)(document, attrs['file']);
+                    if (!paths.has(attrs.file)) paths.set(attrs.file, (0, utils_1.resolveFilePath)(document, attrs.file));
+                    resolvedPath = yield paths.get(attrs.file);
                 }
                 catch (_a) {
                     const diag = new vscode.Diagnostic(range, `Embed file not found: "${attrs['file']}"`, vscode.DiagnosticSeverity.Error);
@@ -72,7 +94,7 @@ class EmbedDiagnosticsProvider {
                 // Check region exists
                 if (attrs['region']) {
                     try {
-                        const content = yield fs.promises.readFile(resolvedPath, 'utf-8');
+                        const content = yield read(resolvedPath);
                         const lines = content.split(/\r?\n/);
                         const regionRegex = REGION_START_REGEX(attrs['region']);
                         const found = lines.some(l => regionRegex.test(l));
@@ -96,7 +118,7 @@ class EmbedDiagnosticsProvider {
                     }
                     else if (resolvedPath) {
                         try {
-                            const content = yield fs.promises.readFile(resolvedPath, 'utf-8');
+                            const content = yield read(resolvedPath);
                             const lineCount = content.split(/\r?\n/).length;
                             if (parts[1] > lineCount) {
                                 const diag = new vscode.Diagnostic(range, `Line range "${attrs['line']}" exceeds file length (${lineCount} lines)`, vscode.DiagnosticSeverity.Warning);
@@ -108,13 +130,21 @@ class EmbedDiagnosticsProvider {
                     }
                 }
             }
-            this.collection.set(document.uri, diagnostics);
+            if (!document.isClosed && document.version === version && this.requests.get(key) === request)
+                this.collection.set(document.uri, diagnostics);
         });
     }
     clearDiagnostics(document) {
+        const key = document.uri.toString();
+        clearTimeout(this.timers.get(key));
+        this.timers.delete(key);
+        this.requests.delete(key);
         this.collection.delete(document.uri);
     }
     dispose() {
+        for (const timer of this.timers.values()) clearTimeout(timer);
+        this.timers.clear();
+        this.requests.clear();
         this.collection.dispose();
     }
 }

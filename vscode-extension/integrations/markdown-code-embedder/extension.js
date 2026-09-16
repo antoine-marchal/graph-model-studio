@@ -48,8 +48,7 @@ function activate(context) {
                     scheduleStaleMap(document);
                     return;
                 }
-                codeLensProvider.updateStaleIndices(uri, indices);
-                codeLensProvider.refresh();
+                if (codeLensProvider.updateStaleIndices(uri, indices)) codeLensProvider.refresh();
             }
             catch ( /* ignore */_a) { /* ignore */ }
         });
@@ -231,7 +230,7 @@ function activate(context) {
     const goToSourceCommand = vscode.commands.registerCommand('markdown-embed.goToSource', (uri, matchIndex) => __awaiter(this, void 0, void 0, function* () {
         const document = yield vscode.workspace.openTextDocument(uri);
         const text = document.getText();
-        const embedRegex = /<!--\s*embed:([^\s]+)(.*?)-->/g;
+        const embedRegex = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
         let match;
         const regex = new RegExp(embedRegex.source, 'g');
         while ((match = regex.exec(text)) !== null) {
