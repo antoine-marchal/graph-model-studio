@@ -21,7 +21,8 @@ pushd vscode-extension
 REM Build scripts are not needed here: esbuild ships a platform package and
 REM VSCE signing/keytar are not used for an unsigned local VSIX. This also keeps
 REM pnpm 11 from requiring an interactive approve-builds step.
-call pnpm install --ignore-workspace --ignore-scripts
+REM --force repairs node_modules when npm was run in this pnpm-managed folder.
+call pnpm install --force --ignore-workspace --ignore-scripts
 if errorlevel 1 ( popd & echo Extension pnpm install failed & exit /b 1 )
 popd
 

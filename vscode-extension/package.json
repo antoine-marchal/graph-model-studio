@@ -37,7 +37,12 @@
     "onCommand:markdownToolkit.exportPdf",
     "onCommand:markdownToolkit.exportPng",
     "onCommand:markdownToolkit.exportDocx",
-    "onCommand:markdownToolkit.export"
+    "onCommand:markdownToolkit.export",
+    "onCommand:slides.preview",
+    "onCommand:slides.exportHtml",
+    "onCommand:slides.exportPdf",
+    "onCommand:slides.exportPptx",
+    "onCommand:slides.exportPptxEditable"
   ],
   "contributes": {
     "markdown.markdownItPlugins": true,
@@ -76,6 +81,31 @@
       }
     ],
     "commands": [
+      {
+        "command": "slides.preview",
+        "title": "Slides: Preview",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "slides.exportHtml",
+        "title": "Slides: Export Standalone HTML",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPdf",
+        "title": "Slides: Export PDF",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPptx",
+        "title": "Slides: Export PPTX",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPptxEditable",
+        "title": "Slides: Export Editable PPTX",
+        "icon": "$(export)"
+      },
       {
         "command": "gmc.openPreview",
         "title": "GMC: Open Graph Preview to the Side",
@@ -163,6 +193,11 @@
     "menus": {
       "editor/title": [
         {
+          "command": "slides.preview",
+          "when": "resourceLangId == markdown",
+          "group": "navigation@9"
+        },
+        {
           "command": "gmc.openPreview",
           "when": "resourceLangId == gmc || resourceLangId == markdown",
           "group": "navigation@10"
@@ -224,6 +259,16 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically open the graph preview when a GMC file becomes active."
+        },
+        "slides.executablePath": {
+          "type": "string",
+          "default": "C:\\workspace\\pptxascode\\presentation-md\\output\\presentation-md.exe",
+          "description": "Path to presentation-md.exe used for slide preview and standalone HTML export."
+        },
+        "slides.themePath": {
+          "type": "string",
+          "default": "C:\\workspace\\pptxascode\\presentation-md\\theme\\cea",
+          "description": "Path to Slidev theme folder or ZIP used for slide preview and standalone HTML export."
         },
         "gmc.export.width": {
           "type": "number",

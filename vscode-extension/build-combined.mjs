@@ -15,6 +15,16 @@ buildSync({
   external: ['vscode'],
   logLevel: 'warning',
 })
+buildSync({
+  entryPoints: [path.join(root, 'integrations', 'slides', 'source', 'extension.js')],
+  outfile: path.join(root, 'integrations', 'slides', 'extension.js'),
+  bundle: true,
+  platform: 'node',
+  format: 'cjs',
+  target: 'node20',
+  external: ['vscode'],
+  logLevel: 'warning',
+})
 
 const required = [
   'dist/extension.js',
@@ -24,6 +34,7 @@ const required = [
   'integrations/markdown-code-embedder/extension.js',
   'integrations/markdown-code-embedder/markdown-paths.js',
   'integrations/markdown-toolkit/extension.js',
+  'integrations/slides/extension.js',
 ]
 
 for (const relativePath of required) {
@@ -44,6 +55,7 @@ for (const relativePath of [
   'integrations/markdown-code-embedder/markdown-paths.js',
   'integrations/markdown-code-embedder/utils.js',
   'integrations/markdown-toolkit/extension.js',
+  'integrations/slides/extension.js',
   'dist/markdown-preview/preview.js',
 ]) {
   execFileSync(process.execPath, ['--check', path.join(root, relativePath)], { stdio: 'inherit' })
