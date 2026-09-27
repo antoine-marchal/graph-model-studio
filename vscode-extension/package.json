@@ -39,7 +39,10 @@
     "onCommand:markdownToolkit.exportDocx",
     "onCommand:markdownToolkit.export",
     "onCommand:slides.preview",
-    "onCommand:slides.exportHtml"
+    "onCommand:slides.exportHtml",
+    "onCommand:slides.exportPdf",
+    "onCommand:slides.exportPptx",
+    "onCommand:slides.exportPptxEditable"
   ],
   "contributes": {
     "markdown.markdownItPlugins": true,
@@ -86,6 +89,21 @@
       {
         "command": "slides.exportHtml",
         "title": "Slides: Export Standalone HTML",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPdf",
+        "title": "Slides: Export PDF",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPptx",
+        "title": "Slides: Export PPTX",
+        "icon": "$(export)"
+      },
+      {
+        "command": "slides.exportPptxEditable",
+        "title": "Slides: Export Editable PPTX",
         "icon": "$(export)"
       },
       {
@@ -242,14 +260,15 @@
           "default": false,
           "description": "Automatically open the graph preview when a GMC file becomes active."
         },
-        "slides.theme": {
+        "slides.executablePath": {
           "type": "string",
-          "enum": [
-            "cea",
-            "blueprint"
-          ],
-          "default": "cea",
-          "description": "Theme used for slide preview and standalone HTML export."
+          "default": "C:\\workspace\\pptxascode\\presentation-md\\output\\presentation-md.exe",
+          "description": "Path to presentation-md.exe used for slide preview and standalone HTML export."
+        },
+        "slides.themePath": {
+          "type": "string",
+          "default": "C:\\workspace\\pptxascode\\presentation-md\\theme\\cea",
+          "description": "Path to Slidev theme folder or ZIP used for slide preview and standalone HTML export."
         },
         "gmc.export.width": {
           "type": "number",
@@ -344,9 +363,6 @@
     "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview",
     "build": "node ./build-combined.mjs",
     "package": "node ./package-vsix.mjs"
-  },
-  "dependencies": {
-    "@pptxascode/presentation-md": "file:../../presentation-md"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

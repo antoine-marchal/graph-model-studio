@@ -22,7 +22,7 @@ buildSync({
   platform: 'node',
   format: 'cjs',
   target: 'node20',
-  external: ['vscode', '@pptxascode/presentation-md'],
+  external: ['vscode'],
   logLevel: 'warning',
 })
 

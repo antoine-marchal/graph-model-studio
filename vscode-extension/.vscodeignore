@@ -1,5 +1,5 @@
 node_modules/**
-!integrations/slides/vendor/**
+integrations/slides/vendor/**
 .playwright-cli/**
 output/**
 src/**
@@ -12,6 +12,10 @@ tsconfig.json
 pnpm-lock.yaml
 pnpm-workspace.yaml
 dist/**/*.map
+dist/*.html
+dist/*.md
+dist/.gmc/**
+dist/node_modules/**
 dist/webview/webview/**
 dist/markdown-preview/*.css
 integrations/markdown-toolkit/source/**
