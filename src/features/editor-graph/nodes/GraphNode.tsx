@@ -145,7 +145,8 @@ function metaText(data: GraphNodeData): string | null {
 
 function SpecialGraphHeader({ data, stroke, accent }: { data: GraphNodeData; stroke: string; accent: string }) {
   const meta = metaText(data)
-  return <div className="flex min-h-8 flex-col justify-center px-2.5 py-1" style={{ background: data.transparentBackground ? 'transparent' : accent + '22', borderBottom: `1px solid ${stroke}55`, color: data.text }}>
+  return <div className="flex min-h-8 flex-col justify-center px-2.5 py-1" style={{ background: data.transparentBackground ? 'transparent' : accent + '22', borderBottom: `1px solid ${stroke}55`, color: data.customAccent ? data.text : 'var(--fg)' }}>
+    {/* Default chart fills are ~5% tints, so the canvas decides contrast, not the light-theme text colour. */}
     <span className="truncate text-[11px] font-bold uppercase tracking-wide">{data.label}</span>
     {meta && <span className="truncate text-[9px] font-normal opacity-70">{meta}</span>}
   </div>
@@ -273,7 +274,8 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
       >
         <Handles stroke={border} prominent />
         <div className="flex max-w-[82%] flex-col items-center leading-tight">
-          <span className={cn(root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>{d.label}</span>
+          {/* Long single words ("Internationalisation") hyphenate inside the disc instead of spilling out. */}
+          <span className={cn('max-w-full hyphens-auto [overflow-wrap:anywhere]', root ? 'text-xl font-bold' : primary ? 'text-sm font-medium' : 'text-xs font-semibold')}>{d.label}</span>
           {metaText(d) && <span className="mt-0.5 line-clamp-2 text-[9px] opacity-75">{metaText(d)}</span>}
         </div>
       </div>
@@ -454,7 +456,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <div
           className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide"
-          style={{ background: d.transparentBackground ? 'transparent' : accent + '26', color: text, borderBottom: `1px solid ${stroke}66` }}
+          style={{ background: d.transparentBackground ? 'transparent' : accent + '26', color: d.customAccent ? text : 'var(--fg)', borderBottom: `1px solid ${stroke}66` }}
         >
           <Glyph iconSrc={iconSrc} icon={icon} color={accent} size={14} />
           <span className="truncate">{d.label}</span>

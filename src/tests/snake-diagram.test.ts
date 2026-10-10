@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseDsl } from '@/core/dsl/parser'
+import { serializeModel } from '@/core/dsl/serializer'
 import { notationRegistry } from '@/core/notation'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
 import { snakeFlowCurve } from '@/features/editor-graph/edges/FloatingEdge'
@@ -103,5 +104,17 @@ describe('snake diagram', () => {
     const forward = snakeFlowCurve({ x: 100, y: 40 }, { x: 250, y: 40 }, 'r', 'l')
     expect(forward.controls[0].x).toBeGreaterThan(100)
     expect(forward.controls[1].x).toBeLessThan(250)
+    expect(forward.midpoint.y).toBe(40)
+    // Skipping a bullet bows above the lane so the skipped badge stays visible.
+    const skip = snakeFlowCurve({ x: 100, y: 40 }, { x: 400, y: 40 }, 'r', 'l')
+    expect(skip.midpoint.y).toBeLessThan(40 - 19)
+  })
+
+  it('uses a manual step number when set and round-trips it through the DSL', () => {
+    const model = parseDsl(source).model!
+    model.elements.left.properties = { ...model.elements.left.properties, number: '3a' }
+    const badges = Object.fromEntries(modelToFlow(model, model.views.main).nodes.map(node => [node.id, node.data.badge]))
+    expect(badges).toMatchObject({ one: '1', two: '2', left: '3a', right: '4' })
+    expect(parseDsl(serializeModel(model)).model!.elements.left.properties?.number).toBe('3a')
   })
 })

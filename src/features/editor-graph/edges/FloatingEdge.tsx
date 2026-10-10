@@ -286,8 +286,11 @@ export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | '
   const commonControlX = sameSide
     ? sourceSide === 'r' ? Math.max(source.x, target.x) + offset : Math.min(source.x, target.x) - offset
     : undefined
-  const c1 = { x: commonControlX ?? source.x + sourceDirection * offset, y: source.y }
-  const c2 = { x: commonControlX ?? target.x - targetDirection * offset, y: target.y }
+  // Same-row links that skip bullets bow above the lane so they never run
+  // through (and hide) the intermediate step badges; forks read as branches.
+  const bow = !sameSide && dy < 1 && dx > 200 ? Math.min(56, dx * 0.2) : 0
+  const c1 = { x: commonControlX ?? source.x + sourceDirection * offset, y: source.y - bow }
+  const c2 = { x: commonControlX ?? target.x - targetDirection * offset, y: target.y - bow }
   const midpoint = cubicPoint(source, c1, c2, target, 0.5)
   const before = cubicPoint(source, c1, c2, target, 0.47)
   const after = cubicPoint(source, c1, c2, target, 0.53)
@@ -755,18 +758,13 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
           onPointerCancel={() => { sequenceDrag.current = null }}
         />
       )}
+      {/* Drawn in the edge layer (not the label portal) so nodes always paint above it. */}
       {d2?.middleArrow && (
-        <EdgeLabelRenderer>
-          <div
-            className="pointer-events-none absolute"
-            style={{ transform: `translate(-50%,-50%) translate(${labelX}px,${labelY}px) rotate(${middleArrowAngle}deg)` }}
-          >
-            <svg width="18" height={d2.middleArrow === 'bidirectional' ? 18 : 12} viewBox={d2.middleArrow === 'bidirectional' ? '0 0 18 18' : '0 0 18 12'} aria-hidden>
-              <path d="M3 1 L15 6 L3 11 Z" fill={d2.middleArrowColor ?? '#FF9828'} />
-              {d2.middleArrow === 'bidirectional' && <path d="M15 17 L3 12 L15 7 Z" fill={d2.middleArrowColor ?? '#FF9828'} />}
-            </svg>
-          </div>
-        </EdgeLabelRenderer>
+        <g transform={`translate(${labelX},${labelY}) rotate(${middleArrowAngle})`} pointerEvents="none" aria-hidden>
+          {d2.middleArrow === 'bidirectional'
+            ? <><path d="M-6 -8 L6 -3 L-6 2 Z" fill={d2.middleArrowColor ?? '#FF9828'} /><path d="M6 8 L-6 3 L6 -2 Z" fill={d2.middleArrowColor ?? '#FF9828'} /></>
+            : <path d="M-6 -5 L6 0 L-6 5 Z" fill={d2.middleArrowColor ?? '#FF9828'} />}
+        </g>
       )}
       {d2?.sourceLabel && endLabel(d2.sourceLabel, sourceLabelPoint.x, sourceLabelPoint.y, 'sc')}
       {d2?.targetLabel && endLabel(d2.targetLabel, targetLabelPoint.x, targetLabelPoint.y, 'tc')}

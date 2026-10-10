@@ -38,6 +38,7 @@ import {
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
+import { setNodeRectProvider, type NodeRect } from './node-geometry'
 import type { GraphCaptureWorkspace } from './png-export'
 import {
   absoluteNodePosition,
@@ -127,7 +128,7 @@ function GraphEditorInner() {
   const addElementsToView = useModelStore(s => s.addElementsToView)
   const reorderSiblings = useModelStore(s => s.reorderSiblings)
 
-  const { screenToFlowPosition, fitView, getNodes, getEdges, getNodesBounds } = useReactFlow()
+  const { screenToFlowPosition, fitView, getNodes, getEdges, getNodesBounds, getInternalNode } = useReactFlow()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const clipboard = useRef<string[]>([])
   const mouseScreenPosition = useRef<{ x: number; y: number } | null>(null)
@@ -151,6 +152,19 @@ function GraphEditorInner() {
     workspace.__gmsGetContentBounds = () => getNodesBounds(getNodes().filter(node => !node.hidden))
     return () => { delete workspace.__gmsGetContentBounds }
   }, [getNodes, getNodesBounds])
+  useEffect(() => {
+    setNodeRectProvider(ids => {
+      const rects: Record<string, NodeRect> = {}
+      for (const id of ids) {
+        const node = getInternalNode(id)
+        if (!node) continue
+        const { x, y } = node.internals.positionAbsolute
+        rects[id] = { x, y, width: node.measured.width ?? node.width ?? 0, height: node.measured.height ?? node.height ?? 0 }
+      }
+      return rects
+    })
+    return () => setNodeRectProvider(null)
+  }, [getInternalNode])
 
   const flow = useMemo(
     () => (activeView ? modelToFlow(model, activeView, { engine: layoutEngine }) : { nodes: [], edges: [] }),
@@ -163,13 +177,31 @@ function GraphEditorInner() {
     setNodes(flow.nodes.map(n => (selEl.has(n.id) ? { ...n, selected: true } : n)))
     setEdges(flow.edges.map(e => (e.id === selRel ? { ...e, selected: true } : e)))
   }, [flow])
-  // A view switch replaces the canvas contents. Wait for React Flow to measure
-  // the new nodes, then frame that view just like the toolbar's Fit action.
+  // A view switch replaces the canvas contents. Frame the new view once its
+  // nodes are in place, and keep it framed when the canvas is resized (panel
+  // layout changes) until the user pans or zooms themselves.
+  const autoFit = useRef(true)
+  const fittedViewId = useRef<string | null>(null)
   useEffect(() => {
-    if (!activeViewId) return
-    const timer = window.setTimeout(() => fitView({ duration: 0, padding: 0.2 }), 50)
-    return () => window.clearTimeout(timer)
-  }, [activeViewId, fitView])
+    // Only once the committed nodes are this view's (React Flow's store has
+    // synced them); fitView itself waits until they are measured.
+    if (fittedViewId.current === viewId || nodes.length === 0 || nodes.length !== flow.nodes.length || nodes[0].id !== flow.nodes[0].id) return
+    fittedViewId.current = viewId
+    autoFit.current = true
+    fitView({ duration: 0, padding: 0.2 })
+  }, [nodes, flow, viewId, fitView])
+  useEffect(() => {
+    const wrapper = wrapperRef.current
+    if (!wrapper) return
+    let timer = 0
+    const observer = new ResizeObserver(() => {
+      if (!autoFit.current) return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => fitView({ duration: 0, padding: 0.2 }), 30)
+    })
+    observer.observe(wrapper)
+    return () => { observer.disconnect(); window.clearTimeout(timer) }
+  }, [fitView])
   // mirror store selection (e.g. explorer clicks) into React Flow so Delete works there too
   useEffect(() => {
     const selEl = new Set(selectedElementIds)
@@ -792,6 +824,7 @@ function GraphEditorInner() {
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
+        onMoveStart={event => { if (event) autoFit.current = false }}
         onPaneClick={() => { selectElements([]); selectRelation(null); setMenu(null); setEditingElement(null) }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
@@ -808,6 +841,8 @@ function GraphEditorInner() {
         elevateNodesOnSelect
         elevateEdgesOnSelect
         fitView
+        // Wide views (BPMN pools, Gantt) must still fit in a split pane.
+        minZoom={0.1}
         colorMode={theme}
         proOptions={{ hideAttribution: true }}
       >
@@ -839,7 +874,7 @@ function GraphEditorInner() {
           <Button size="sm" variant="outline" onClick={() => runAutoLayout('selected')} title="Layout selected nodes only"><span className="wide-label">Selection</span><span className="compact-only">Sel.</span></Button>
           <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('vertical')} title="Align selected node centres on a vertical line" aria-label="Align vertically">↕</Button>
           <Button size="sm" variant="outline" disabled={!canAlignSelection} onClick={() => alignSelection('horizontal')} title="Align selected node centres on a horizontal line" aria-label="Align horizontally">↔</Button>
-          <Button size="sm" variant="outline" onClick={() => fitView({ duration: 300, padding: 0.2 })}>Fit</Button>
+          <Button size="sm" variant="outline" onClick={() => { autoFit.current = true; fitView({ duration: 300, padding: 0.2 }) }}>Fit</Button>
         </Panel>
 
         <Panel position="top-right" className="gms-canvas-toolbar gms-secondary-toolbar flex items-center">

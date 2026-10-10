@@ -406,6 +406,45 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
       if (view) view.layoutPositions[element.id] = command.payload.position
       break
     }
+    case 'GROUP_ELEMENTS': {
+      const { id, type, name, notation, memberIds, viewId, rects } = command.payload
+      const members = new Set(memberIds.filter(member => model.elements[member]))
+      const isUnderMember = (elementId: string) => {
+        for (let p = model.elements[elementId]?.parentId; p; p = model.elements[p]?.parentId) if (members.has(p)) return true
+        return false
+      }
+      const roots = [...members].filter(member => !isUnderMember(member))
+      if (roots.length === 0 || model.elements[id]) break
+      const parents = new Set(roots.map(root => model.elements[root].parentId))
+      const parentId = parents.size === 1 ? [...parents][0] : undefined
+      model.elements[id] = { id, type, name, notation, tags: [], properties: {}, children: [], ...(parentId ? { parentId } : {}) }
+      if (parentId) model.elements[parentId].children.push(id)
+      for (const root of roots) {
+        const element = model.elements[root]
+        if (element.parentId && model.elements[element.parentId]) {
+          model.elements[element.parentId].children = model.elements[element.parentId].children.filter(child => child !== root)
+        }
+        element.parentId = id
+        model.elements[id].children.push(root)
+        // Positions are parent-local, so every view must recompute these roots.
+        for (const v of Object.values(model.views)) delete v.layoutPositions[root]
+      }
+      const view = model.views[viewId]
+      if (!view) break
+      if (!view.includeAll && !view.includedElements.includes(id)) view.includedElements.push(id)
+      const boxes = roots.map(root => rects?.[root])
+      const parentBox = parentId ? rects?.[parentId] : { x: 0, y: 0 }
+      if (!parentBox || boxes.some(box => !box)) break
+      const PAD = 24, HEADER = 36
+      const minX = Math.min(...boxes.map(box => box!.x)) - PAD
+      const minY = Math.min(...boxes.map(box => box!.y)) - PAD - HEADER
+      const maxX = Math.max(...boxes.map(box => box!.x + box!.width)) + PAD
+      const maxY = Math.max(...boxes.map(box => box!.y + box!.height)) + PAD
+      view.layoutPositions[id] = { x: minX - parentBox.x, y: minY - parentBox.y }
+      view.nodeSizes[id] = { width: maxX - minX, height: maxY - minY }
+      roots.forEach((root, i) => { view.layoutPositions[root] = { x: boxes[i]!.x - minX, y: boxes[i]!.y - minY } })
+      break
+    }
     case 'APPLY_ELEMENT_FORMAT': {
       const element = model.elements[command.payload.id]
       const view = model.views[command.payload.viewId]

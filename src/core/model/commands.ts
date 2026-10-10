@@ -35,6 +35,19 @@ export type ResizeNodesPayload = {
   elementProperties?: Record<string, Record<string, string>>
 }
 
+/** Wrap `memberIds` in a new container element. `rects` (absolute flow
+ *  coordinates of the members and their common parent) let the group enclose
+ *  the nodes where they sit; without them the layout places everything. */
+export type GroupElementsPayload = {
+  viewId: string
+  id: string
+  type: string
+  name: string
+  notation: GraphElement['notation']
+  memberIds: string[]
+  rects?: Record<string, { x: number; y: number; width: number; height: number }>
+}
+
 export type ReparentElementPayload = {
   viewId: string
   id: string
@@ -80,6 +93,7 @@ export type ModelCommand =
   | { type: 'SET_NODE_SIZE'; payload: SetNodeSizePayload }
   | { type: 'RESIZE_NODES'; payload: ResizeNodesPayload }
   | { type: 'REPARENT_ELEMENT'; payload: ReparentElementPayload }
+  | { type: 'GROUP_ELEMENTS'; payload: GroupElementsPayload }
   | { type: 'APPLY_ELEMENT_FORMAT'; payload: ApplyElementFormatPayload }
   | { type: 'APPLY_RELATION_FORMAT'; payload: ApplyRelationFormatPayload }
   | { type: 'REPLACE_XY_SERIES_POINTS'; payload: ReplaceXySeriesPointsPayload }

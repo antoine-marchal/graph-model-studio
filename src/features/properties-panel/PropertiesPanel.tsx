@@ -16,6 +16,8 @@ import {
 } from '@/features/editor-graph/style-clipboard'
 import { parseXyPointList } from './xy-series-points'
 import { supportsTransparentBackground } from '@/features/editor-graph/node-appearance'
+import { getNodeRects } from '@/features/editor-graph/node-geometry'
+import { createElementId } from '@/core/model'
 
 /** Searchable element-type selector — same picker as the canvas add-node menu. */
 function TypeField({ value, onPick }: { value: string; onPick: (type: string) => void }) {
@@ -182,6 +184,9 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   ] },
   snakeGraph: { group: 'Snake diagram', fields: [
     { key: 'maxColumns', label: 'Maximum columns', placeholder: '5' },
+  ] },
+  snakeBullet: { group: 'Snake step', fields: [
+    { key: 'number', label: 'Step number', placeholder: 'Auto (declaration order)' },
   ] },
   commit: { group: 'Git', fields: [
     { key: 'branch', label: 'Branch', placeholder: 'e.g. main, feature/x' },
@@ -701,6 +706,38 @@ function RelationProperties({ relationId }: { relationId: string }) {
 
 function MultiSelectionPanel({ ids }: { ids: string[] }) {
   const dispatch = useModelStore(s => s.dispatch)
+  const pushRecentType = useModelStore(s => s.pushRecentType)
+  const selectElements = useModelStore(s => s.selectElements)
+  const [picking, setPicking] = useState(false)
+  const pickerRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!picking) return
+    const h = (e: MouseEvent) => { if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setPicking(false) }
+    window.addEventListener('mousedown', h)
+    return () => window.removeEventListener('mousedown', h)
+  }, [picking])
+
+  const createGroup = (type: string) => {
+    const { model, activeViewId } = useModelStore.getState()
+    const viewId = activeViewId ?? Object.keys(model.views)[0]
+    const def = notationRegistry.getElementDef(type)
+    let id = createElementId(type)
+    while (model.elements[id]) id = createElementId(type)
+    const parents = ids.map(member => model.elements[member]?.parentId).filter((p): p is string => !!p)
+    dispatch({
+      type: 'GROUP_ELEMENTS',
+      payload: {
+        viewId, id, type, memberIds: ids,
+        name: def?.label ?? 'Group',
+        notation: def?.notation ?? 'generic',
+        rects: getNodeRects([...ids, ...parents]),
+      },
+    })
+    pushRecentType(type)
+    setPicking(false)
+    selectElements([id])
+  }
+
   return (
     <div className="flex flex-col gap-3 p-3">
       <span className="text-xs font-semibold text-[var(--fg)]">{ids.length} elements selected</span>
@@ -708,6 +745,16 @@ function MultiSelectionPanel({ ids }: { ids: string[] }) {
         Use “⤢ Selected” in the graph toolbar to arrange just these nodes, or
         Ctrl/Cmd+D to duplicate them.
       </p>
+      <div ref={pickerRef} className="relative">
+        <Button size="sm" variant="outline" className="w-full" aria-expanded={picking} onClick={() => setPicking(open => !open)}>
+          Create group…
+        </Button>
+        {picking && (
+          <div className="absolute left-0 right-0 z-50 mt-1 flex max-h-80 flex-col overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl">
+            <NodeTypePicker onPick={createGroup} onClose={() => setPicking(false)} />
+          </div>
+        )}
+      </div>
       <Button size="sm" variant="danger" className="w-full" onClick={() => dispatch({ type: 'DELETE_ELEMENTS', payload: { ids } })}>
         Delete {ids.length} Elements
       </Button>
