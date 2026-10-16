@@ -2,7 +2,7 @@
   "name": "graph-model-studio",
   "displayName": "Graph Model Studio + Markdown Studio",
   "description": "GMC graph modeling with live diagrams, plus a Notion-like WYSIWYG Markdown editor: rich diffs, tables, math, frontmatter, embedded GMC diagrams, recursive code/Markdown embeds, paste-as-Markdown, HTML/PDF/PNG/DOCX export and slides.",
-  "version": "3.8.0",
+  "version": "4.0.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
   "engines": {
@@ -640,8 +640,14 @@
           },
           "markdownStudio.exportTheme": {
             "type": "string",
-            "enum": ["light", "editor"],
-            "enumDescriptions": ["Light theme on a transparent page (default).", "The rich editor's current theme and background."],
+            "enum": [
+              "light",
+              "editor"
+            ],
+            "enumDescriptions": [
+              "Light theme on a transparent page (default).",
+              "The rich editor's current theme and background."
+            ],
             "default": "light",
             "order": 68,
             "markdownDescription": "Colors of HTML / PDF / PNG exports made from the rich editor."
