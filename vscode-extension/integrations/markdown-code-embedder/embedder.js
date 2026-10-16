@@ -20,6 +20,15 @@ const REGION_MARKER_REGEX = /^\s*(?:\/\/|--|#|<!--|\/\*)\s*#(?:region|endregion)
 class MarkdownEmbedder {
     constructor() {
         this.endMarkers = new WeakMap();
+        /** Set by save-triggered updates: rendering a .gmc PNG needs the visible
+         *  graph panel, so those leave changed diagrams stale unless
+         *  `gmc.export.renderOnSave` opts in. */
+        this.onSave = false;
+        /** Optional (sourceUri, pngUri, view, theme) => Promise renderer; the rich
+         *  editor renders in its own webview instead of the graph panel. */
+        this.renderGmcPng = undefined;
+        /** Embeds that failed in the last run: { file, message }. */
+        this.errors = [];
         this.embedRegex = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
         this.endEmbedRegex = /<!--\s*(?:embed|link):end\s*-->/;
     }
@@ -65,10 +74,18 @@ class MarkdownEmbedder {
         // Nest by relative heading order, not absolute level: `#`, `##`,
         // `#####` lists as depth 0, 1, 2 (skipped levels don't add indent).
         const levelStack = [];
+        // Headings inside generated TOCs (their own title) are not listed.
+        const tocRanges = [];
+        const tocRegex = /<!--\s*(?:embed|link):toc\b[\s\S]*?-->[\s\S]*?<!--\s*(?:embed|link):toc:end\s*-->/gi;
+        let toc;
+        while ((toc = tocRegex.exec(text)) !== null)
+            tocRanges.push([toc.index, toc.index + toc[0].length]);
         const headingRegex = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
         let match;
         while ((match = headingRegex.exec(text)) !== null) {
             if ((0, utils_1.isInCodeFence)(match.index, fenceRanges))
+                continue;
+            if (tocRanges.some(([start, end]) => match.index > start && match.index < end))
                 continue;
             const level = match[1].length;
             if (level < minLevel || level > maxLevel)
@@ -93,7 +110,22 @@ class MarkdownEmbedder {
             entries.push(`${'  '.repeat(levelStack.length)}- [${label}](#${slug})`);
             levelStack.push(level);
         }
-        return `\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
+        const title = this.tocTitle(document, attributes);
+        const heading = title ? `\n\n## ${title}` : '';
+        return `${heading}\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
+    }
+    /** Heading above a TOC: `heading="false"` / `heading="Text"` on the
+     *  directive, else `markdownStudio.tocHeading` + `tocHeadingText`. */
+    tocTitle(document, attributes) {
+        const attr = attributes['heading'];
+        const config = vscode.workspace.getConfiguration('markdownStudio', document.uri);
+        if (attr !== undefined && /^(false|no|off|0)$/i.test(attr))
+            return '';
+        if (attr !== undefined && attr.trim() && !/^(true|yes|on|1)$/i.test(attr))
+            return attr.trim();
+        if (attr === undefined && !config.get('tocHeading', true))
+            return '';
+        return String(config.get('tocHeadingText', 'Table of content')).trim();
     }
     indentReplacement(content, text, index) {
         if (content === null) return null;
@@ -107,6 +139,7 @@ class MarkdownEmbedder {
         });
     }
     generateEdits(document, onlyIndex) {
+        this.errors = [];
         return (0, utils_1.withSourceReads)(() => this._generateEdits(document, onlyIndex));
     }
     _generateEdits(document, onlyIndex) {
@@ -320,13 +353,13 @@ class MarkdownEmbedder {
                     const sourceHash = crypto.createHash('sha256').update(hashInput, 'utf8').digest('hex');
                     const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
                     if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
-                        yield vscode.commands.executeCommand(
-                            'gmc.renderFilePng',
-                            vscode.Uri.file(embedResult.resolvedPath),
-                            vscode.Uri.file(pngPath),
-                            requestedView,
-                            requestedTheme,
-                        );
+                        if (this.onSave && !vscode.workspace.getConfiguration('gmc.export').get('renderOnSave', false)) {
+                            return null; // stays stale until an explicit "Update embeds"
+                        }
+                        const renderArgs = [vscode.Uri.file(embedResult.resolvedPath), vscode.Uri.file(pngPath), requestedView, requestedTheme];
+                        yield (this.renderGmcPng
+                            ? this.renderGmcPng(...renderArgs)
+                            : vscode.commands.executeCommand('gmc.renderFilePng', ...renderArgs));
                     }
                     const imagePath = (0, markdown_paths_1.rebaseRelativePath)(
                         `./${path.basename(pngPath)}`,
@@ -351,6 +384,7 @@ class MarkdownEmbedder {
             }
             catch (error) {
                 if (this.expandLinkEmbeds) throw error;
+                this.errors.push({ file: attributes['file'], message: error.message });
                 console.error(`Error building embed content for ${attributes['file']}: ${error.message}`);
                 return null;
             }

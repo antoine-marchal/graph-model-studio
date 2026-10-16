@@ -119,13 +119,21 @@ export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(m
   const preview = new PreviewManager(context.extensionUri, context.globalState, extensionVersion)
   context.subscriptions.push(preview)
   let renderQueue: Promise<unknown> = Promise.resolve()
+  // Background renders (embed refresh) borrow the graph panel: one opened just
+  // for them closes when the batch ends; an open one gets its diagram back.
+  let backgroundRenders = 0
+  let closeAfterRenders = false
+  let restoreAfterRenders: PreviewInput | undefined
 
   context.subscriptions.push(vscode.commands.registerCommand(
     'gmc.renderFilePng',
     (sourceUri: vscode.Uri, targetUri: vscode.Uri, view?: string, theme?: string) => {
+      backgroundRenders++
       // One preview panel renders every export: run them one at a time, or
       // concurrent embeds (Markdown embedder) overwrite each other's render.
       const run = renderQueue.then(async () => {
+        if (!preview.isOpen) closeAfterRenders = true
+        else if (!closeAfterRenders && !restoreAfterRenders) restoreAfterRenders = preview.currentInput
         const document = await vscode.workspace.openTextDocument(sourceUri)
         const size = dimensions()
         const dataUrl = await preview.exportPng({
@@ -136,6 +144,16 @@ export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(m
         }, size.width, size.height, true)
         await writePng(dataUrl, targetUri)
         return targetUri
+      }).finally(async () => {
+        if (--backgroundRenders > 0) return
+        const restore = restoreAfterRenders
+        restoreAfterRenders = undefined
+        if (closeAfterRenders) {
+          closeAfterRenders = false
+          preview.close()
+        } else if (restore && preview.isOpen) {
+          await preview.show(restore, true)
+        }
       })
       renderQueue = run.catch(() => undefined)
       return run

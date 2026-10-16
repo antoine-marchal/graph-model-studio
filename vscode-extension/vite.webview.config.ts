@@ -29,8 +29,10 @@ export default defineConfig({
     // The webview deliberately bundles the shared Graph Model Studio renderer,
     // inspector, notation registry, and layout engines into one offline asset.
     chunkSizeWarningLimit: 750,
-    // tree-node glyphs stay separate files instead of bloating webview.js
-    assetsInlineLimit: file => (/[\\/]assets[\\/]glyphs[\\/]/.test(file) ? false : undefined),
+    // Inline tree-node glyphs (~1 MB). PNG export rasterizes with html-to-image,
+    // which must fetch() every <img>: the webview CSP has no connect-src, and
+    // the rich editor's srcdoc graph frame cannot load extension files at all.
+    assetsInlineLimit: file => (/[\\/]assets[\\/]glyphs[\\/]/.test(file) ? true : undefined),
     rollupOptions: {
       input: path.resolve(__dirname, 'webview/index.html'),
       output: {

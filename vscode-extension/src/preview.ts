@@ -53,6 +53,19 @@ export class PreviewManager implements vscode.Disposable {
     return this.panel?.visible ?? false
   }
 
+  get isOpen(): boolean {
+    return !!this.panel
+  }
+
+  /** What the panel currently shows, to restore after a background export. */
+  get currentInput(): PreviewInput | undefined {
+    return this.current
+  }
+
+  close(): void {
+    this.panel?.dispose()
+  }
+
   private finishRender(renderId: string): void {
     const pending = this.rendered.get(renderId)
     if (!pending) return
@@ -263,7 +276,7 @@ export class PreviewManager implements vscode.Disposable {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
     <link rel="stylesheet" href="${style}" />
     <title>Graph Model Studio</title>
   </head>

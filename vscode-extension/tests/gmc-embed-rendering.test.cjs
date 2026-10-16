@@ -25,6 +25,7 @@ const vscodeStub = {
     },
     workspace: {
         getWorkspaceFolder() { return undefined; },
+        getConfiguration() { return { get: (_key, fallback) => fallback }; },
     },
 };
 
@@ -91,6 +92,19 @@ test('a GMC embed renders a sibling PNG and emits a Markdown image', async () =>
         );
         assert.notEqual(changed, rendered);
         assert.equal(renderCalls.length, callCount + 1, 'changed GMC files must regenerate their PNG');
+
+        fs.writeFileSync(source, 'model { a = node "Saved" }', 'utf8');
+        embedder.onSave = true;
+        const onSave = await embedder.buildNewContent(document, { file: './models/workflow.gmc' }, new Set(), undefined, true, changed);
+        assert.equal(onSave, null, 'save-triggered updates leave the embed stale');
+        assert.equal(renderCalls.length, callCount + 1, 'save-triggered updates must not open the graph panel to render');
+
+        embedder.onSave = false;
+        const hooked = [];
+        embedder.renderGmcPng = async (sourceUri, pngUri) => { hooked.push(pngUri.fsPath); fs.writeFileSync(pngUri.fsPath, 'png'); };
+        await embedder.buildNewContent(document, { file: './models/workflow.gmc' }, new Set(), undefined, true, changed);
+        assert.deepEqual(hooked, [path.join(modelsDir, 'workflow.png')], 'a custom renderer replaces the graph panel');
+        assert.equal(renderCalls.length, callCount + 1);
     } finally {
         fs.rmSync(tempRoot, { recursive: true, force: true });
     }
@@ -267,4 +281,14 @@ test('indented and unclosed code fences never execute link directives', async ()
     const document = textDocument(path.resolve('example.md'), text);
     assert.deepEqual(await embedder.generateEdits(document), []);
     assert.equal((await embedder.getStaleMatchIndices(document)).size, 0);
+});
+
+test('a TOC gets a configurable heading and never lists its own heading', () => {
+    const text = '# Doc\n\n<!-- embed:toc -->\n\n## Table of content\n\n- [Doc](#doc)\n\n<!-- embed:toc:end -->\n\n## Part\n';
+    const document = { uri: vscodeStub.Uri.file('doc.md'), getText: () => text };
+    const embedder = new MarkdownEmbedder();
+    assert.equal(embedder.buildTocContent(document),
+        '\n\n## Table of content\n\n- [Doc](#doc)\n  - [Part](#part)\n\n<!-- embed:toc:end -->');
+    assert.match(embedder.buildTocContent(document, { heading: 'Contents' }), /^\n\n## Contents\n\n- \[Doc\]/);
+    assert.match(embedder.buildTocContent(document, { heading: 'false' }), /^\n\n- \[Doc\]/);
 });

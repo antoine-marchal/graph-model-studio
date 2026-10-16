@@ -30,6 +30,9 @@ const required = [
   'dist/extension.js',
   'dist/webview/assets/webview.js',
   'dist/markdown-preview/runtime.js',
+  'dist/rich-editor/extension.js',
+  'dist/rich-editor/webview.js',
+  'dist/rich-editor/editor.css',
   'integrations/host.js',
   'integrations/markdown-code-embedder/extension.js',
   'integrations/markdown-code-embedder/markdown-paths.js',
@@ -57,6 +60,7 @@ for (const relativePath of [
   'integrations/markdown-toolkit/extension.js',
   'integrations/slides/extension.js',
   'dist/markdown-preview/preview.js',
+  'dist/rich-editor/extension.js',
 ]) {
   execFileSync(process.execPath, ['--check', path.join(root, relativePath)], { stdio: 'inherit' })
 }

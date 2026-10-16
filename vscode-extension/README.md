@@ -5,6 +5,11 @@ modeler into Visual Studio Code. Open a `.gmc` document beside an interactive
 graph, edit visually through the canvas and Inspector, embed diagrams in
 Markdown, and export publication-ready PNG images without switching tools.
 
+It also ships **Markdown Studio**, a Notion-like WYSIWYG editor for `.md`
+files: rich git diffs, tables, math, Mermaid, frontmatter, and live GMC
+diagrams you can open in the interactive graph editor without leaving the
+document.
+
 The extension uses the same parser, serializer, notation registry, layout
 engines, nodes, edges, graph renderer, Explorer, Inspector, and theme system as
 the Graph Model Studio application.
@@ -33,6 +38,40 @@ the Graph Model Studio application.
   diagnostics, completion, hover, source navigation, and workspace updates.
 - Native `.gmc`/`.graphmodel` embeds and recursive Markdown-file embeds.
 - Rich HTML paste-to-Markdown plus copy-Markdown-as-rich-HTML.
+
+## Markdown Studio rich editor
+
+Every Markdown file gets an **Open in Rich Editor** CodeLens (or
+`Ctrl+Shift+M` / `Cmd+Shift+M`, or the editor title button). The rich editor
+and the text editor stay in sync; switch back at any time.
+
+- **Writing**: `/` slash commands, checkboxes, tables, KaTeX math (inline and
+  block), quotes, code blocks with highlighting, Mermaid diagrams, GitHub URL
+  cards, highlights, alignment blocks, and image upload/paste.
+- **Blocks and tables**: Notion-style block handle (add, drag, duplicate,
+  delete), column/row resizing, spreadsheet-like range selection with sum and
+  average, fill handle, sort and view-only filters.
+- **GMC diagrams**: ` ```gmc ` / ` ```graphmodel ` fences render with the same
+  renderer as the preview. Each block edits its `id=`, `view=`, `theme=`,
+  `width=`, `height=` attributes, opens the **interactive** graph editor in a
+  modal (changes sync back into the block), moves the diagram **to file**
+  (`.gmc` + embed), or exports a **png**. `/gmc` inserts a starter model.
+- **Embeds and TOC**: embed, link and table-of-contents directives from the
+  context menu or `/embed`, `/link`, `/table of contents`; **Tools → Update
+  embeds & TOC** refreshes them. Directives show as editable cards.
+- **Tools menu**: HTML / PDF / PNG / DOCX export and slides.
+- **Rich diff**: **Markdown Studio: Open Rich Diff** (SCM context menu, diff
+  editor toolbar, or the editor's Diff button) compares rendered blocks against
+  `HEAD` or any two files.
+- **Reading layout**: content width, font, line height, line numbers, outline
+  rail or panel, sticky headings, and zen mode (`Ctrl+.` / `Cmd+.`).
+- **Themes**: follows VS Code by default, or GitHub (Primer) and Claude light
+  and dark palettes; `markdownStudio.customCss` loads your own stylesheet.
+
+Settings live under *Markdown Studio* (`markdownStudio.*`); the ⚙ button in
+the editor edits the same values. Markdown → rich text → Markdown is
+normalized rather than byte-identical; the settings panel controls most of the
+normalization.
 
 ## Opening the interactive graph
 
@@ -113,9 +152,17 @@ active Markdown document. Files are written to:
 ```
 
 Export uses the selected view, fence attributes, graph theme, notation colors,
-node dimensions, and stored layout positions. Output is automatically cropped
-to the graph content and rendered at high pixel density with a transparent
-background.
+node dimensions, stored layout positions, tree-node glyph icons, and images.
+Output is automatically cropped to the graph content and rendered at high
+pixel density with a transparent background.
+
+`.gmc` image embeds (`<!-- embed:file="./model.gmc" -->`) use the source's
+unsaved editor content when it is open. The rich editor's **refresh** renders
+them inside the rich editor itself, so no panel opens. **Update Code Embeds** /
+**Update All Embeds in Workspace** render through the graph panel, which closes
+again afterwards (or returns to its diagram if it was already open). Saving a
+document does not render: changed diagrams are flagged stale, unless
+`gmc.export.renderOnSave` is enabled.
 
 ## Language intelligence
 
@@ -235,11 +282,9 @@ Configure `slides.executablePath` and `slides.themePath` in VS Code settings. `s
 | `gmc.export.width` | `1600` | Default PNG render width, from 320 to 8192 pixels. |
 | `gmc.export.height` | `1000` | Default PNG render height, from 240 to 8192 pixels. |
 | `gmc.export.theme` | `auto` | PNG theme: `auto`, `light`, or `dark`. Fence attributes can override it. |
+| `gmc.export.renderOnSave` | `false` | Re-render changed `.gmc` image embeds on save (opens the graph panel beside the editor). |
 | `markdownEmbedder.autoUpdate` | `false` | Refresh embeds when a referenced source file is saved. |
 | `markdownEmbedder.collapseGeneratedContent` | `true` | Automatically fold generated content between embed directives. |
-
-Named regions such as `<!-- embed:example --> … <!-- embed:example:end -->`
-are recognized as foldable blocks and collapse automatically after updates.
 | `pasteAsMarkdown.enabled` | `true` | Convert rich HTML clipboard content when pasting into Markdown. |
 | `pasteAsMarkdown.copyAsHtmlOnCopy` | `false` | Override copy in Markdown to provide rich HTML as well as plain text. |
 | `markdownToolkit.export.browserPath` | empty | Optional Chromium/Chrome/Edge executable for PDF and PNG export. |
@@ -247,6 +292,9 @@ are recognized as foldable blocks and collapse automatically after updates.
 | `markdownToolkit.export.pngHeight` | `10000` | PNG export capture height (increase for very long documents). |
 | `markdownToolkit.pandoc.path` | empty | Optional path to the Pandoc executable. |
 | `markdownToolkit.pandoc.referenceDoc` | empty | Optional default reference DOCX template offered during export. |
+
+Named regions such as `<!-- embed:example --> … <!-- embed:example:end -->`
+are recognized as foldable blocks and collapse automatically after updates.
 
 PDF and PNG export require Edge, Chrome, or Chromium. DOCX export requires
 [Pandoc](https://pandoc.org/). GMC fences are rendered to PNG before Pandoc is
@@ -275,3 +323,27 @@ theme; an explicit `theme=` fence attribute overrides it for that diagram only.
   is parsed, laid out, and captured independently.
 - Reload the VS Code window after upgrading the extension if an already-open
   Markdown preview still uses an older preview script.
+
+## Building
+
+The extension compiles the Graph Model Studio sources in `../src` (parser,
+notations, renderer, Inspector) into `dist/webview` and
+`dist/markdown-preview`; the rich editor (`rich-editor/`) is built into
+`dist/rich-editor` and loads those same bundles for GMC blocks, so a core
+change reaches every surface on the next build.
+
+```bash
+pnpm run build:source   # host, graph webview, Markdown runtime, rich editor
+pnpm run build          # validate combined artifacts
+pnpm test               # embed tests + rich editor conversion/round-trip tests
+pnpm run package        # dist/graph-model-studio-<version>.vsix
+```
+
+See `rich-editor/DEVELOPMENT.md` for the Markdown conversion pipeline.
+
+## Credits
+
+The rich editor is based on [Markdown Studio](https://github.com/chaudhary1337/markdown-studio)
+by Tanishq Chaudhary, MIT licensed (`rich-editor/LICENSE`). If the standalone
+Markdown Studio extension is also installed, Graph Model Studio offers to
+uninstall it, since both register the same editor and commands.

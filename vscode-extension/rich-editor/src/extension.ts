@@ -1,0 +1,303 @@
+import * as vscode from "vscode";
+import * as path from "path";
+import { BetterMarkdownProvider } from "./provider";
+import { BetterMarkdownDiffPanel } from "./diffPanel";
+import { SETTING_KEYS } from "../webview/settings";
+import { registerDirectiveCommands } from "./directives";
+
+const CUSTOM_EDITOR_VIEW_TYPE = "betterMarkdown.editor";
+const LEGACY_SETTINGS_KEY = "betterMarkdown.settings";
+const MIGRATION_DONE_KEY = "betterMarkdown.configMigrated";
+
+/**
+ * One-shot migration: pre-2.3.5 builds stored settings in globalState
+ * under `betterMarkdown.settings`. We now own a `contributes.configuration`
+ * block, so settings live in `vscode.workspace.getConfiguration()`. Copy
+ * any stored values into User scope (only when the user hasn't already
+ * set a value via Settings UI), then clear the legacy key. Idempotent —
+ * gated on a separate flag so re-runs are no-ops even if a user
+ * deliberately wipes a key back to its default.
+ */
+async function migrateLegacySettings(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  if (context.globalState.get<boolean>(MIGRATION_DONE_KEY) === true) return;
+  const legacy = context.globalState.get<Record<string, unknown>>(
+    LEGACY_SETTINGS_KEY,
+  );
+  if (legacy && typeof legacy === "object") {
+    const config = vscode.workspace.getConfiguration("markdownStudio");
+    for (const key of SETTING_KEYS) {
+      if (!Object.prototype.hasOwnProperty.call(legacy, key)) continue;
+      const inspect = config.inspect(key);
+      if (inspect?.globalValue !== undefined) continue;
+      try {
+        await config.update(
+          key,
+          legacy[key],
+          vscode.ConfigurationTarget.Global,
+        );
+      } catch {
+        // Skip individual keys that fail validation (e.g. enum mismatch
+        // from an older build); the rest still migrate.
+      }
+    }
+  }
+  await context.globalState.update(LEGACY_SETTINGS_KEY, undefined);
+  await context.globalState.update(MIGRATION_DONE_KEY, true);
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+  void migrateLegacySettings(context);
+  warnAboutLegacyMarkdownStudio(context);
+
+  const provider = new BetterMarkdownProvider(context);
+
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      CUSTOM_EDITOR_VIEW_TYPE,
+      provider,
+      {
+        supportsMultipleEditorsPerDocument: true,
+        webviewOptions: { retainContextWhenHidden: true },
+      }
+    )
+  );
+
+  // Toggle command
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.toggleEditor", async () => {
+      const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab;
+      if (!activeTab) return;
+
+      const input = activeTab.input;
+      if (!input || typeof input !== "object") return;
+
+      const isCustomEditor =
+        "viewType" in input &&
+        (input as any).viewType === CUSTOM_EDITOR_VIEW_TYPE;
+
+      const uri = (input as any).uri as vscode.Uri | undefined;
+      if (!uri) return;
+
+      if (isCustomEditor) {
+        await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+      } else {
+        await vscode.commands.executeCommand("vscode.openWith", uri, CUSTOM_EDITOR_VIEW_TYPE);
+      }
+    })
+  );
+
+  // Find command — sends message to active webview
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.find", () => {
+      provider.openSearch();
+    })
+  );
+
+  // Embed / link / TOC directives (rich editor context menu, slash menu,
+  // Markdown text editor context menu).
+  registerDirectiveCommands(context, {
+    activeUri: () => provider.activeUri(),
+    insert: (text) => provider.insertDirective(text),
+    refresh: () => provider.refreshActiveEmbeds(),
+  });
+
+  // Rendered HTML of an open rich editor, used by the toolkit's HTML / PDF /
+  // PNG export so the output matches what the editor shows. Not in the
+  // palette (no `contributes.commands` entry).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.exportSnapshot", (uri?: vscode.Uri) =>
+      uri ? provider.exportSnapshot(uri) : undefined,
+    )
+  );
+
+  // Zen mode — hides the editor chrome and dims all but the current block.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.toggleZen", () => {
+      provider.toggleZen();
+    })
+  );
+
+  // Factory reset — wipes all settings + the first-run consent flag so
+  // settings revert to defaults and the welcome modal fires again on
+  // the next file open. Confirms before applying.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.factoryReset", () => {
+      void provider.factoryReset();
+    })
+  );
+
+  // Rich diff — opens a dedicated webview panel comparing any two URIs.
+  // Invoked from command palette, SCM context menu, or diff-editor toolbar.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "betterMarkdown.openDiff",
+      async (arg?: unknown, second?: unknown) => {
+        const { leftUri, rightUri, title } = await resolveDiffArgs(arg, second);
+        if (!leftUri || !rightUri) {
+          vscode.window.showInformationMessage(
+            "Markdown Studio: no markdown file to diff."
+          );
+          return;
+        }
+        await BetterMarkdownDiffPanel.createOrShow(
+          context,
+          leftUri,
+          rightUri,
+          title
+        );
+      }
+    )
+  );
+
+  // Close non-file custom editor tabs (git:, scm: schemes).  When VS Code
+  // opens a diff for a .md file, the custom editor intercepts both sides and
+  // spawns read-only panes with git:/scm: URIs.  These render in the rich
+  // editor but can't be edited, so we auto-close them.
+  //
+  // NOTE: we investigated replacing these with the rich diff panel
+  // (BetterMarkdownDiffPanel) for Claude Code integration, but Claude Code
+  // writes to disk only AFTER the user accepts in the CLI — before that the
+  // proposed content is internal to Claude Code with no extension API to
+  // read it.  onDidChangeTextDocument fires post-acceptance (too late for
+  // review) and onDidChangeTabs sees only a TabInputCustom, not a
+  // TabInputTextDiff.  Pre-acceptance rich diff requires Claude Code to
+  // expose proposed content to extensions.
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs((e) => {
+      for (const tab of e.opened) {
+        const input = tab.input;
+        if (
+          input instanceof vscode.TabInputCustom &&
+          input.viewType === CUSTOM_EDITOR_VIEW_TYPE &&
+          input.uri.scheme !== "file"
+        ) {
+          setTimeout(async () => {
+            try { await vscode.window.tabGroups.close(tab); } catch {}
+          }, 50);
+        }
+      }
+    })
+  );
+
+  // CodeLens: "Open in Rich Editor" above line 1 in source mode
+  context.subscriptions.push(
+    vscode.languages.registerCodeLensProvider(
+      { language: "markdown" },
+      new RichEditorCodeLensProvider()
+    )
+  );
+}
+
+class RichEditorCodeLensProvider implements vscode.CodeLensProvider {
+  provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+    const range = new vscode.Range(0, 0, 0, 0);
+    return [
+      new vscode.CodeLens(range, {
+        title: "Open in Rich Editor",
+        command: "betterMarkdown.toggleEditor",
+      }),
+    ];
+  }
+}
+
+export function deactivate() {}
+
+/**
+ * The rich editor used to ship as the separate "Markdown Studio" extension,
+ * which bundled its own copy of Graph Model Studio. Both register the same
+ * `betterMarkdown.*` commands and custom editor, so offer to remove it.
+ */
+const LEGACY_MARKDOWN_STUDIO_ID = "tanishq-chaudhary.its-markdown-studio";
+
+function warnAboutLegacyMarkdownStudio(context: vscode.ExtensionContext): void {
+  const other = vscode.extensions.getExtension(LEGACY_MARKDOWN_STUDIO_ID);
+  if (!other || context.globalState.get<string>("legacyMarkdownStudioDismissed") === other.packageJSON.version) return;
+  void vscode.window
+    .showWarningMessage(
+      `Graph Model Studio now includes the Markdown Studio rich editor. The separately installed "${other.packageJSON.displayName ?? LEGACY_MARKDOWN_STUDIO_ID}" ${other.packageJSON.version} registers the same commands and editor. Uninstall it?`,
+      "Uninstall",
+      "Keep both",
+    )
+    .then(async (choice) => {
+      if (choice === "Uninstall") {
+        await vscode.commands.executeCommand("workbench.extensions.uninstallExtension", LEGACY_MARKDOWN_STUDIO_ID);
+        const reload = await vscode.window.showInformationMessage("Reload the window to finish.", "Reload");
+        if (reload) await vscode.commands.executeCommand("workbench.action.reloadWindow");
+      } else if (choice === "Keep both") {
+        await context.globalState.update("legacyMarkdownStudioDismissed", other.packageJSON.version);
+      }
+    });
+}
+
+/**
+ * Figure out which two URIs to diff from whatever the caller passed us.
+ * Supports:
+ *   - SCM resource state (right-click in Source Control panel)
+ *   - Two URIs (explicit)
+ *   - One URI (compared vs HEAD)
+ *   - No args: try active diff editor, else active text editor vs HEAD
+ */
+async function resolveDiffArgs(
+  arg: unknown,
+  second: unknown
+): Promise<{
+  leftUri: vscode.Uri | undefined;
+  rightUri: vscode.Uri | undefined;
+  title: string;
+}> {
+  // Case: two URI args
+  if (arg instanceof vscode.Uri && second instanceof vscode.Uri) {
+    return {
+      leftUri: arg,
+      rightUri: second,
+      title: path.basename(second.fsPath || second.path),
+    };
+  }
+
+  // Case: single URI arg → diff vs HEAD
+  if (arg instanceof vscode.Uri) {
+    return withHead(arg);
+  }
+
+  // Case: SCM resource state (shape: { resourceUri: Uri, ... })
+  if (arg && typeof arg === "object" && "resourceUri" in arg) {
+    const resourceUri = (arg as { resourceUri: vscode.Uri }).resourceUri;
+    if (resourceUri instanceof vscode.Uri) return withHead(resourceUri);
+  }
+
+  // No args: look at active tab for a diff editor, else active text editor
+  const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
+  if (activeTab && activeTab instanceof vscode.TabInputTextDiff) {
+    return {
+      leftUri: activeTab.original,
+      rightUri: activeTab.modified,
+      title: path.basename(
+        activeTab.modified.fsPath || activeTab.modified.path
+      ),
+    };
+  }
+
+  const activeEditor = vscode.window.activeTextEditor;
+  if (activeEditor) return withHead(activeEditor.document.uri);
+
+  return { leftUri: undefined, rightUri: undefined, title: "" };
+}
+
+function withHead(fileUri: vscode.Uri) {
+  // git: URI pointing to HEAD version of the file.
+  const gitUri = vscode.Uri.from({
+    scheme: "git",
+    path: fileUri.path,
+    query: JSON.stringify({
+      path: fileUri.fsPath,
+      ref: "HEAD",
+    }),
+  });
+  return {
+    leftUri: gitUri,
+    rightUri: fileUri,
+    title: `${path.basename(fileUri.fsPath)} · HEAD ↔ working`,
+  };
+}

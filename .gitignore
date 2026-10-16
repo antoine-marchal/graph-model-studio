@@ -32,10 +32,10 @@ graphify-out
 
 # generated VS Code extension package assets
 vscode-extension/media/icon.png
-vscode-extension/pnpm-workspace.yaml
 
 test.gmc
 test.md
+!vscode-extension/rich-editor/test/test.md
 
 output
 .playwright-cli

@@ -88,12 +88,12 @@ function showPng(figure: DiagramElement, id: string, dataUrl: string): void {
   figure.replaceChildren(image)
 }
 
-async function waitForGraphReady(shadow: ShadowRoot, generation: number, figure: DiagramElement): Promise<boolean> {
+async function waitForGraphReady(shadow: ShadowRoot, alive: () => boolean): Promise<boolean> {
   let fitRequested = false
   let previousBounds = ''
   let stableSamples = 0
   for (let attempt = 0; attempt < 30; attempt++) {
-    if (!isCurrent(generation, figure)) return false
+    if (!alive()) return false
     await delay(40)
     const workspace = shadow.querySelector('.gms-graph-workspace')
     const nodes = Array.from(shadow.querySelectorAll<HTMLElement>('.react-flow__node'))
@@ -127,11 +127,77 @@ async function waitForGraphReady(shadow: ShadowRoot, generation: number, figure:
       previousBounds = bounds
       if (stableSamples >= 3) {
         await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-        return isCurrent(generation, figure)
+        return alive()
       }
     }
   }
-  return isCurrent(generation, figure)
+  return alive()
+}
+
+/** Lay out `source` offscreen and capture it; undefined when `alive()` turns false. */
+async function rasterize(
+  source: string,
+  view: string | undefined,
+  theme: 'light' | 'dark',
+  width: number,
+  height: number,
+  alive: () => boolean,
+): Promise<string | undefined> {
+  const parsed = parseDsl(source)
+  if (!parsed.model) throw new Error(parsed.diagnostics[0]?.message ?? 'Unable to parse GMC')
+
+  const model = parsed.model
+  if (Object.keys(model.views).length === 0) {
+    const defaultView = createDefaultView()
+    model.views[defaultView.id] = defaultView
+  }
+  const preferredView = view
+    ? Object.values(model.views).find(candidate => candidate.id === view || candidate.name === view)
+    : undefined
+  const activeViewId = preferredView?.id ?? Object.keys(model.views)[0] ?? null
+  useModelStore.setState({
+    model,
+    dslSource: source,
+    activeViewId,
+    selectedElementIds: [],
+    selectedElementId: null,
+    selectedRelationId: null,
+    diagnostics: parsed.diagnostics,
+    parseError: !parsed.success,
+    theme,
+    isDirty: false,
+    past: [],
+    future: [],
+  })
+
+  const host = document.createElement('div')
+  host.className = theme
+  host.style.cssText = 'position:fixed;left:-10000px;top:0;z-index:-1;display:block;'
+  const shadow = host.attachShadow({ mode: 'open' })
+  const style = document.createElement('style')
+  style.textContent = sharedShadowCss
+  const mount = document.createElement('div')
+  mount.style.width = `${width}px`
+  mount.style.height = `${height}px`
+  mount.style.display = 'flex'
+  shadow.append(style, mount)
+  document.body.append(host)
+
+  const root = ReactDOM.createRoot(mount)
+  try {
+    root.render(<GraphPanel />)
+    if (!await waitForGraphReady(shadow, alive)) return undefined
+    if (document.fonts) await Promise.race([document.fonts.ready, delay(200)])
+    if (!alive()) return undefined
+
+    const workspace = shadow.querySelector('.gms-graph-workspace') as HTMLElement | null
+    if (!workspace) throw new Error('Graph canvas did not initialize')
+    const dataUrl = await pngBytesToDataUrl(await captureGraphPng(workspace))
+    return alive() ? dataUrl : undefined
+  } finally {
+    root.unmount()
+    host.remove()
+  }
 }
 
 async function renderDiagram(figure: DiagramElement, generation: number): Promise<void> {
@@ -139,8 +205,6 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
   figure.dataset.gmcRendered = 'true'
 
   const id = figure.dataset.gmcId || 'diagram'
-  let host: HTMLDivElement | undefined
-  let root: ReturnType<typeof ReactDOM.createRoot> | undefined
   try {
     const source = sourceFromBase64(figure.dataset.gmcSource ?? '')
     const requestedTheme = figure.dataset.gmcTheme
@@ -155,56 +219,8 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
       showPng(figure, id, cached)
       return
     }
-    const parsed = parseDsl(source)
-    if (!parsed.model) throw new Error(parsed.diagnostics[0]?.message ?? 'Unable to parse GMC')
-
-    const model = parsed.model
-    if (Object.keys(model.views).length === 0) {
-      const view = createDefaultView()
-      model.views[view.id] = view
-    }
-    const preferredView = figure.dataset.gmcView
-      ? Object.values(model.views).find(view => view.id === figure.dataset.gmcView || view.name === figure.dataset.gmcView)
-      : undefined
-    const activeViewId = preferredView?.id ?? Object.keys(model.views)[0] ?? null
-    useModelStore.setState({
-      model,
-      dslSource: source,
-      activeViewId,
-      selectedElementIds: [],
-      selectedElementId: null,
-      selectedRelationId: null,
-      diagnostics: parsed.diagnostics,
-      parseError: !parsed.success,
-      theme,
-      isDirty: false,
-      past: [],
-      future: [],
-    })
-
-    host = document.createElement('div')
-    host.className = theme
-    host.style.cssText = 'position:fixed;left:-10000px;top:0;z-index:-1;display:block;'
-    const shadow = host.attachShadow({ mode: 'open' })
-    const style = document.createElement('style')
-    style.textContent = sharedShadowCss
-    const mount = document.createElement('div')
-    mount.style.width = `${width}px`
-    mount.style.height = `${height}px`
-    mount.style.display = 'flex'
-    shadow.append(style, mount)
-    document.body.append(host)
-
-    root = ReactDOM.createRoot(mount)
-    root.render(<GraphPanel />)
-    if (!await waitForGraphReady(shadow, generation, figure)) return
-    if (document.fonts) await Promise.race([document.fonts.ready, delay(200)])
-    if (!isCurrent(generation, figure)) return
-
-    const workspace = shadow.querySelector('.gms-graph-workspace') as HTMLElement | null
-    if (!workspace) throw new Error('Graph canvas did not initialize')
-    const dataUrl = await pngBytesToDataUrl(await captureGraphPng(workspace))
-    if (!isCurrent(generation, figure)) return
+    const dataUrl = await rasterize(source, figure.dataset.gmcView, theme, width, height, () => isCurrent(generation, figure))
+    if (!dataUrl) return
     rememberPng(key, dataUrl)
     showPng(figure, id, dataUrl)
   } catch (error) {
@@ -212,10 +228,31 @@ async function renderDiagram(figure: DiagramElement, generation: number): Promis
       figure.classList.add('gmc-markdown-error')
       figure.textContent = `GMC diagram "${id}" could not be generated: ${error instanceof Error ? error.message : String(error)}`
     }
-  } finally {
-    root?.unmount()
-    host?.remove()
   }
+}
+
+/**
+ * Render a GMC model to a PNG data URL in this (visible) webview — used by the
+ * rich editor to refresh `.gmc` image embeds without opening the graph panel.
+ */
+export function renderPng(options: { source: string; view?: string; theme?: string; width?: number; height?: number }): Promise<string> {
+  const theme = options.theme === 'light' || options.theme === 'dark'
+    ? options.theme
+    : document.body.classList.contains('vscode-light') ? 'light' : 'dark'
+  const run = renderQueue.catch(() => undefined).then(async () => {
+    const dataUrl = await rasterize(
+      options.source,
+      options.view,
+      theme,
+      dimension(String(options.width), 1600, 320),
+      dimension(String(options.height), 1000, 240),
+      () => true,
+    )
+    if (!dataUrl) throw new Error('The diagram could not be rendered')
+    return dataUrl
+  })
+  renderQueue = run.then(() => undefined, () => undefined)
+  return run
 }
 
 async function renderAll(generation: number): Promise<void> {
