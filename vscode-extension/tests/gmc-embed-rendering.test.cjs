@@ -282,3 +282,13 @@ test('indented and unclosed code fences never execute link directives', async ()
     assert.deepEqual(await embedder.generateEdits(document), []);
     assert.equal((await embedder.getStaleMatchIndices(document)).size, 0);
 });
+
+test('a TOC gets a configurable heading and never lists its own heading', () => {
+    const text = '# Doc\n\n<!-- embed:toc -->\n\n## Table of content\n\n- [Doc](#doc)\n\n<!-- embed:toc:end -->\n\n## Part\n';
+    const document = { uri: vscodeStub.Uri.file('doc.md'), getText: () => text };
+    const embedder = new MarkdownEmbedder();
+    assert.equal(embedder.buildTocContent(document),
+        '\n\n## Table of content\n\n- [Doc](#doc)\n  - [Part](#part)\n\n<!-- embed:toc:end -->');
+    assert.match(embedder.buildTocContent(document, { heading: 'Contents' }), /^\n\n## Contents\n\n- \[Doc\]/);
+    assert.match(embedder.buildTocContent(document, { heading: 'false' }), /^\n\n- \[Doc\]/);
+});

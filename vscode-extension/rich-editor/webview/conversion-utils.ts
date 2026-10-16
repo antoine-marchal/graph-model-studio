@@ -80,12 +80,28 @@ const DIRECTIVE_RE = /^<!--\s*(?:embed|link):(\S+?)(?:\s[\s\S]*)?-->$/i;
  */
 const ALIGN_DIV_RE = /^<div\s+align=["']?(left|center|right)["']?\s*>$/i;
 
-function directiveToken(node: any): { close: boolean; key: string; align?: string } | null {
+/**
+ * Multi-column layout: `<div class="ms-columns">` holding one
+ * `<div class="ms-column">` per column, each tag on its own line with blank
+ * lines around it → `columnsGroup` / `columnGroup` → Columns / Column nodes.
+ * The inline flex styles make other renderers (VS Code preview, export
+ * fallback) show columns too; GitHub strips them and stacks the columns.
+ */
+export const COLUMNS_OPEN = '<div class="ms-columns" style="display:flex;gap:24px">';
+export const COLUMN_OPEN = '<div class="ms-column" style="flex:1;min-width:0">';
+const COLUMNS_DIV_RE = /^<div\s+class=["']ms-(columns|column)["']/i;
+
+function directiveToken(node: any): { close: boolean; key: string; align?: string; layout?: string } | null {
   if (node.type !== "html") return null;
   const value = String(node.value).trim();
   if (/^<\/div\s*>$/i.test(value)) return { close: true, key: "div" };
   if (/^<div(?:\s[^>]*)?>$/i.test(value)) {
-    return { close: false, key: "div", align: ALIGN_DIV_RE.exec(value)?.[1].toLowerCase() };
+    return {
+      close: false,
+      key: "div",
+      align: ALIGN_DIV_RE.exec(value)?.[1].toLowerCase(),
+      layout: COLUMNS_DIV_RE.exec(value)?.[1].toLowerCase(),
+    };
   }
   const m = DIRECTIVE_RE.exec(value);
   if (!m) return null;
@@ -127,6 +143,11 @@ function groupDirectiveChildren(children: any[]): any[] {
         ? { start: child.position.start, end: last.position.end }
         : undefined;
       if (t.key === "div") {
+        if (t.layout && end !== undefined) {
+          out.push({ type: t.layout === "columns" ? "columnsGroup" : "columnGroup", children: build(i + 1, end), position });
+          i = end;
+          continue;
+        }
         if (!t.align || end === undefined) {
           out.push(child);
           continue;
@@ -313,6 +334,9 @@ export function rehypeUnwrapDirectives() {
         const layout = tableLayoutComment(child);
         return layout ? [child, rawHtmlPre(layout)] : [child];
       }
+      if (child.type === "element" && (child.properties?.dataType === "columns" || child.properties?.dataType === "column")) {
+        return [rawHtmlPre(child.properties.dataType === "columns" ? COLUMNS_OPEN : COLUMN_OPEN), ...child.children, rawHtmlPre("</div>")];
+      }
       if (child.type === "element" && child.properties?.dataType === "align") {
         return [rawHtmlPre(`<div align="${child.properties.dataAlign}">`), ...child.children, rawHtmlPre("</div>")];
       }
@@ -351,6 +375,12 @@ export const remarkRehypeHandlers: Record<string, (state: any, node: any, parent
       properties: { dataType: "align", dataAlign: node.align },
       children: state.wrap(state.all(node), true),
     };
+  },
+  columnsGroup(state: any, node: any): any {
+    return { type: "element", tagName: "div", properties: { dataType: "columns" }, children: state.wrap(state.all(node), true) };
+  },
+  columnGroup(state: any, node: any): any {
+    return { type: "element", tagName: "div", properties: { dataType: "column" }, children: state.wrap(state.all(node), true) };
   },
   directiveGroup(state: any, node: any): any {
     return {

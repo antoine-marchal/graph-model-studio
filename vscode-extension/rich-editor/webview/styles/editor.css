@@ -3041,6 +3041,32 @@ body.zen-mode .tiptap-editor > .zen-here {
 .tiptap-editor .align-block[data-align="center"] .tableWrapper table { margin-left: auto; margin-right: auto; }
 .tiptap-editor .align-block[data-align="right"] .tableWrapper table { margin-left: auto; margin-right: 0; }
 
+/* ---------- Columns (<div class="ms-columns">) ---------- */
+.tiptap-editor .ms-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 24px;
+  margin: 1em 0;
+}
+.tiptap-editor .ms-column {
+  min-width: 0;
+  padding: 2px 8px;
+  margin: 0 -8px;
+  border-radius: 4px;
+  outline: 1px dashed transparent;
+  transition: outline-color 0.15s;
+}
+.tiptap-editor .ms-column > :first-child { margin-top: 0; }
+.tiptap-editor .ms-column > :last-child { margin-bottom: 0; }
+.tiptap-editor .ms-columns:hover > .ms-column,
+.tiptap-editor .ms-column:focus-within {
+  outline-color: var(--vscode-editorIndentGuide-background, rgba(128, 128, 128, 0.35));
+}
+@media print {
+  .tiptap-editor .ms-column { outline: none !important; }
+}
+
 /* ---------- Highlights (<mark data-color>) — Notion palette ---------- */
 :root {
   --ms-hl-yellow: rgba(255, 212, 0, 0.32);

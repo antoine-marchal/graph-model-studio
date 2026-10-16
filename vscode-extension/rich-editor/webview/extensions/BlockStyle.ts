@@ -35,6 +35,59 @@ export const AlignBlock = Node.create({
   },
 });
 
+/**
+ * Side-by-side columns (`<div class="ms-columns">` / `<div class="ms-column">`,
+ * see COLUMNS_OPEN in conversion-utils). Each column holds any blocks.
+ */
+export const Columns = Node.create({
+  name: "columns",
+  group: "block",
+  content: "column+",
+  defining: true,
+  isolating: true,
+  draggable: true,
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="columns"]' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes({ "data-type": "columns", class: "ms-columns" }, HTMLAttributes), 0];
+  },
+});
+
+export const Column = Node.create({
+  name: "column",
+  content: "block+",
+  defining: true,
+  isolating: true,
+
+  parseHTML() {
+    return [{ tag: 'div[data-type="column"]' }];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return ["div", mergeAttributes({ "data-type": "column", class: "ms-column" }, HTMLAttributes), 0];
+  },
+});
+
+/** Insert an empty `count`-column layout and put the caret in its first column. */
+export function insertColumns(editor: any, count: number): void {
+  const content = {
+    type: "columns",
+    content: Array.from({ length: count }, () => ({ type: "column", content: [{ type: "paragraph" }] })),
+  };
+  editor.chain().focus().insertContent(content).run();
+  // insertContent leaves the caret after the content (last column).
+  const { $from } = editor.state.selection;
+  for (let d = $from.depth; d > 0; d--) {
+    if ($from.node(d).type.name !== "columns") continue;
+    // columns > column > paragraph: three opening tokens in.
+    editor.commands.setTextSelection($from.before(d) + 3);
+    return;
+  }
+}
+
 /** Align the top-level block at `pos` (left = unwrap: it's the default). */
 export function setBlockAlignTr(state: EditorState, pos: number, align: BlockAlign): Transaction | null {
   const node = state.doc.nodeAt(pos);

@@ -103,6 +103,15 @@ export function activate(context: vscode.ExtensionContext): void {
     refresh: () => provider.refreshActiveEmbeds(),
   });
 
+  // Rendered HTML of an open rich editor, used by the toolkit's HTML / PDF /
+  // PNG export so the output matches what the editor shows. Not in the
+  // palette (no `contributes.commands` entry).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.exportSnapshot", (uri?: vscode.Uri) =>
+      uri ? provider.exportSnapshot(uri) : undefined,
+    )
+  );
+
   // Zen mode — hides the editor chrome and dims all but the current block.
   context.subscriptions.push(
     vscode.commands.registerCommand("betterMarkdown.toggleZen", () => {

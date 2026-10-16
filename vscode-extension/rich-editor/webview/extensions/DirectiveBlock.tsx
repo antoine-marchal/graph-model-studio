@@ -39,7 +39,7 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
   const editable = editor.isEditable;
   const gmc = kind === "embed" && /\.(gmc|graphmodel)$/i.test(attrs.file ?? "");
   const extra = Object.entries(attrs).filter(
-    ([k]) => k !== "file" && k !== "lock" && !(gmc && (k === "view" || k === "theme")),
+    ([k]) => k !== "file" && k !== "lock" && !(gmc && (k === "view" || k === "theme")) && !(kind === "toc" && k === "heading" && attrs.heading === "false"),
   );
   // View names of the embedded .gmc (read by the host) for the dropdown.
   const [views, setViews] = useState<string[] | null>(null);
@@ -84,6 +84,17 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
             readOnly={!editable}
             onChange={(e) => updateAttributes({ open: setDirectiveAttr(open, "file", e.target.value) })}
           />
+        )}
+        {kind === "toc" && (
+          <label className="directive-param" title="Heading above the table of contents (text: Markdown settings → Table of contents)">
+            <input
+              type="checkbox"
+              checked={!/^(false|no|off|0)$/i.test(attrs.heading ?? "")}
+              disabled={!editable}
+              onChange={(e) => updateAttributes({ open: setDirectiveAttr(open, "heading", e.target.checked ? null : "false") })}
+            />
+            heading
+          </label>
         )}
         {gmc && (
           <>

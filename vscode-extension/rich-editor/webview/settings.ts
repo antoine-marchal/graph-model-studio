@@ -100,6 +100,21 @@ export interface BetterMarkdownSettings {
   outlineStyle: "rail" | "panel" | "off";
   /** Vertical position of table cell content (markdown has no syntax for it). */
   tableVerticalAlign: "top" | "middle" | "bottom";
+
+  // --- generated tables of contents (`<!-- embed:toc -->`) ---
+  /** Add a heading above generated TOCs (per block: `heading="false"`). */
+  tocHeading: boolean;
+  /** Text of that heading. */
+  tocHeadingText: string;
+
+  /** HTML / PDF / PNG export colors: light on no background, or as in the editor. */
+  exportTheme: "light" | "editor";
+
+  /**
+   * Folder for .gmc files created by a GMC block's "to file": relative to the
+   * document, `${workspaceFolder}/…`, or absolute. "" = next to the document.
+   */
+  gmcFolder: string;
 }
 
 export const LAYOUT_LIMITS = {
@@ -159,6 +174,10 @@ export const DEFAULT_SETTINGS: BetterMarkdownSettings = {
   lineNumbers: false,
   outlineStyle: "rail",
   tableVerticalAlign: "top",
+  tocHeading: true,
+  tocHeadingText: "Table of content",
+  exportTheme: "light",
+  gmcFolder: "",
 };
 
 /**
@@ -192,6 +211,10 @@ export const SETTING_KEYS: (keyof BetterMarkdownSettings)[] = [
   "lineNumbers",
   "outlineStyle",
   "tableVerticalAlign",
+  "tocHeading",
+  "tocHeadingText",
+  "exportTheme",
+  "gmcFolder",
 ];
 
 /**
@@ -209,6 +232,7 @@ export function mergeSettings(
   if (!["rail", "panel", "off"].includes(merged.outlineStyle)) {
     merged.outlineStyle = DEFAULT_SETTINGS.outlineStyle;
   }
+  if (!["light", "editor"].includes(merged.exportTheme)) merged.exportTheme = DEFAULT_SETTINGS.exportTheme;
   if (!["top", "middle", "bottom"].includes(merged.tableVerticalAlign)) {
     merged.tableVerticalAlign = DEFAULT_SETTINGS.tableVerticalAlign;
   }

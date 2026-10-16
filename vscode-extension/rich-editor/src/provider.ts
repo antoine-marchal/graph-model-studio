@@ -62,6 +62,16 @@ async function writeSettings(next: Record<string, unknown>): Promise<void> {
   }
 }
 
+/** Folder for .gmc files extracted from `document` (markdownStudio.gmcFolder). */
+function gmcFolder(document: vscode.TextDocument): vscode.Uri {
+  const docDir = path.dirname(document.uri.fsPath);
+  const setting = vscode.workspace.getConfiguration(CONFIG_NAMESPACE, document.uri).get<string>("gmcFolder", "").trim();
+  if (!setting) return vscode.Uri.file(docDir);
+  const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath ?? docDir;
+  const expanded = setting.replace(/\$\{workspaceFolder\}/g, root);
+  return vscode.Uri.file(path.resolve(docDir, expanded));
+}
+
 export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
   constructor(readonly context: vscode.ExtensionContext) {
     this.context.subscriptions.push(
@@ -83,6 +93,32 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
 
   private activeWebview: vscode.Webview | null = null;
   private openWebviews = new Set<vscode.Webview>();
+  /** Most recently focused rich editor webview per document URI. */
+  private webviewByUri = new Map<string, vscode.Webview>();
+  private snapshotSequence = 0;
+  private readonly pendingSnapshots = new Map<string, (html: string | undefined) => void>();
+
+  /**
+   * The rendered document of an open rich editor for `uri` as standalone
+   * HTML (see webview/exportSnapshot.ts), or undefined when none is open.
+   */
+  async exportSnapshot(uri: vscode.Uri): Promise<string | undefined> {
+    const webview = this.webviewByUri.get(uri.toString());
+    if (!webview) return undefined;
+    const requestId = `snapshot-${++this.snapshotSequence}`;
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this.pendingSnapshots.delete(requestId);
+        resolve(undefined);
+      }, 30_000);
+      this.pendingSnapshots.set(requestId, (html) => {
+        clearTimeout(timeout);
+        resolve(html);
+      });
+      const theme = vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<string>("exportTheme", "light");
+      void webview.postMessage({ type: "exportSnapshot", requestId, theme });
+    });
+  }
 
   openSearch() {
     this.activeWebview?.postMessage({ type: "openSearch" });
@@ -340,8 +376,10 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         // relative path for the embed directive.
         let file: string | undefined;
         try {
+          const folder = gmcFolder(document);
+          await vscode.workspace.fs.createDirectory(folder);
           const target = await vscode.window.showSaveDialog({
-            defaultUri: vscode.Uri.joinPath(document.uri, "..", path.basename(String(msg.name || "diagram.gmc"))),
+            defaultUri: vscode.Uri.joinPath(folder, path.basename(String(msg.name || "diagram.gmc"))),
             filters: { "Graph Model": ["gmc"] },
             saveLabel: "Create and embed",
           });
@@ -400,6 +438,14 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
             `Markdown Studio: ${command} failed: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+      } else if (msg.type === "exportSnapshotResult") {
+        const pending = this.pendingSnapshots.get(String(msg.requestId));
+        if (!pending) return;
+        this.pendingSnapshots.delete(String(msg.requestId));
+        if (typeof msg.html !== "string" && msg.error) {
+          vscode.window.showWarningMessage(`Markdown Studio: rendered export unavailable (${msg.error}); using the Markdown renderer.`);
+        }
+        pending(typeof msg.html === "string" ? msg.html : undefined);
       } else if (msg.type === "gmcRenderPngResult") {
         const pending = this.pendingPngs.get(String(msg.requestId));
         if (!pending) return;
@@ -501,6 +547,8 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
     webview.html = this.getHtmlForWebview(webview);
 
     // Track active webview for search command
+    const uriKey = document.uri.toString();
+    this.webviewByUri.set(uriKey, webview);
     if (webviewPanel.active) {
       this.activeWebview = webview;
       this.activeDocUri = document.uri;
@@ -509,6 +557,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
       if (webviewPanel.active) {
         this.activeWebview = webview;
         this.activeDocUri = document.uri;
+        this.webviewByUri.set(uriKey, webview);
       }
     });
 
@@ -533,6 +582,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
       msgDisposable.dispose();
       docChangeDisposable.dispose();
       this.openWebviews.delete(webview);
+      if (this.webviewByUri.get(uriKey) === webview) this.webviewByUri.delete(uriKey);
     });
   }
 

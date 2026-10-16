@@ -42,6 +42,14 @@ async function getMermaid(): Promise<any> {
   return mermaidLoadPromise;
 }
 
+/** SVG of `source` in a given mermaid theme (export); an `%%{init}%%` in the source wins. */
+export async function renderMermaidSvg(source: string, theme: string): Promise<string> {
+  const mermaid = await getMermaid();
+  const text = /%%\{\s*init/.test(source) ? source : `%%{init: {"theme": "${theme}"}}%%\n${source}`;
+  const id = `mermaid-export-${Math.random().toString(36).slice(2, 10)}`;
+  return (await mermaid.render(id, text)).svg;
+}
+
 function MermaidBlockView({ node }: any) {
   const source = node.textContent as string;
   const [svg, setSvg] = useState<string>("");

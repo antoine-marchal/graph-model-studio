@@ -8,6 +8,7 @@ const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const MarkdownIt = require('markdown-it')
 const { MarkdownEmbedder } = require('../../markdown-code-embedder/embedder')
+const { PANDOC_FROM, prepareReferenceDoc, writeDocxFilter } = require('./docx')
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false })
 
@@ -133,7 +134,7 @@ async function replaceGmcFencesWithFiles(source, renderer, outputDirectory) {
 function documentHtml(title, body, dark) {
   const colors = dark
     ? 'color:#d4d4d4;background:#1e1e1e;--border:#444;--code:#2b2b2b;--link:#4daafc'
-    : 'color:#24292f;background:#fff;--border:#d0d7de;--code:#f6f8fa;--link:#0969da'
+    : 'color:#24292f;background:transparent;--border:#d0d7de;--code:#f6f8fa;--link:#0969da'
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(title)}</title><style>
 @page{margin:18mm}*{box-sizing:border-box}body{${colors};font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;max-width:1100px;margin:0 auto;padding:32px}a{color:var(--link)}img{max-width:100%;height:auto}h1,h2{border-bottom:1px solid var(--border);padding-bottom:.3em}pre{background:var(--code);padding:16px;overflow:auto;border-radius:6px}code{background:var(--code);padding:.15em .35em;border-radius:3px}pre code{padding:0}blockquote{border-left:4px solid var(--border);margin-left:0;padding-left:16px}table{border-collapse:collapse;width:max-content;max-width:100%;margin:16px 0}th,td{border:1px solid var(--border);padding:6px 13px}th{background:var(--code)}.gmc-export-diagram{margin:24px 0;text-align:center}.gmc-export-diagram img{display:block;margin:auto}@media print{body{max-width:none;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>${body}</body></html>`
@@ -154,8 +155,23 @@ async function prepareExportSource(document, embedLinks = false) {
   return embedder.expandNestedMarkdown(document.getText(), document.fileName, new Set([document.fileName]), document.fileName)
 }
 
+/** What the rich editor shows for `document`, when one has it open. Linked
+ *  files can't be expanded there, so that mode uses the Markdown renderer. */
+async function richEditorSnapshot(document, embedLinks) {
+  if (embedLinks) return undefined
+  try {
+    const html = await vscode.commands.executeCommand('betterMarkdown.exportSnapshot', document.uri)
+    return typeof html === 'string' ? html : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function renderMarkdownDocument(context, document, embedLinks = false) {
-  const dark = vscode.window.activeColorTheme.kind !== vscode.ColorThemeKind.Light
+  const snapshot = await richEditorSnapshot(document, embedLinks)
+  if (snapshot) return snapshot
+  const dark = vscode.workspace.getConfiguration('markdownStudio').get('exportTheme', 'light') === 'editor'
+    && vscode.window.activeColorTheme.kind !== vscode.ColorThemeKind.Light
     && vscode.window.activeColorTheme.kind !== vscode.ColorThemeKind.HighContrastLight
   let renderer
   try {
@@ -321,8 +337,12 @@ async function exportDocx(context) {
       }
       fs.writeFileSync(input, source, 'utf8')
       const resourcePath = [path.dirname(document.fileName), temporaryDirectory].join(path.delimiter)
-      const args = [input, `--output=${target.fsPath}`, '--from=gfm+raw_html', '--standalone', `--resource-path=${resourcePath}`]
-      if (referenceDoc) args.push(`--reference-doc=${referenceDoc}`)
+      const reference = await prepareReferenceDoc(pandoc, referenceDoc, temporaryDirectory, runProcess)
+      const args = [
+        input, `--output=${target.fsPath}`, `--from=${PANDOC_FROM}`, '--standalone',
+        `--resource-path=${resourcePath}`, `--reference-doc=${reference}`,
+        `--lua-filter=${writeDocxFilter(temporaryDirectory)}`,
+      ]
       await runProcess(pandoc, args)
     } finally {
       renderer?.dispose()

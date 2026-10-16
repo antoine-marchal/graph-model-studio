@@ -74,10 +74,18 @@ class MarkdownEmbedder {
         // Nest by relative heading order, not absolute level: `#`, `##`,
         // `#####` lists as depth 0, 1, 2 (skipped levels don't add indent).
         const levelStack = [];
+        // Headings inside generated TOCs (their own title) are not listed.
+        const tocRanges = [];
+        const tocRegex = /<!--\s*(?:embed|link):toc\b[\s\S]*?-->[\s\S]*?<!--\s*(?:embed|link):toc:end\s*-->/gi;
+        let toc;
+        while ((toc = tocRegex.exec(text)) !== null)
+            tocRanges.push([toc.index, toc.index + toc[0].length]);
         const headingRegex = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
         let match;
         while ((match = headingRegex.exec(text)) !== null) {
             if ((0, utils_1.isInCodeFence)(match.index, fenceRanges))
+                continue;
+            if (tocRanges.some(([start, end]) => match.index > start && match.index < end))
                 continue;
             const level = match[1].length;
             if (level < minLevel || level > maxLevel)
@@ -102,7 +110,22 @@ class MarkdownEmbedder {
             entries.push(`${'  '.repeat(levelStack.length)}- [${label}](#${slug})`);
             levelStack.push(level);
         }
-        return `\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
+        const title = this.tocTitle(document, attributes);
+        const heading = title ? `\n\n## ${title}` : '';
+        return `${heading}\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
+    }
+    /** Heading above a TOC: `heading="false"` / `heading="Text"` on the
+     *  directive, else `markdownStudio.tocHeading` + `tocHeadingText`. */
+    tocTitle(document, attributes) {
+        const attr = attributes['heading'];
+        const config = vscode.workspace.getConfiguration('markdownStudio', document.uri);
+        if (attr !== undefined && /^(false|no|off|0)$/i.test(attr))
+            return '';
+        if (attr !== undefined && attr.trim() && !/^(true|yes|on|1)$/i.test(attr))
+            return attr.trim();
+        if (attr === undefined && !config.get('tocHeading', true))
+            return '';
+        return String(config.get('tocHeadingText', 'Table of content')).trim();
     }
     indentReplacement(content, text, index) {
         if (content === null) return null;

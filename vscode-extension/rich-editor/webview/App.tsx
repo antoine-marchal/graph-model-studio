@@ -8,6 +8,7 @@ import { BlockHandle } from "./components/BlockHandle";
 import { TableFilterMenu } from "./components/TableFilterMenu";
 import { sliceToTsv, tsvToTableSlice } from "./extensions/TableFilter";
 import { contentExtensions } from "./editorExtensions";
+import "./exportSnapshot";
 import { CellSelection } from "@tiptap/pm/tables";
 import { StickyHeadings } from "./components/StickyHeadings";
 import { TableOfContents } from "./components/TableOfContents";

@@ -162,6 +162,62 @@ export function SettingsPanel({
           </section>
 
           <section>
+            <h3>Table of contents</h3>
+
+            <Toggle
+              label="Heading above tables of contents"
+              description="Generated TOCs start with a heading. Per block: the TOC card's heading checkbox."
+              checked={settings.tocHeading}
+              onChange={(v) => set("tocHeading", v)}
+            />
+            <Row label="Heading text">
+              <input
+                type="text"
+                className="settings-input"
+                value={settings.tocHeadingText}
+                placeholder="Table of content"
+                disabled={!settings.tocHeading}
+                onChange={(e) => set("tocHeadingText", e.target.value)}
+              />
+            </Row>
+            <div className="settings-hint">
+              Applied when tables of contents are regenerated (refresh or save).
+            </div>
+          </section>
+
+          <section>
+            <h3>Export (HTML / PDF / PNG)</h3>
+
+            <Row label="Colors">
+              <Segmented
+                value={settings.exportTheme}
+                options={[
+                  { value: "light", label: "Light, no background" },
+                  { value: "editor", label: "As in the editor" },
+                ]}
+                onChange={(v) => set("exportTheme", v as "light" | "editor")}
+              />
+            </Row>
+          </section>
+
+          <section>
+            <h3>GMC diagrams</h3>
+
+            <Row label="Folder for new .gmc files">
+              <input
+                type="text"
+                className="settings-input"
+                value={settings.gmcFolder}
+                placeholder="(next to the document) e.g. diagrams"
+                onChange={(e) => set("gmcFolder", e.target.value)}
+              />
+            </Row>
+            <div className="settings-hint">
+              Where a GMC block's "to file" creates its file: relative to the document, <code>{"${workspaceFolder}/…"}</code>, or absolute.
+            </div>
+          </section>
+
+          <section>
             <h3>Saving</h3>
 
             <Toggle

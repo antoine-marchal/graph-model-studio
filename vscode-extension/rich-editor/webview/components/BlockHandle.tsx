@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { NodeSelection } from "@tiptap/pm/state";
-import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
+import type { Node as PMNode } from "@tiptap/pm/model";
+import { AlignCenter, AlignLeft, AlignRight, ArrowDown, ArrowUp, Columns3, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import { HIGHLIGHT_COLORS, blockAlign, highlightBlockTr, setBlockAlignTr, type BlockAlign } from "../extensions/BlockStyle";
 
 /**
@@ -11,13 +12,20 @@ import { HIGHLIGHT_COLORS, blockAlign, highlightBlockTr, setBlockAlignTr, type B
  *   - `+` inserts an empty paragraph below (type `/` for the block menu);
  *   - dragging the grip moves the block (ProseMirror drop handling);
  *   - clicking the grip opens Delete / Duplicate / Move up / Move down.
+ * Inside a columns layout the handle targets the block under the pointer in
+ * its column; the menu's "Columns layout" switches to the layout itself.
  */
 
 interface Target {
+  /** Index in the parent (the doc, or a column). */
   index: number;
   pos: number;
+  /** Position of the parent column, -1 for the doc. */
+  parentPos: number;
   top: number;
   left: number;
+  /** The columns layout holding this block, if any. */
+  outer?: Target;
 }
 
 export function BlockHandle({ editor, containerRef, gutter = 0 }: {
@@ -31,34 +39,63 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
   const menuRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<HTMLDivElement>(null);
 
-  /** Top-level block whose vertical extent contains clientY. */
+  /** Block under the pointer: top-level by clientY, then inside columns by clientX. */
   const locate = useCallback(
-    (clientY: number): Target | null => {
+    (clientX: number, clientY: number): Target | null => {
       const container = containerRef.current;
       if (!container) return null;
       const { view } = editor;
       const base = container.getBoundingClientRect();
-      const rootRect = view.dom.getBoundingClientRect();
-      let found: Target | null = null;
-      view.state.doc.forEach((_node, offset, index) => {
-        if (found) return;
-        const dom = view.nodeDOM(offset) as HTMLElement | null;
-        if (!dom || dom.nodeType !== 1) return;
-        const rect = dom.getBoundingClientRect();
-        const style = getComputedStyle(dom);
-        const marginTop = parseFloat(style.marginTop) || 0;
-        const marginBottom = parseFloat(style.marginBottom) || 0;
-        if (clientY >= rect.top - marginTop && clientY <= rect.bottom + marginBottom) {
+      const handleLeft = (el: HTMLElement) =>
+        el.getBoundingClientRect().left - base.left + (parseFloat(getComputedStyle(el).paddingLeft) || 0) - 52;
+
+      const find = (parent: PMNode, parentPos: number, left: number, outer?: Target): Target | null => {
+        const start = parentPos + 1;
+        let found: Target | null = null;
+        let above: Target | null = null;
+        for (let index = 0, offset = 0; index < parent.childCount && !found; offset += parent.child(index).nodeSize, index++) {
+          const pos = start + offset;
+          const dom = view.nodeDOM(pos) as HTMLElement | null;
+          if (!dom || dom.nodeType !== 1) continue;
+          const rect = dom.getBoundingClientRect();
+          const style = getComputedStyle(dom);
           const lineHeight = parseFloat(style.lineHeight) || 24;
-          found = {
+          const t: Target = {
             index,
-            pos: offset,
+            pos,
+            parentPos,
             top: rect.top - base.top + container.scrollTop + Math.max(0, (Math.min(lineHeight, rect.height) - 24) / 2),
-            left: rootRect.left - base.left + (parseFloat(getComputedStyle(view.dom).paddingLeft) || 0) - 52 - gutter,
+            left,
+            outer,
           };
+          if (rect.top <= clientY) above = t;
+          const marginTop = parseFloat(style.marginTop) || 0;
+          const marginBottom = parseFloat(style.marginBottom) || 0;
+          if (clientY >= rect.top - marginTop && clientY <= rect.bottom + marginBottom) found = t;
         }
-      });
-      return found;
+        // Below the end of a short column: its last block.
+        const hit = found ?? (outer ? above : null);
+        if (!hit) return null;
+        const node = view.state.doc.nodeAt(hit.pos);
+        if (node?.type.name !== "columns") return hit;
+        // The column under clientX (the last one starting left of it).
+        let colPos = -1;
+        let colDom: HTMLElement | null = null;
+        for (let i = 0, offset = 0; i < node.childCount; offset += node.child(i).nodeSize, i++) {
+          const pos = hit.pos + 1 + offset;
+          const dom = view.nodeDOM(pos) as HTMLElement | null;
+          if (!dom || dom.nodeType !== 1) continue;
+          if (!colDom || clientX >= dom.getBoundingClientRect().left) {
+            colPos = pos;
+            colDom = dom;
+          }
+        }
+        const column = colDom ? view.state.doc.nodeAt(colPos) : null;
+        if (!column || !colDom) return hit;
+        return find(column, colPos, handleLeft(colDom), hit) ?? hit;
+      };
+
+      return find(view.state.doc, -1, handleLeft(view.dom) - gutter);
     },
     [editor, containerRef, gutter],
   );
@@ -69,7 +106,7 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
     const onMove = (e: MouseEvent) => {
       if (menuOpen || !editor.isEditable) return;
       if (handleRef.current?.contains(e.target as Node)) return;
-      const next = locate(e.clientY);
+      const next = locate(e.clientX, e.clientY);
       // Keep the handle while the pointer travels from the block to it.
       if (next) setTarget(next);
     };
@@ -114,8 +151,9 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
   if (!target || !editor.isEditable) return null;
 
   const { doc } = editor.state;
-  if (target.index >= doc.childCount) return null;
-  const node = doc.child(target.index);
+  const parent = target.parentPos < 0 ? doc : doc.nodeAt(target.parentPos);
+  if (!parent || target.index >= parent.childCount) return null;
+  const node = parent.child(target.index);
   const end = target.pos + node.nodeSize;
 
   const act = (fn: () => void) => {
@@ -128,7 +166,8 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
   const remove = () =>
     act(() => {
       const { tr, schema } = editor.state;
-      if (doc.childCount === 1) tr.replaceWith(0, doc.content.size, schema.nodes.paragraph.create());
+      // A container (doc, column) keeps at least one block.
+      if (parent.childCount === 1) tr.replaceWith(target.pos, end, schema.nodes.paragraph.create());
       else tr.delete(target.pos, end);
       editor.view.dispatch(tr);
     });
@@ -138,8 +177,8 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
   const move = (dir: -1 | 1) =>
     act(() => {
       const neighbourIndex = target.index + dir;
-      if (neighbourIndex < 0 || neighbourIndex >= doc.childCount) return;
-      const neighbour = doc.child(neighbourIndex);
+      if (neighbourIndex < 0 || neighbourIndex >= parent.childCount) return;
+      const neighbour = parent.child(neighbourIndex);
       const tr = editor.state.tr.delete(target.pos, end);
       tr.insert(dir < 0 ? target.pos - neighbour.nodeSize : target.pos + neighbour.nodeSize, node);
       editor.view.dispatch(tr);
@@ -200,9 +239,14 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
           <button role="menuitem" onClick={() => move(-1)} disabled={target.index === 0}>
             <ArrowUp size={13} /> Move up
           </button>
-          <button role="menuitem" onClick={() => move(1)} disabled={target.index >= doc.childCount - 1}>
+          <button role="menuitem" onClick={() => move(1)} disabled={target.index >= parent.childCount - 1}>
             <ArrowDown size={13} /> Move down
           </button>
+          {target.outer && (
+            <button role="menuitem" onClick={() => setTarget(target.outer!)} title="Move, duplicate or delete the whole columns layout">
+              <Columns3 size={13} /> Columns layout…
+            </button>
+          )}
           <div className="block-handle-menu-title">align</div>
           <div className="block-handle-menu-row">
             {(["left", "center", "right"] as BlockAlign[]).map((a) => (

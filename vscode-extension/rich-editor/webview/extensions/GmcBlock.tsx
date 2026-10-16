@@ -240,6 +240,11 @@ window.addEventListener("message", (e) => {
       (err) => vscodeApi.postMessage({ type: "gmcRenderPngResult", requestId, error: err instanceof Error ? err.message : String(err) }),
     );
 });
+/** PNG data URL of a GMC model (export re-renders dark diagrams light). */
+export function renderGmcPng(options: { source: string; view?: string; theme?: string; width?: number; height?: number }): Promise<string> {
+  return loadRuntime().then((runtime) => runtime.renderPng(options));
+}
+
 let runtimePromise: Promise<GmcRuntime> | null = null;
 
 function loadRuntime(): Promise<GmcRuntime> {

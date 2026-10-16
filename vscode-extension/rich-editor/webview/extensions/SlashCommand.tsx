@@ -7,8 +7,9 @@ import { vscodeApi } from "../vscode-api";
 import {
   Heading1, Heading2, Heading3, Heading4, Heading5, Heading6,
   List, ListOrdered, CheckSquare, Code, Quote, Minus, Table, ImageIcon, Type,
-  Sigma, Workflow, FileText, Network, FileInput, Link2, ListTree,
+  Sigma, Workflow, FileText, Network, FileInput, Link2, ListTree, Columns2, Columns3,
 } from "lucide-react";
+import { insertColumns } from "./BlockStyle";
 
 interface SlashItem {
   title: string;
@@ -27,6 +28,8 @@ const ITEMS: SlashItem[] = [
   { title: "Bullet List", icon: <List size={16} />, command: (e) => e.chain().focus().toggleBulletList().run() },
   { title: "Numbered List", icon: <ListOrdered size={16} />, command: (e) => e.chain().focus().toggleOrderedList().run() },
   { title: "Task List", icon: <CheckSquare size={16} />, command: (e) => e.chain().focus().toggleTaskList().run() },
+  { title: "2 Columns", icon: <Columns2 size={16} />, command: (e) => insertColumns(e, 2) },
+  { title: "3 Columns", icon: <Columns3 size={16} />, command: (e) => insertColumns(e, 3) },
   { title: "Code Block", icon: <Code size={16} />, command: (e) => e.chain().focus().toggleCodeBlock().run() },
   { title: "Blockquote", icon: <Quote size={16} />, command: (e) => e.chain().focus().toggleBlockquote().run() },
   { title: "Horizontal Rule", icon: <Minus size={16} />, command: (e) => e.chain().focus().setHorizontalRule().run() },

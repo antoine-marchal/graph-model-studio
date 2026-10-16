@@ -103,6 +103,15 @@ Grouping (`remarkGroupDirectives` / `rehypeUnwrapDirectives` in conversion-utils
 
 -   Toolkit directive + generated content + end marker → `directiveGroup` → `<div data-type="directive" data-open data-close>` → `DirectiveBlock` card.
 -   `<div align="x">` … `</div>` (blank lines around the content) → `alignGroup` → `AlignBlock`. Other standalone `<div>`s pair but stay raw.
+-   `<div class="ms-columns" …>` holding `<div class="ms-column" …>` divs (`COLUMNS_OPEN` / `COLUMN_OPEN`, inline flex styles so other renderers show columns) → `columnsGroup` / `columnGroup` → `Columns` / `Column` nodes (slash menu "2 Columns" / "3 Columns").
+
+## Export (HTML / PDF / PNG)
+
+`markdownToolkit.export*` first asks `betterMarkdown.exportSnapshot` for the open rich editor's rendering (`webview/exportSnapshot.ts`): the ProseMirror DOM minus editing chrome, inside shallow copies of its ancestors, with all stylesheets, VS Code theme variables, images and woff2 fonts inlined. No rich editor open, or "embed linked file contents" chosen → the markdown-it renderer in `integrations/markdown-toolkit/source/export.js`. Strip new node-view chrome by adding its selector to `CHROME` (or `data-export-ignore`).
+
+`markdownStudio.exportTheme` = `light` (default): `github-light` (or the user's light theme) on a transparent page, VS Code's color variables dropped, dark Mermaid / GMC diagrams redrawn light. Block frames (directive cards, diagram boxes, column outlines) are always flattened.
+
+DOCX (`integrations/markdown-toolkit/source/docx.js`): Pandoc `markdown` reader (+`gfm_auto_identifiers` so TOC links hit headings) with a Lua filter — columns → one-row "Columns" table, `<div align>` → "Center"/"Right" paragraph styles, `<mark>` → "Highlight <Color>", raw HTML re-read by Pandoc's HTML reader, `> [!NOTE]` labels. The reference DOCX (user template or Pandoc's default) gets those styles added when missing; without a template the default "Table" style also gets a grid.
 -   Inline `<mark data-color>` … `</mark>` → `highlight` → `Highlight` mark; written back by `rehypeRemarkHandlers.mark`.
 -   A table followed by `<!-- ms-table:cols=…;rows=… -->` gets cell `colwidth` / row `data-height` (column/row resizing); the comment is re-emitted after the table on save.
 -   `RawHtmlBlock` hides tool metadata comments (`<!-- key:value -->`, `isMetaComment`).

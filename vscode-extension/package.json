@@ -632,6 +632,32 @@
             "order": 65,
             "markdownDescription": "Font family for body text in the rich editor (e.g. `Inter`, `Georgia, serif`). Empty keeps the theme font. Code keeps the editor's monospace font."
           },
+          "markdownStudio.tocHeading": {
+            "type": "boolean",
+            "default": true,
+            "order": 66,
+            "markdownDescription": "Add a heading above generated tables of contents (`<!-- embed:toc -->`). Override per block with `heading=\"false\"` or `heading=\"Custom title\"`."
+          },
+          "markdownStudio.exportTheme": {
+            "type": "string",
+            "enum": ["light", "editor"],
+            "enumDescriptions": ["Light theme on a transparent page (default).", "The rich editor's current theme and background."],
+            "default": "light",
+            "order": 68,
+            "markdownDescription": "Colors of HTML / PDF / PNG exports made from the rich editor."
+          },
+          "markdownStudio.gmcFolder": {
+            "type": "string",
+            "default": "",
+            "order": 69,
+            "markdownDescription": "Folder where a GMC block's **to file** creates the `.gmc` file: relative to the Markdown document (e.g. `diagrams`), `${workspaceFolder}/…`, or absolute. Empty: next to the document. Created if missing."
+          },
+          "markdownStudio.tocHeadingText": {
+            "type": "string",
+            "default": "Table of content",
+            "order": 67,
+            "markdownDescription": "Text of the heading added above generated tables of contents."
+          },
           "markdownStudio.lineNumbers": {
             "type": "boolean",
             "default": false,
@@ -827,7 +853,7 @@
     "build:rich-editor": "node ./rich-editor/esbuild.mjs",
     "watch:rich-editor": "node ./rich-editor/esbuild.mjs --watch",
     "test:rich-editor": "tsx rich-editor/test/test-conversions.ts && tsx rich-editor/test/test-roundtrip.ts",
-    "test": "node --test tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs && pnpm run test:rich-editor",
+    "test": "node --test tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/docx-export.test.cjs && pnpm run test:rich-editor",
     "build:all": "pnpm run build:source && pnpm run build"
   },
   "devDependencies": {

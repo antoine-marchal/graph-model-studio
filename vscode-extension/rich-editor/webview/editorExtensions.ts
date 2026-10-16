@@ -16,7 +16,7 @@ import { MermaidBlock } from "./extensions/MermaidBlock";
 import { GmcBlock } from "./extensions/GmcBlock";
 import { RawHtmlBlock } from "./extensions/RawHtmlBlock";
 import { DirectiveBlock } from "./extensions/DirectiveBlock";
-import { AlignBlock, Highlight, Hashtags } from "./extensions/BlockStyle";
+import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/BlockStyle";
 import { TableFilter } from "./extensions/TableFilter";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
 
@@ -50,6 +50,8 @@ export function contentExtensions() {
     RawHtmlBlock,
     DirectiveBlock,
     AlignBlock,
+    Columns,
+    Column,
     Highlight,
     Hashtags,
     TableFilter,
