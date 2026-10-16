@@ -5,9 +5,9 @@ import { NodeIcon, ICON_KINDS } from './NodeIcons'
  *  glyph), a typed emoji/symbol, or else an image path/URL. */
 export const GLYPH_PREFIX = 'glyph:'
 
-// Bundled bitmap glyphs, keyed by file name without extension. The app and
-// VS Code webview builds emit them as separate files (see `assetsInlineLimit`
-// in their Vite configs); the IIFE Markdown runtime has no base URL and inlines them.
+// Bundled bitmap glyphs, keyed by file name without extension. The desktop app
+// emits them as separate files; the VS Code builds inline them (see
+// `assetsInlineLimit` in the Vite configs) so webview PNG export can embed them.
 const BITMAP_GLYPHS: Record<string, string> = Object.fromEntries(
   Object.entries(import.meta.glob<string>('../../../assets/glyphs/*.png', { eager: true, query: '?url', import: 'default' }))
     .map(([path, url]) => [path.slice(path.lastIndexOf('/') + 1, -'.png'.length), url]),

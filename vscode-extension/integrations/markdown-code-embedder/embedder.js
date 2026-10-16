@@ -20,6 +20,15 @@ const REGION_MARKER_REGEX = /^\s*(?:\/\/|--|#|<!--|\/\*)\s*#(?:region|endregion)
 class MarkdownEmbedder {
     constructor() {
         this.endMarkers = new WeakMap();
+        /** Set by save-triggered updates: rendering a .gmc PNG needs the visible
+         *  graph panel, so those leave changed diagrams stale unless
+         *  `gmc.export.renderOnSave` opts in. */
+        this.onSave = false;
+        /** Optional (sourceUri, pngUri, view, theme) => Promise renderer; the rich
+         *  editor renders in its own webview instead of the graph panel. */
+        this.renderGmcPng = undefined;
+        /** Embeds that failed in the last run: { file, message }. */
+        this.errors = [];
         this.embedRegex = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
         this.endEmbedRegex = /<!--\s*(?:embed|link):end\s*-->/;
     }
@@ -107,6 +116,7 @@ class MarkdownEmbedder {
         });
     }
     generateEdits(document, onlyIndex) {
+        this.errors = [];
         return (0, utils_1.withSourceReads)(() => this._generateEdits(document, onlyIndex));
     }
     _generateEdits(document, onlyIndex) {
@@ -320,13 +330,13 @@ class MarkdownEmbedder {
                     const sourceHash = crypto.createHash('sha256').update(hashInput, 'utf8').digest('hex');
                     const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
                     if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
-                        yield vscode.commands.executeCommand(
-                            'gmc.renderFilePng',
-                            vscode.Uri.file(embedResult.resolvedPath),
-                            vscode.Uri.file(pngPath),
-                            requestedView,
-                            requestedTheme,
-                        );
+                        if (this.onSave && !vscode.workspace.getConfiguration('gmc.export').get('renderOnSave', false)) {
+                            return null; // stays stale until an explicit "Update embeds"
+                        }
+                        const renderArgs = [vscode.Uri.file(embedResult.resolvedPath), vscode.Uri.file(pngPath), requestedView, requestedTheme];
+                        yield (this.renderGmcPng
+                            ? this.renderGmcPng(...renderArgs)
+                            : vscode.commands.executeCommand('gmc.renderFilePng', ...renderArgs));
                     }
                     const imagePath = (0, markdown_paths_1.rebaseRelativePath)(
                         `./${path.basename(pngPath)}`,
@@ -351,6 +361,7 @@ class MarkdownEmbedder {
             }
             catch (error) {
                 if (this.expandLinkEmbeds) throw error;
+                this.errors.push({ file: attributes['file'], message: error.message });
                 console.error(`Error building embed content for ${attributes['file']}: ${error.message}`);
                 return null;
             }

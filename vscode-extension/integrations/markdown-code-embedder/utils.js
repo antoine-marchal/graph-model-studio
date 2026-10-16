@@ -185,7 +185,11 @@ exports.readSource = (document, file) => {
     if (cache?.has(key)) return cache.get(key);
     const result = (async () => {
         const resolvedPath = isUrl(file) ? file : await resolveFilePath(document, file);
-        const content = isUrl(file) ? await fetchUrl(file) : await fs.promises.readFile(resolvedPath, 'utf-8');
+        // An open editor's buffer wins over disk, so unsaved source edits embed too.
+        const norm = p => process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p);
+        const open = isUrl(file) ? undefined : vscode.workspace.textDocuments?.find(
+            doc => doc.uri.scheme === 'file' && norm(doc.uri.fsPath) === norm(resolvedPath));
+        const content = isUrl(file) ? await fetchUrl(file) : open ? open.getText() : await fs.promises.readFile(resolvedPath, 'utf-8');
         return { resolvedPath, content };
     })();
     cache?.set(key, result);

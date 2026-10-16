@@ -5739,7 +5739,11 @@ var require_utils = __commonJS({
       if (cache?.has(key)) return cache.get(key);
       const result = (async () => {
         const resolvedPath = isUrl(file) ? file : await resolveFilePath(document, file);
-        const content = isUrl(file) ? await fetchUrl(file) : await fs.promises.readFile(resolvedPath, "utf-8");
+        const norm = (p) => process.platform === "win32" ? path.resolve(p).toLowerCase() : path.resolve(p);
+        const open = isUrl(file) ? void 0 : vscode2.workspace.textDocuments?.find(
+          (doc) => doc.uri.scheme === "file" && norm(doc.uri.fsPath) === norm(resolvedPath)
+        );
+        const content = isUrl(file) ? await fetchUrl(file) : open ? open.getText() : await fs.promises.readFile(resolvedPath, "utf-8");
         return { resolvedPath, content };
       })();
       cache?.set(key, result);
@@ -5874,6 +5878,9 @@ var require_embedder = __commonJS({
     var MarkdownEmbedder = class {
       constructor() {
         this.endMarkers = /* @__PURE__ */ new WeakMap();
+        this.onSave = false;
+        this.renderGmcPng = void 0;
+        this.errors = [];
         this.embedRegex = /<!--\s*(?:embed|link):([^\s]+)(.*?)-->/g;
         this.endEmbedRegex = /<!--\s*(?:embed|link):end\s*-->/;
       }
@@ -5914,6 +5921,7 @@ var require_embedder = __commonJS({
         const maxLevel = Math.max(minLevel, Math.min(6, !isNaN(requestedDepth) ? minLevel + requestedDepth - 1 : isNaN(requestedMax) ? 6 : requestedMax));
         const duplicates = /* @__PURE__ */ new Map();
         const entries = [];
+        const levelStack = [];
         const headingRegex = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
         let match;
         while ((match = headingRegex.exec(text)) !== null) {
@@ -5929,7 +5937,10 @@ var require_embedder = __commonJS({
           const count = duplicates.get(baseSlug) || 0;
           duplicates.set(baseSlug, count + 1);
           const slug = count ? `${baseSlug}-${count}` : baseSlug;
-          entries.push(`${"  ".repeat(level - minLevel)}- [${label}](#${slug})`);
+          while (levelStack.length && levelStack[levelStack.length - 1] >= level)
+            levelStack.pop();
+          entries.push(`${"  ".repeat(levelStack.length)}- [${label}](#${slug})`);
+          levelStack.push(level);
         }
         return `
 
@@ -5947,6 +5958,7 @@ ${entries.join("\n")}${entries.length ? "\n\n" : ""}<!-- embed:toc:end -->`;
         });
       }
       generateEdits(document, onlyIndex) {
+        this.errors = [];
         return (0, utils_1.withSourceReads)(() => this._generateEdits(document, onlyIndex));
       }
       _generateEdits(document, onlyIndex) {
@@ -6133,21 +6145,21 @@ ${prefix}${endTag}`;
               }
             } else if (lang === "gmc" && !(0, utils_1.isUrl)(embedResult.resolvedPath)) {
               const requestedView = attributes["view"];
-              const viewSuffix = requestedView ? `-${requestedView.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "view"}` : "";
+              const requestedTheme = attributes["theme"] === "light" || attributes["theme"] === "dark" ? attributes["theme"] : void 0;
+              const viewSuffix = (requestedView ? `-${requestedView.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "view"}` : "") + (requestedTheme ? `-${requestedTheme}` : "");
               const pngPath = path.join(
                 path.dirname(embedResult.resolvedPath),
                 `${path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath))}${viewSuffix}.png`
               );
-              const hashInput = requestedView ? `${embedResult.content}\0view=${requestedView}` : embedResult.content;
+              const hashInput = embedResult.content + (requestedView ? `\0view=${requestedView}` : "") + (requestedTheme ? `\0theme=${requestedTheme}` : "");
               const sourceHash = crypto.createHash("sha256").update(hashInput, "utf8").digest("hex");
               const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
               if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
-                yield vscode2.commands.executeCommand(
-                  "gmc.renderFilePng",
-                  vscode2.Uri.file(embedResult.resolvedPath),
-                  vscode2.Uri.file(pngPath),
-                  requestedView
-                );
+                if (this.onSave && !vscode2.workspace.getConfiguration("gmc.export").get("renderOnSave", false)) {
+                  return null;
+                }
+                const renderArgs = [vscode2.Uri.file(embedResult.resolvedPath), vscode2.Uri.file(pngPath), requestedView, requestedTheme];
+                yield this.renderGmcPng ? this.renderGmcPng(...renderArgs) : vscode2.commands.executeCommand("gmc.renderFilePng", ...renderArgs);
               }
               const imagePath = (0, markdown_paths_1.rebaseRelativePath)(
                 `./${path.basename(pngPath)}`,
@@ -6175,6 +6187,7 @@ ${endTag}`;
             return newContent;
           } catch (error) {
             if (this.expandLinkEmbeds) throw error;
+            this.errors.push({ file: attributes["file"], message: error.message });
             console.error(`Error building embed content for ${attributes["file"]}: ${error.message}`);
             return null;
           }
@@ -6524,7 +6537,7 @@ var require_export = __commonJS({
         const script = webview.asWebviewUri(vscode2.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "webview.js"));
         const style = webview.asWebviewUri(vscode2.Uri.joinPath(this.context.extensionUri, "dist", "webview", "assets", "webview.css"));
         const nonce = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource}; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><div id="root"></div><script nonce="${nonce}" type="module" src="${script}"></script></body></html>`;
+        return `<!doctype html><html><head><meta charset="UTF-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} data: blob:; font-src ${webview.cspSource} data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><div id="root"></div><script nonce="${nonce}" type="module" src="${script}"></script></body></html>`;
       }
     };
     async function replaceGmcFences(source, renderer) {

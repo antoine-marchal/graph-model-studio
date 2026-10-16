@@ -1,7 +1,7 @@
 {
   "name": "graph-model-studio",
-  "displayName": "Graph Model Studio + Markdown Toolkit",
-  "description": "Full GMC tooling with live Markdown diagrams, recursive code/Markdown embeds, and rich-text paste as Markdown.",
+  "displayName": "Graph Model Studio + Markdown Studio",
+  "description": "GMC graph modeling with live diagrams, plus a Notion-like WYSIWYG Markdown editor: rich diffs, tables, math, frontmatter, embedded GMC diagrams, recursive code/Markdown embeds, paste-as-Markdown, HTML/PDF/PNG/DOCX export and slides.",
   "version": "3.8.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
@@ -10,14 +10,40 @@
   },
   "categories": [
     "Programming Languages",
-    "Visualization"
+    "Visualization",
+    "Formatters"
   ],
   "keywords": [
     "gmc",
     "graph",
     "diagram",
     "architecture",
-    "markdown"
+    "markdown",
+    "wysiwyg",
+    "editor",
+    "notion",
+    "rich text",
+    "rich diff",
+    "diff",
+    "md",
+    "rich editor",
+    "table",
+    "math",
+    "latex",
+    "katex",
+    "preview",
+    "documentation",
+    "notes",
+    "note-taking",
+    "gfm",
+    "writing",
+    "wiki",
+    "notion-like",
+    "rich text editor",
+    "live preview",
+    "knowledge base",
+    "readme",
+    "wysiwyg editor"
   ],
   "icon": "media/icon.png",
   "main": "./integrations/host.js",
@@ -42,51 +68,52 @@
     "onCommand:slides.exportHtml",
     "onCommand:slides.exportPdf",
     "onCommand:slides.exportPptx",
-    "onCommand:slides.exportPptxEditable"
+    "onCommand:slides.exportPptxEditable",
+    "onCustomEditor:betterMarkdown.editor",
+    "onCommand:betterMarkdown.openDiff"
   ],
   "contributes": {
-    "markdown.markdownItPlugins": true,
-    "markdown.previewScripts": [
-      "./dist/markdown-preview/preview.js"
-    ],
-    "languages": [
+    "customEditors": [
       {
-        "id": "gmc",
-        "aliases": [
-          "Graph Model Code",
-          "GMC"
+        "viewType": "betterMarkdown.editor",
+        "displayName": "Markdown Studio",
+        "selector": [
+          {
+            "filenamePattern": "*.md"
+          }
         ],
-        "extensions": [
-          ".gmc",
-          ".graphmodel"
-        ],
-        "configuration": "./language-configuration.json"
-      }
-    ],
-    "grammars": [
-      {
-        "language": "gmc",
-        "scopeName": "source.gmc",
-        "path": "./syntaxes/gmc.tmLanguage.json"
-      },
-      {
-        "scopeName": "markdown.gmc.codeblock",
-        "path": "./syntaxes/markdown-gmc.tmLanguage.json",
-        "injectTo": [
-          "text.html.markdown"
-        ],
-        "embeddedLanguages": {
-          "meta.embedded.block.gmc": "gmc"
-        }
+        "priority": "default"
       }
     ],
     "commands": [
       {
+        "command": "betterMarkdown.toggleEditor",
+        "title": "Toggle Rich/Source Editor",
+        "category": "Markdown Studio",
+        "icon": "$(notebook-render-output)"
+      },
+      {
+        "command": "betterMarkdown.find",
+        "title": "Find in Document",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "betterMarkdown.openDiff",
+        "title": "Open Rich Diff",
+        "category": "Markdown Studio",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "betterMarkdown.factoryReset",
+        "title": "Factory Reset Settings",
+        "category": "Markdown Studio"
+      },
+      {
         "command": "slides.preview",
         "title": "Slides: Preview",
         "icon": {
-          "light": "media/preview-slides-light.svg",
-          "dark": "media/preview-slides-dark.svg"
+          "light": "./media/preview-slides-light.svg",
+          "dark": "./media/preview-slides-dark.svg"
         }
       },
       {
@@ -113,8 +140,8 @@
         "command": "gmc.openPreview",
         "title": "GMC: Open Graph Preview to the Side",
         "icon": {
-          "light": "media/preview-graph-light.svg",
-          "dark": "media/preview-graph-dark.svg"
+          "light": "./media/preview-graph-light.svg",
+          "dark": "./media/preview-graph-dark.svg"
         }
       },
       {
@@ -194,10 +221,84 @@
         "command": "markdownToolkit.exportDocx",
         "title": "Export as DOCX with Pandoc",
         "category": "Markdown Toolkit"
+      },
+      {
+        "command": "betterMarkdown.toggleZen",
+        "title": "Toggle Zen Mode",
+        "category": "Markdown Studio",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "betterMarkdown.insertEmbed",
+        "title": "Insert File Embed…",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "betterMarkdown.insertLink",
+        "title": "Insert File Link…",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "betterMarkdown.insertToc",
+        "title": "Insert Table of Contents",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "betterMarkdown.updateEmbeds",
+        "title": "Update Embeds & TOC",
+        "category": "Markdown Studio"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "betterMarkdown.toggleEditor",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m",
+        "when": "resourceExtname == .md"
+      },
+      {
+        "command": "betterMarkdown.find",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "activeCustomEditorId == betterMarkdown.editor"
+      },
+      {
+        "command": "pasteAsMarkdown.copyAsHtml",
+        "key": "ctrl+c",
+        "mac": "cmd+c",
+        "when": "editorLangId == markdown && config.pasteAsMarkdown.copyAsHtmlOnCopy"
+      },
+      {
+        "command": "markdownToolkit.formatTable",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t",
+        "when": "editorTextFocus && editorLangId == markdown"
+      },
+      {
+        "command": "betterMarkdown.toggleZen",
+        "key": "ctrl+.",
+        "mac": "cmd+.",
+        "when": "activeCustomEditorId == betterMarkdown.editor"
       }
     ],
     "menus": {
+      "commandPalette": [
+        {
+          "command": "betterMarkdown.openDiff",
+          "when": "resourceExtname == .md || isInDiffEditor"
+        }
+      ],
       "editor/title": [
+        {
+          "command": "betterMarkdown.toggleEditor",
+          "group": "navigation",
+          "when": "resourceExtname == .md"
+        },
+        {
+          "command": "betterMarkdown.openDiff",
+          "group": "navigation",
+          "when": "isInDiffEditor && resourceExtname == .md"
+        },
         {
           "command": "slides.preview",
           "when": "resourceLangId == markdown",
@@ -219,6 +320,13 @@
           "group": "navigation@20"
         }
       ],
+      "scm/resourceState/context": [
+        {
+          "command": "betterMarkdown.openDiff",
+          "group": "1_modification",
+          "when": "scmProvider == git && resourceExtname == .md"
+        }
+      ],
       "editor/context": [
         {
           "command": "markdown-embed.insertEmbedTag",
@@ -234,6 +342,21 @@
           "command": "markdownToolkit.formatTable",
           "when": "editorLangId == markdown",
           "group": "1_modification"
+        },
+        {
+          "command": "betterMarkdown.insertEmbed",
+          "when": "editorLangId == markdown",
+          "group": "1_modification@10"
+        },
+        {
+          "command": "betterMarkdown.insertLink",
+          "when": "editorLangId == markdown",
+          "group": "1_modification@11"
+        },
+        {
+          "command": "betterMarkdown.insertToc",
+          "when": "editorLangId == markdown",
+          "group": "1_modification@12"
         }
       ],
       "explorer/context": [
@@ -242,115 +365,447 @@
           "when": "resourceLangId == markdown",
           "group": "9_cutcopypaste"
         }
+      ],
+      "webview/context": [
+        {
+          "command": "betterMarkdown.insertEmbed",
+          "when": "webviewId == 'betterMarkdown.editor'",
+          "group": "1_insert@1"
+        },
+        {
+          "command": "betterMarkdown.insertLink",
+          "when": "webviewId == 'betterMarkdown.editor'",
+          "group": "1_insert@2"
+        },
+        {
+          "command": "betterMarkdown.insertToc",
+          "when": "webviewId == 'betterMarkdown.editor'",
+          "group": "1_insert@3"
+        },
+        {
+          "command": "betterMarkdown.updateEmbeds",
+          "when": "webviewId == 'betterMarkdown.editor'",
+          "group": "2_embeds@1"
+        },
+        {
+          "command": "betterMarkdown.toggleZen",
+          "when": "webviewId == 'betterMarkdown.editor'",
+          "group": "3_view@1"
+        }
       ]
     },
-    "keybindings": [
+    "configuration": [
       {
-        "command": "pasteAsMarkdown.copyAsHtml",
-        "key": "ctrl+c",
-        "mac": "cmd+c",
-        "when": "editorLangId == markdown && config.pasteAsMarkdown.copyAsHtmlOnCopy"
+        "title": "Markdown Studio",
+        "properties": {
+          "markdownStudio.autoSave": {
+            "type": "boolean",
+            "default": true,
+            "order": 1,
+            "markdownDescription": "Save the file silently on first open to persist the normalization round-trip (md → html → md). Subsequent edits follow VS Code's own `#files.autoSave#` / manual-save behavior."
+          },
+          "markdownStudio.saveOnEdit": {
+            "type": "boolean",
+            "default": false,
+            "order": 2,
+            "markdownDescription": "Save the file automatically shortly after every change made in the rich editor (independent of `#files.autoSave#`)."
+          },
+          "markdownStudio.bullet": {
+            "type": "string",
+            "enum": [
+              "-",
+              "*",
+              "+"
+            ],
+            "enumDescriptions": [
+              "dash",
+              "star",
+              "plus"
+            ],
+            "default": "-",
+            "order": 10,
+            "markdownDescription": "Bullet character for unordered lists when serializing back to markdown."
+          },
+          "markdownStudio.emphasis": {
+            "type": "string",
+            "enum": [
+              "_",
+              "*"
+            ],
+            "enumDescriptions": [
+              "_italic_",
+              "*italic*"
+            ],
+            "default": "_",
+            "order": 11,
+            "markdownDescription": "Emphasis (italic) marker."
+          },
+          "markdownStudio.strong": {
+            "type": "string",
+            "enum": [
+              "**",
+              "__"
+            ],
+            "enumDescriptions": [
+              "**bold**",
+              "__bold__"
+            ],
+            "default": "**",
+            "order": 12,
+            "markdownDescription": "Strong (bold) marker."
+          },
+          "markdownStudio.rule": {
+            "type": "string",
+            "enum": [
+              "-",
+              "*",
+              "_"
+            ],
+            "enumDescriptions": [
+              "---",
+              "***",
+              "___"
+            ],
+            "default": "-",
+            "order": 13,
+            "markdownDescription": "Horizontal-rule character. Rendered as three of whichever you pick."
+          },
+          "markdownStudio.listItemIndent": {
+            "type": "string",
+            "enum": [
+              "one",
+              "tab",
+              "mixed"
+            ],
+            "enumDescriptions": [
+              "1 space",
+              "tab",
+              "mixed"
+            ],
+            "default": "one",
+            "order": 14,
+            "markdownDescription": "Continuation indent for list items."
+          },
+          "markdownStudio.bubbleMenuShortcut": {
+            "type": "string",
+            "default": "Mod+/",
+            "order": 20,
+            "markdownDescription": "Keybinding that opens the selection bubble menu. If the cursor is inside a word with no active selection, the shortcut expands the selection to the surrounding word first. Format: modifier+key chain separated by `+` (e.g. `Mod+/`, `Ctrl+Shift+B`). `Mod` resolves to `Meta` on macOS, `Ctrl` elsewhere. Empty string disables the shortcut."
+          },
+          "markdownStudio.defaultCodeBlockLang": {
+            "type": "string",
+            "default": "",
+            "order": 30,
+            "markdownDescription": "Language label applied to unlabelled code blocks. Empty leaves them bare (\\`\\`\\`); `text` / `plaintext` adds a default label."
+          },
+          "markdownStudio.diffMode": {
+            "type": "string",
+            "enum": [
+              "source",
+              "rendered"
+            ],
+            "enumDescriptions": [
+              "Source (line diff)",
+              "Rendered (HTML diff)"
+            ],
+            "default": "rendered",
+            "order": 40,
+            "markdownDescription": "Default view for the rich diff panel."
+          },
+          "markdownStudio.diffLayout": {
+            "type": "string",
+            "enum": [
+              "unified",
+              "side-by-side"
+            ],
+            "enumDescriptions": [
+              "Unified",
+              "Side-by-side"
+            ],
+            "default": "side-by-side",
+            "order": 41,
+            "markdownDescription": "Layout for the source (line-level) diff toggle."
+          },
+          "markdownStudio.compactLists": {
+            "type": "boolean",
+            "default": true,
+            "order": 50,
+            "markdownDescription": "Remove blank lines between consecutive list items (tight lists)."
+          },
+          "markdownStudio.unescapeSpecialChars": {
+            "type": "boolean",
+            "default": true,
+            "order": 51,
+            "markdownDescription": "Strip redundant `\\~`, `\\*`, `\\_`, `\\[` escapes that remark-stringify adds defensively."
+          },
+          "markdownStudio.renumberOrderedLists": {
+            "type": "boolean",
+            "default": true,
+            "order": 52,
+            "markdownDescription": "Renumber ordered list items to `1.`, `2.`, `3.`, …"
+          },
+          "markdownStudio.shellscriptToBash": {
+            "type": "boolean",
+            "default": true,
+            "order": 53,
+            "markdownDescription": "Rewrite code fences labelled `shellscript` → `bash`."
+          },
+          "markdownStudio.fixTableHeaders": {
+            "type": "boolean",
+            "default": true,
+            "order": 54,
+            "markdownDescription": "Rebuild table headers when rehype-remark emits an empty header row."
+          },
+          "markdownStudio.dedupImageAltText": {
+            "type": "boolean",
+            "default": true,
+            "order": 55,
+            "markdownDescription": "Collapse `![alt](x)\\nalt` → `![alt](x)` (image followed by its alt)."
+          },
+          "markdownStudio.theme": {
+            "type": "string",
+            "enum": [
+              "default",
+              "github-light",
+              "github-light-high-contrast",
+              "github-light-colorblind",
+              "github-light-tritanopia",
+              "github-dark",
+              "github-dark-high-contrast",
+              "github-dark-colorblind",
+              "github-dark-tritanopia",
+              "github-dark-dimmed",
+              "claude-light",
+              "claude-dark"
+            ],
+            "enumDescriptions": [
+              "Default (follow VS Code)",
+              "GitHub Light",
+              "GitHub Light High Contrast",
+              "GitHub Light Protanopia & Deuteranopia",
+              "GitHub Light Tritanopia",
+              "GitHub Dark",
+              "GitHub Dark High Contrast",
+              "GitHub Dark Protanopia & Deuteranopia",
+              "GitHub Dark Tritanopia",
+              "GitHub Dark Dimmed",
+              "Claude Light",
+              "Claude Dark"
+            ],
+            "default": "default",
+            "order": 60,
+            "markdownDescription": "Color theme for the rich editor and rich diff. `default` follows your VS Code color theme. `github-*` use GitHub's own colors (from GitHub's Primer design system); `claude-*` match the Claude desktop app."
+          },
+          "markdownStudio.customCss": {
+            "type": "string",
+            "default": "",
+            "order": 61,
+            "markdownDescription": "Path to a CSS file applied on top of the theme (absolute, `~/...`, or relative to the first workspace folder). Reloads live on save. Empty disables it."
+          },
+          "markdownStudio.contentWidth": {
+            "type": "number",
+            "default": 760,
+            "minimum": 480,
+            "maximum": 1600,
+            "order": 62,
+            "markdownDescription": "Maximum width of the centered text column in the rich editor, in pixels. Use the maximum for a full-width page."
+          },
+          "markdownStudio.fontSize": {
+            "type": "number",
+            "default": 15,
+            "minimum": 8,
+            "maximum": 32,
+            "order": 63,
+            "markdownDescription": "Body text size in the rich editor, in pixels. Headings scale with it."
+          },
+          "markdownStudio.lineHeight": {
+            "type": "number",
+            "default": 1.6,
+            "minimum": 1.3,
+            "maximum": 2.2,
+            "order": 64,
+            "markdownDescription": "Space between lines of text, as a multiple of the font size."
+          },
+          "markdownStudio.fontFamily": {
+            "type": "string",
+            "default": "",
+            "order": 65,
+            "markdownDescription": "Font family for body text in the rich editor (e.g. `Inter`, `Georgia, serif`). Empty keeps the theme font. Code keeps the editor's monospace font."
+          },
+          "markdownStudio.lineNumbers": {
+            "type": "boolean",
+            "default": false,
+            "order": 66,
+            "markdownDescription": "Show the markdown source line number of each block in the margin of the rich editor."
+          },
+          "markdownStudio.outlineStyle": {
+            "type": "string",
+            "enum": [
+              "rail",
+              "panel",
+              "off"
+            ],
+            "default": "rail",
+            "order": 67,
+            "enumDescriptions": [
+              "Compact rail of heading marks at the left edge; hover to see names, click to jump",
+              "Resizable 'Contents' sidebar with a filter",
+              "No heading navigator"
+            ],
+            "markdownDescription": "How the heading outline is shown in the rich editor."
+          },
+          "markdownStudio.tableVerticalAlign": {
+            "type": "string",
+            "enum": [
+              "top",
+              "middle",
+              "bottom"
+            ],
+            "default": "top",
+            "order": 68,
+            "enumDescriptions": [
+              "Cell content at the top of the cell",
+              "Cell content vertically centered",
+              "Cell content at the bottom of the cell"
+            ],
+            "markdownDescription": "Vertical alignment of table cell content in the rich editor. (Horizontal alignment is per column and saved in the markdown — use the table toolbar.)"
+          }
+        }
       },
       {
-        "command": "markdownToolkit.formatTable",
-        "key": "ctrl+alt+t",
-        "mac": "cmd+alt+t",
-        "when": "editorTextFocus && editorLangId == markdown"
-      }
-    ],
-    "configuration": {
-      "title": "Graph Model Studio",
-      "properties": {
-        "gmc.preview.autoOpen": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically open the graph preview when a GMC file becomes active."
-        },
-        "slides.executablePath": {
-          "type": "string",
-          "default": "C:\\workspace\\pptxascode\\presentation-md\\output\\presentation-md.exe",
-          "description": "Path to presentation-md.exe used for slide preview and standalone HTML export."
-        },
-        "slides.themePath": {
-          "type": "string",
-          "default": "C:\\workspace\\pptxascode\\presentation-md\\theme\\cea",
-          "description": "Path to Slidev theme folder or ZIP used for slide preview and standalone HTML export."
-        },
-        "gmc.export.width": {
-          "type": "number",
-          "default": 1600,
-          "minimum": 320,
-          "maximum": 8192,
-          "description": "PNG export width in pixels."
-        },
-        "gmc.export.height": {
-          "type": "number",
-          "default": 1000,
-          "minimum": 240,
-          "maximum": 8192,
-          "description": "PNG export height in pixels."
-        },
-        "gmc.export.theme": {
-          "type": "string",
-          "enum": [
-            "auto",
-            "light",
-            "dark"
-          ],
-          "default": "auto",
-          "description": "Theme used for PNG export."
-        },
-        "markdownEmbedder.autoUpdate": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically update embeds in Markdown files when a referenced source file is saved."
-        },
-        "markdownEmbedder.collapseGeneratedContent": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically collapse generated content between embed directives and their end markers."
-        },
-        "pasteAsMarkdown.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable automatic conversion of rich text to Markdown when pasting."
-        },
-        "pasteAsMarkdown.copyAsHtmlOnCopy": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Override `Cmd+C` / `Ctrl+C` in Markdown files to copy as rich HTML. The clipboard contains HTML and the original Markdown."
-        },
-        "markdownToolkit.export.browserPath": {
-          "type": "string",
-          "default": "",
-          "description": "Optional path to a Chromium, Chrome, or Edge executable used for PDF and PNG export."
-        },
-        "markdownToolkit.export.pngWidth": {
-          "type": "number",
-          "default": 1440,
-          "minimum": 640,
-          "maximum": 4096,
-          "description": "Viewport width used for Markdown preview PNG export."
-        },
-        "markdownToolkit.export.pngHeight": {
-          "type": "number",
-          "default": 10000,
-          "minimum": 480,
-          "maximum": 30000,
-          "description": "Maximum captured page height used for Markdown preview PNG export."
-        },
-        "markdownToolkit.pandoc.path": {
-          "type": "string",
-          "default": "",
-          "description": "Optional path to the Pandoc executable used for DOCX export."
-        },
-        "markdownToolkit.pandoc.referenceDoc": {
-          "type": "string",
-          "default": "",
-          "description": "Optional default reference DOCX template offered during Pandoc export."
+        "title": "Graph Model Studio: GMC Diagrams & Markdown Toolkit",
+        "properties": {
+          "gmc.preview.autoOpen": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically open the graph preview when a GMC file becomes active."
+          },
+          "slides.executablePath": {
+            "type": "string",
+            "default": "C:\\workspace\\pptxascode\\presentation-md\\output\\presentation-md.exe",
+            "description": "Path to presentation-md.exe used for slide preview and standalone HTML export."
+          },
+          "slides.themePath": {
+            "type": "string",
+            "default": "C:\\workspace\\pptxascode\\presentation-md\\theme\\cea",
+            "description": "Path to Slidev theme folder or ZIP used for slide preview and standalone HTML export."
+          },
+          "gmc.export.width": {
+            "type": "number",
+            "default": 1600,
+            "minimum": 320,
+            "maximum": 8192,
+            "description": "PNG export width in pixels."
+          },
+          "gmc.export.height": {
+            "type": "number",
+            "default": 1000,
+            "minimum": 240,
+            "maximum": 8192,
+            "description": "PNG export height in pixels."
+          },
+          "gmc.export.theme": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "light",
+              "dark"
+            ],
+            "default": "auto",
+            "description": "Theme used for PNG export."
+          },
+          "gmc.export.renderOnSave": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Re-render changed `.gmc` image embeds when a Markdown or source file is saved. Rendering needs the graph panel, which then opens beside the editor. When off, changed diagrams are flagged stale and re-render on **Update Code Embeds** / **Update All Embeds in Workspace** (or the rich editor refresh)."
+          },
+          "markdownEmbedder.autoUpdate": {
+            "type": "boolean",
+            "default": false,
+            "description": "Automatically update embeds in Markdown files when a referenced source file is saved."
+          },
+          "markdownEmbedder.collapseGeneratedContent": {
+            "type": "boolean",
+            "default": true,
+            "description": "Automatically collapse generated content between embed directives and their end markers."
+          },
+          "pasteAsMarkdown.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable automatic conversion of rich text to Markdown when pasting."
+          },
+          "pasteAsMarkdown.copyAsHtmlOnCopy": {
+            "type": "boolean",
+            "default": false,
+            "markdownDescription": "Override `Cmd+C` / `Ctrl+C` in Markdown files to copy as rich HTML. The clipboard contains HTML and the original Markdown."
+          },
+          "markdownToolkit.export.browserPath": {
+            "type": "string",
+            "default": "",
+            "description": "Optional path to a Chromium, Chrome, or Edge executable used for PDF and PNG export."
+          },
+          "markdownToolkit.export.pngWidth": {
+            "type": "number",
+            "default": 1440,
+            "minimum": 640,
+            "maximum": 4096,
+            "description": "Viewport width used for Markdown preview PNG export."
+          },
+          "markdownToolkit.export.pngHeight": {
+            "type": "number",
+            "default": 10000,
+            "minimum": 480,
+            "maximum": 30000,
+            "description": "Maximum captured page height used for Markdown preview PNG export."
+          },
+          "markdownToolkit.pandoc.path": {
+            "type": "string",
+            "default": "",
+            "description": "Optional path to the Pandoc executable used for DOCX export."
+          },
+          "markdownToolkit.pandoc.referenceDoc": {
+            "type": "string",
+            "default": "",
+            "description": "Optional default reference DOCX template offered during Pandoc export."
+          }
         }
       }
-    },
+    ],
+    "markdown.markdownItPlugins": true,
+    "markdown.previewScripts": [
+      "./dist/markdown-preview/preview.js"
+    ],
+    "languages": [
+      {
+        "id": "gmc",
+        "aliases": [
+          "Graph Model Code",
+          "GMC"
+        ],
+        "extensions": [
+          ".gmc",
+          ".graphmodel"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "gmc",
+        "scopeName": "source.gmc",
+        "path": "./syntaxes/gmc.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.gmc.codeblock",
+        "path": "./syntaxes/markdown-gmc.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.gmc": "gmc"
+        }
+      }
+    ],
     "snippets": [
       {
         "language": "markdown",
@@ -366,23 +821,63 @@
     "build:host": "node ./esbuild.mjs",
     "build:webview": "vite build --config vite.webview.config.ts",
     "build:markdown-preview": "vite build --config vite.markdown-preview.config.ts",
-    "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview",
+    "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview && pnpm run build:rich-editor",
     "build": "node ./build-combined.mjs",
-    "package": "node ./package-vsix.mjs"
+    "package": "node ./package-vsix.mjs",
+    "build:rich-editor": "node ./rich-editor/esbuild.mjs",
+    "watch:rich-editor": "node ./rich-editor/esbuild.mjs --watch",
+    "test:rich-editor": "tsx rich-editor/test/test-conversions.ts && tsx rich-editor/test/test-roundtrip.ts",
+    "test": "node --test tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs && pnpm run test:rich-editor",
+    "build:all": "pnpm run build:source && pnpm run build"
   },
   "devDependencies": {
+    "@primer/primitives": "11.10.0",
+    "@tiptap/core": "3.22.1",
+    "@tiptap/extension-bubble-menu": "3.22.1",
+    "@tiptap/extension-code": "3.22.1",
+    "@tiptap/extension-code-block-lowlight": "3.22.1",
+    "@tiptap/extension-image": "3.22.1",
+    "@tiptap/extension-link": "3.22.1",
+    "@tiptap/extension-table": "3.22.1",
+    "@tiptap/extension-table-cell": "3.22.1",
+    "@tiptap/extension-table-header": "3.22.1",
+    "@tiptap/extension-table-row": "3.22.1",
+    "@tiptap/extension-task-item": "3.22.1",
+    "@tiptap/extension-task-list": "3.22.1",
+    "@tiptap/pm": "3.22.1",
+    "@tiptap/react": "3.22.1",
+    "@tiptap/starter-kit": "3.22.1",
+    "@tiptap/suggestion": "3.22.1",
+    "@types/diff": "7.0.2",
     "@types/node": "^22.10.0",
     "@types/vscode": "^1.95.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vscode/vsce": "^3.2.1",
     "autoprefixer": "^10.4.20",
+    "diff": "8.0.4",
+    "diff2html": "3.4.56",
     "esbuild": "^0.24.2",
+    "katex": "0.16.45",
+    "lowlight": "3.3.0",
+    "lucide-react": "1.7.0",
     "markdown-it": "14.1.1",
+    "mermaid": "11.14.0",
+    "node-htmldiff": "0.9.4",
     "postcss": "^8.4.49",
+    "rehype-parse": "9.0.1",
+    "rehype-remark": "10.0.1",
+    "rehype-stringify": "10.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "remark-rehype": "11.1.2",
+    "remark-stringify": "11.0.0",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
     "turndown": "7.2.2",
     "turndown-plugin-gfm": "1.0.2",
     "typescript": "^5.7.2",
+    "unified": "11.0.5",
     "vite": "^6.0.5"
   }
 }

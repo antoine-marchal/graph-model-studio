@@ -22,3 +22,5 @@ integrations/markdown-toolkit/source/**
 integrations/paste-as-markdown/extension.js
 graphify-out/**
 integrations/slides/source/**
+rich-editor/**
+!rich-editor/LICENSE

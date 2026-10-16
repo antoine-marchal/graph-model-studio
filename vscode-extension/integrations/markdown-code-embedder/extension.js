@@ -71,6 +71,18 @@ function activate(context) {
                 scheduleStaleMap(document, 0);
         }
     }
+    // Save-triggered updates must not pop the graph panel open to render PNGs.
+    function onSave(run) {
+        return __awaiter(this, void 0, void 0, function* () {
+            embedder.onSave = true;
+            try {
+                return yield run();
+            }
+            finally {
+                embedder.onSave = false;
+            }
+        });
+    }
     // ── Helper: update all markdown files in workspace ─────────────────────
     function updateAllMarkdownFiles() {
         return __awaiter(this, void 0, void 0, function* () {
@@ -286,7 +298,7 @@ function activate(context) {
             console.log('Detected save on markdown file. Updating embeds...');
             event.waitUntil((() => __awaiter(this, void 0, void 0, function* () {
                 const cleanupEdits = embedder.cleanLegacyErrorComments(event.document);
-                const embedEdits = yield embedder.generateEdits(event.document);
+                const embedEdits = yield onSave(() => embedder.generateEdits(event.document));
                 const allEdits = [...cleanupEdits, ...embedEdits];
                 allEdits.sort((a, b) => b.range.start.compareTo(a.range.start));
                 return allEdits;
@@ -300,7 +312,7 @@ function activate(context) {
         }
         const config = vscode.workspace.getConfiguration('markdownEmbedder');
         if (config.get('autoUpdate'))
-            yield updateAllMarkdownFiles();
+            yield onSave(updateAllMarkdownFiles);
         // Staleness is a status feature, independent of auto-update. Recompute
         // open Markdown documents whenever a source file is saved.
         refreshOpenMarkdownStaleState();
