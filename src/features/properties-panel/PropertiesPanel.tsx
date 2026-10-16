@@ -9,15 +9,15 @@ import { NodeTypePicker, TypeSwatch } from '@/features/editor-graph/NodeTypePick
 import {
   copyElementFormat,
   copyRelationFormat,
-  elementFormatFor,
+  pasteElementFormatCommand,
   hasElementFormat,
   hasRelationFormat,
   relationFormatFor,
 } from '@/features/editor-graph/style-clipboard'
 import { parseXyPointList } from './xy-series-points'
 import { supportsTransparentBackground } from '@/features/editor-graph/node-appearance'
-import { getNodeRects } from '@/features/editor-graph/node-geometry'
-import { createElementId } from '@/core/model'
+import { groupElements } from '@/features/editor-graph/ElementContextMenu'
+import { searchGlyphs, TreeIconChar } from '@/features/editor-graph/nodes/tree-icons'
 
 /** Searchable element-type selector — same picker as the canvas add-node menu. */
 function TypeField({ value, onPick }: { value: string; onPick: (type: string) => void }) {
@@ -237,8 +237,18 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
     { key: 'col', label: 'Column', placeholder: '1' },
     { key: 'projection', label: 'Projection (row offset, column offset)', placeholder: 'e.g. -1,+1' },
   ] },
+  treeGraph: { group: 'File tree', fields: [
+    { key: 'showLinks', label: 'Hierarchy lines', placeholder: '', options: [
+      { value: 'false', label: 'Hidden' },
+      { value: 'true', label: 'Thin lines' },
+    ] },
+    { key: 'showToggles', label: 'Expand / collapse icons', placeholder: '', options: [
+      { value: 'true', label: 'Shown' },
+      { value: 'false', label: 'Hidden' },
+    ] },
+  ] },
   treeNode: { group: 'Tree node', fields: [
-    { key: 'icon', label: 'Icon path or URL', placeholder: 'icons/file.svg, C:\\icons\\file.png, or https://…' },
+    { key: 'icon', label: 'Icon (glyph, path or URL)', placeholder: 'Choose below, or icons/file.svg / https://…' },
   ] },
   sankeyNode: { group: 'Sankey', fields: [
     { key: 'color', label: 'Colour', placeholder: '#0ea5e9' },
@@ -317,6 +327,35 @@ function useLiveField<T>(value: T, commit: (v: T) => void, delay = 250) {
   }, [local, commit])
 
   return [local, onChange, flush] as const
+}
+
+/** Searchable glyph grid for a treeNode icon. */
+function TreeIconPicker({ value, onPick }: { value?: string; onPick: (icon: string) => void }) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const matches = open ? searchGlyphs(query) : []
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" size="sm" variant="outline" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? 'Close icons' : 'Choose icon…'}</Button>
+        <Button type="button" size="sm" variant="ghost" disabled={!value} onClick={() => onPick('')}>Default icon</Button>
+      </div>
+      {open && (
+        <div className="flex flex-col gap-1.5 rounded border border-[var(--border)] bg-[var(--surface-1)] p-1.5">
+          <Input autoFocus value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${matches.length} glyphs…`} aria-label="Search glyphs" />
+          <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto">
+            {matches.length === 0 && <span className="col-span-8 py-2 text-center text-[10px] text-[var(--fg-subtle)]">No glyph matches “{query}”</span>}
+            {matches.map(({ icon, words }) => (
+              <button key={icon} type="button" title={words} aria-label={words} onClick={() => onPick(icon)}
+                className={`grid h-7 place-items-center rounded text-[16px] hover:bg-[var(--surface-2)] ${value === icon ? 'ring-1 ring-[var(--accent)]' : ''}`}>
+                <TreeIconChar icon={icon} color="var(--fg)" size={16} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function XySeriesPointGenerator({ seriesId }: { seriesId: string }) {
@@ -439,8 +478,8 @@ function ElementProperties({ elementId }: { elementId: string }) {
         }}>Copy style</Button>
         <Button size="sm" variant="outline" disabled={!activeViewId || !hasElementFormat()} onClick={() => {
           if (!activeViewId) return
-          const format = elementFormatFor(useModelStore.getState().model, elementId)
-          if (format) dispatch({ type: 'APPLY_ELEMENT_FORMAT', payload: { viewId: activeViewId, id: elementId, ...format } })
+          const command = pasteElementFormatCommand(useModelStore.getState().model, activeViewId, [elementId])
+          if (command) dispatch(command)
         }}>Paste style</Button>
       </div>
 
@@ -551,6 +590,7 @@ function ElementProperties({ elementId }: { elementId: string }) {
             />
           ))}
           {element.type === 'xySeries' && <XySeriesPointGenerator seriesId={elementId} />}
+          {element.type === 'treeNode' && <TreeIconPicker value={properties?.icon} onPick={icon => setProp('icon', icon)} />}
         </div>
       )}
 
@@ -706,8 +746,6 @@ function RelationProperties({ relationId }: { relationId: string }) {
 
 function MultiSelectionPanel({ ids }: { ids: string[] }) {
   const dispatch = useModelStore(s => s.dispatch)
-  const pushRecentType = useModelStore(s => s.pushRecentType)
-  const selectElements = useModelStore(s => s.selectElements)
   const [picking, setPicking] = useState(false)
   const pickerRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -718,24 +756,8 @@ function MultiSelectionPanel({ ids }: { ids: string[] }) {
   }, [picking])
 
   const createGroup = (type: string) => {
-    const { model, activeViewId } = useModelStore.getState()
-    const viewId = activeViewId ?? Object.keys(model.views)[0]
-    const def = notationRegistry.getElementDef(type)
-    let id = createElementId(type)
-    while (model.elements[id]) id = createElementId(type)
-    const parents = ids.map(member => model.elements[member]?.parentId).filter((p): p is string => !!p)
-    dispatch({
-      type: 'GROUP_ELEMENTS',
-      payload: {
-        viewId, id, type, memberIds: ids,
-        name: def?.label ?? 'Group',
-        notation: def?.notation ?? 'generic',
-        rects: getNodeRects([...ids, ...parents]),
-      },
-    })
-    pushRecentType(type)
+    groupElements(ids, type)
     setPicking(false)
-    selectElements([id])
   }
 
   return (
@@ -755,6 +777,11 @@ function MultiSelectionPanel({ ids }: { ids: string[] }) {
           </div>
         )}
       </div>
+      <Button size="sm" variant="outline" className="w-full" disabled={!hasElementFormat()} onClick={() => {
+        const { model, activeViewId } = useModelStore.getState()
+        const command = activeViewId && pasteElementFormatCommand(model, activeViewId, ids)
+        if (command) dispatch(command)
+      }}>Paste style on {ids.length} elements</Button>
       <Button size="sm" variant="danger" className="w-full" onClick={() => dispatch({ type: 'DELETE_ELEMENTS', payload: { ids } })}>
         Delete {ids.length} Elements
       </Button>

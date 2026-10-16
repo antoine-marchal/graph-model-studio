@@ -13,6 +13,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  build: {
+    // tree-node glyphs stay separate files instead of bloating the JS bundle
+    assetsInlineLimit: file => (/[\\/]assets[\\/]glyphs[\\/]/.test(file) ? false : undefined),
+  },
   worker: {
     format: 'es',
   },

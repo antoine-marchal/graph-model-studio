@@ -12,10 +12,17 @@ const run = promisify(execFile)
 let panel
 let previewDirectory
 let previewHtml
+// deck file + document version the cached preview HTML was generated from
+let previewKey
 let extensionRoot
 
+// Document URI passed to the running command (custom editors have no active text editor).
+let commandUri
+
 function activeMarkdown() {
-  const document = vscode.window.activeTextEditor?.document
+  const document = commandUri
+    ? vscode.workspace.textDocuments.find(candidate => candidate.uri.toString() === commandUri.toString())
+    : vscode.window.activeTextEditor?.document
   if (!document || document.languageId !== 'markdown') {
     throw new Error('Open a Markdown presentation first.')
   }
@@ -27,6 +34,7 @@ async function disposePreviewFiles() {
   const directory = previewDirectory
   previewDirectory = undefined
   previewHtml = undefined
+  previewKey = undefined
   if (directory) await rm(directory, { recursive: true, force: true })
 }
 
@@ -80,12 +88,10 @@ async function chooseTarget(document, format) {
 }
 
 async function exportPreviewHtml(document = activeMarkdown()) {
-  if (!previewHtml) {
-    await buildPreview(document)
-    if (!previewHtml) return
-  }
   const target = await chooseTarget(document, 'html')
   if (!target) return
+  // reuse the open preview only when it was built from this exact deck state
+  if (previewKey !== keyOf(document)) await generatePreviewHtml(document)
   await copyFile(previewHtml, target.fsPath)
   void vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`)
 }
@@ -106,7 +112,8 @@ async function runPresentation(document, output, format) {
   const args = ['build', document.fileName, '--out', output, '--theme', themePath, '--gmc-renderer', gmcRendererPath]
   if (format) args.push('--format', format)
   if (browserPath) args.push('--browser', browserPath)
-  await run(executablePath, args, { windowsHide: true })
+  // presentation-md can be chatty; the 1 MB default buffer aborts large builds
+  await run(executablePath, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024 })
 }
 
 async function exportPresentation(format, document = activeMarkdown()) {
@@ -120,12 +127,15 @@ async function exportPresentation(format, document = activeMarkdown()) {
   void vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`)
 }
 
-async function buildPreview(document = activeMarkdown()) {
+function keyOf(document) {
+  return `${document.fileName}@${document.version}`
+}
+
+/** Render the deck to a fresh temp HTML file (light theme, GMC images inlined). */
+async function generatePreviewHtml(document) {
   presentationSettings()
   await document.save()
-  panel?.dispose()
   await disposePreviewFiles()
-
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
     title: 'Generating Slidev preview…',
@@ -137,11 +147,17 @@ async function buildPreview(document = activeMarkdown()) {
       await writeFile(output, withLightTheme(await inlineGmcImages(await readFile(output, 'utf8'), document)))
       previewDirectory = directory
       previewHtml = output
+      previewKey = keyOf(document)
     } catch (error) {
       await rm(directory, { recursive: true, force: true })
       throw error
     }
   })
+}
+
+async function buildPreview(document = activeMarkdown()) {
+  panel?.dispose()
+  await generatePreviewHtml(document)
 
   const nextPanel = vscode.window.createWebviewPanel(
     'slides.preview',
@@ -159,12 +175,15 @@ async function buildPreview(document = activeMarkdown()) {
     }
   })
   nextPanel.onDidDispose(() => {
-    if (panel === nextPanel) panel = undefined
+    if (panel !== nextPanel) return
+    panel = undefined
+    void disposePreviewFiles()
   })
 }
 
 function guarded(action) {
-  return async () => {
+  return async uri => {
+    commandUri = uri instanceof vscode.Uri ? uri : undefined
     try {
       await action()
     } catch (error) {

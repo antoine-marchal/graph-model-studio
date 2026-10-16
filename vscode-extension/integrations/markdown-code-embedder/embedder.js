@@ -62,6 +62,9 @@ class MarkdownEmbedder {
             : isNaN(requestedMax) ? 6 : requestedMax));
         const duplicates = new Map();
         const entries = [];
+        // Nest by relative heading order, not absolute level: `#`, `##`,
+        // `#####` lists as depth 0, 1, 2 (skipped levels don't add indent).
+        const levelStack = [];
         const headingRegex = /^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$/gm;
         let match;
         while ((match = headingRegex.exec(text)) !== null) {
@@ -85,7 +88,10 @@ class MarkdownEmbedder {
             const count = duplicates.get(baseSlug) || 0;
             duplicates.set(baseSlug, count + 1);
             const slug = count ? `${baseSlug}-${count}` : baseSlug;
-            entries.push(`${'  '.repeat(level - minLevel)}- [${label}](#${slug})`);
+            while (levelStack.length && levelStack[levelStack.length - 1] >= level)
+                levelStack.pop();
+            entries.push(`${'  '.repeat(levelStack.length)}- [${label}](#${slug})`);
+            levelStack.push(level);
         }
         return `\n\n${entries.join('\n')}${entries.length ? '\n\n' : ''}<!-- embed:toc:end -->`;
     }
@@ -297,16 +303,20 @@ class MarkdownEmbedder {
                 }
                 else if (lang === 'gmc' && !(0, utils_1.isUrl)(embedResult.resolvedPath)) {
                     const requestedView = attributes['view'];
-                    const viewSuffix = requestedView
+                    // theme="light" | "dark" (else the gmc.export.theme setting).
+                    const requestedTheme = attributes['theme'] === 'light' || attributes['theme'] === 'dark'
+                        ? attributes['theme']
+                        : undefined;
+                    const viewSuffix = (requestedView
                         ? `-${requestedView.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'view'}`
-                        : '';
+                        : '') + (requestedTheme ? `-${requestedTheme}` : '');
                     const pngPath = path.join(
                         path.dirname(embedResult.resolvedPath),
                         `${path.basename(embedResult.resolvedPath, path.extname(embedResult.resolvedPath))}${viewSuffix}.png`,
                     );
-                    const hashInput = requestedView
-                        ? `${embedResult.content}\0view=${requestedView}`
-                        : embedResult.content;
+                    const hashInput = embedResult.content
+                        + (requestedView ? `\0view=${requestedView}` : '')
+                        + (requestedTheme ? `\0theme=${requestedTheme}` : '');
                     const sourceHash = crypto.createHash('sha256').update(hashInput, 'utf8').digest('hex');
                     const previousHash = /<!--\s*gmc-source-sha256:([a-f0-9]{64})\s*-->/i.exec(currentContent)?.[1];
                     if (refreshAssets && (previousHash !== sourceHash || !fs.existsSync(pngPath))) {
@@ -315,6 +325,7 @@ class MarkdownEmbedder {
                             vscode.Uri.file(embedResult.resolvedPath),
                             vscode.Uri.file(pngPath),
                             requestedView,
+                            requestedTheme,
                         );
                     }
                     const imagePath = (0, markdown_paths_1.rebaseRelativePath)(

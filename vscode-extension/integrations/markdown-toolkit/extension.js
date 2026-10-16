@@ -6777,7 +6777,10 @@ var require_export = __commonJS({
         if (editor?.document.languageId === "markdown") lastMarkdownUri = editor.document.uri;
       };
       remember(vscode2.window.activeTextEditor);
-      const guarded = (callback) => () => Promise.resolve(callback()).catch((error) => {
+      const guarded = (callback) => (uri) => Promise.resolve().then(() => {
+        if (uri instanceof vscode2.Uri) lastMarkdownUri = uri;
+        return callback();
+      }).catch((error) => {
         vscode2.window.showErrorMessage(`Markdown export failed: ${error instanceof Error ? error.message : String(error)}`);
       });
       context.subscriptions.push(

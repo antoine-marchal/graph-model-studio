@@ -189,3 +189,5 @@ export function NodeIcon({ kind, color, size }: { kind: IconKind; color: string;
 export function hasIcon(kind: IconKind): boolean {
   return kind in REGISTRY
 }
+
+export const ICON_KINDS = Object.keys(REGISTRY) as IconKind[]

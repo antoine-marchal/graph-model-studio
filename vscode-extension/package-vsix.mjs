@@ -15,6 +15,8 @@ function run(args) {
   }
 }
 
+// `build` only validates artifacts; rebuild them first so the VSIX never ships a stale dist/
+run(['run', 'build:source'])
 run(['run', 'build'])
 
 const manifest = JSON.parse(await readFile(path.join(extensionDir, 'package.json'), 'utf8'))

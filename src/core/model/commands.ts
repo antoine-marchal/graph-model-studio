@@ -55,11 +55,17 @@ export type ReparentElementPayload = {
   position: Position
 }
 
+/** Multi-node drag commit: every move lands in one undo step. Moves whose
+ *  parent is unchanged only update the stored position. */
+export type ReparentElementsPayload = {
+  viewId: string
+  moves: Array<{ id: string; parentId?: string; position: Position }>
+}
+
+/** Paste a copied node style onto one or more elements (one undo step). */
 export type ApplyElementFormatPayload = {
   viewId: string
-  id: string
-  properties: Record<string, string>
-  size: Size
+  formats: Array<{ id: string; properties: Record<string, string>; size: Size }>
 }
 
 export type ApplyRelationFormatPayload = {
@@ -93,6 +99,7 @@ export type ModelCommand =
   | { type: 'SET_NODE_SIZE'; payload: SetNodeSizePayload }
   | { type: 'RESIZE_NODES'; payload: ResizeNodesPayload }
   | { type: 'REPARENT_ELEMENT'; payload: ReparentElementPayload }
+  | { type: 'REPARENT_ELEMENTS'; payload: ReparentElementsPayload }
   | { type: 'GROUP_ELEMENTS'; payload: GroupElementsPayload }
   | { type: 'APPLY_ELEMENT_FORMAT'; payload: ApplyElementFormatPayload }
   | { type: 'APPLY_RELATION_FORMAT'; payload: ApplyRelationFormatPayload }

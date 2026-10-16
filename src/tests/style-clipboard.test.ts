@@ -5,6 +5,7 @@ import {
   copyElementFormat,
   copyRelationFormat,
   elementFormatFor,
+  pasteElementFormatCommand,
   relationFormatFor,
 } from '@/features/editor-graph/style-clipboard'
 
@@ -29,6 +30,35 @@ describe('style clipboard', () => {
       properties: { owner: 'Bob', accentColor: '#112233', backgroundColor: '#445566' },
       size: { width: 240, height: 110 },
     })
+  })
+
+  it('carries a tree node icon with its style', () => {
+    const model = createEmptyModel()
+    model.views.default = createDefaultView()
+    const treeNode = (id: string, properties: Record<string, string>) => ({ id, name: id, type: 'treeNode', notation: 'generic' as const, tags: [], children: [], properties })
+    model.elements.source = treeNode('source', { icon: 'glyph:package-blue', accentColor: '#112233' })
+    model.elements.target = treeNode('target', { icon: 'glyph:package-green' })
+    model.elements.plain = treeNode('plain', {})
+
+    copyElementFormat(model, 'default', 'source')
+    expect(elementFormatFor(model, 'target')?.properties).toEqual({ icon: 'glyph:package-blue', accentColor: '#112233' })
+    copyElementFormat(model, 'default', 'plain')
+    expect(elementFormatFor(model, 'target')?.properties).toEqual({})
+  })
+
+  it('pastes a style onto several nodes in one command', () => {
+    const model = createEmptyModel()
+    model.views.default = createDefaultView()
+    const node = (id: string, properties: Record<string, string>) => ({ id, name: id, type: 'node', notation: 'generic' as const, tags: [], children: [], properties })
+    model.elements.source = node('source', { accentColor: '#112233' })
+    model.elements.a = node('a', { owner: 'A' })
+    model.elements.b = node('b', {})
+    copyElementFormat(model, 'default', 'source')
+    const command = pasteElementFormatCommand(model, 'default', ['a', 'b', 'missing'])
+    expect(command?.type === 'APPLY_ELEMENT_FORMAT' && command.payload.formats.map(f => [f.id, f.properties])).toEqual([
+      ['a', { owner: 'A', accentColor: '#112233' }],
+      ['b', { accentColor: '#112233' }],
+    ])
   })
 
   it('copies relation type, colors, direction and both anchor directions only', () => {

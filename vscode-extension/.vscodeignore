@@ -20,3 +20,5 @@ dist/webview/webview/**
 dist/markdown-preview/*.css
 integrations/markdown-toolkit/source/**
 integrations/paste-as-markdown/extension.js
+graphify-out/**
+integrations/slides/source/**

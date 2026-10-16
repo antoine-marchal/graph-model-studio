@@ -230,9 +230,21 @@ export class PreviewManager implements vscode.Disposable {
 
   async exportPng(input: PreviewInput, width: number, height: number, preserveFocus = false): Promise<string> {
     await this.show(input, preserveFocus)
+    const panel = this.panel
+    if (!panel) throw new Error('Preview was closed')
     const requestId = `export-${++this.sequence}`
-    const result = new Promise<string>((resolve, reject) => this.exports.set(requestId, { resolve, reject }))
-    this.panel!.webview.postMessage({
+    const result = new Promise<string>((resolve, reject) => {
+      // a renderer crash must not leave the export (and its progress toast) pending forever
+      const timeout = setTimeout(() => {
+        this.exports.delete(requestId)
+        reject(new Error('The preview did not return an image within 60 s'))
+      }, 60_000)
+      this.exports.set(requestId, {
+        resolve: dataUrl => { clearTimeout(timeout); resolve(dataUrl) },
+        reject: error => { clearTimeout(timeout); reject(error) },
+      })
+    })
+    void panel.webview.postMessage({
       type: 'export',
       requestId,
       width,

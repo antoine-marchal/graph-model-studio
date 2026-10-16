@@ -11,9 +11,11 @@ var run = promisify(execFile);
 var panel;
 var previewDirectory;
 var previewHtml;
+var previewKey;
 var extensionRoot;
+var commandUri;
 function activeMarkdown() {
-  const document = vscode.window.activeTextEditor?.document;
+  const document = commandUri ? vscode.workspace.textDocuments.find((candidate) => candidate.uri.toString() === commandUri.toString()) : vscode.window.activeTextEditor?.document;
   if (!document || document.languageId !== "markdown") {
     throw new Error("Open a Markdown presentation first.");
   }
@@ -24,6 +26,7 @@ async function disposePreviewFiles() {
   const directory = previewDirectory;
   previewDirectory = void 0;
   previewHtml = void 0;
+  previewKey = void 0;
   if (directory) await rm(directory, { recursive: true, force: true });
 }
 function withPreviewToolbar(html) {
@@ -72,12 +75,9 @@ async function chooseTarget(document, format) {
   });
 }
 async function exportPreviewHtml(document = activeMarkdown()) {
-  if (!previewHtml) {
-    await buildPreview(document);
-    if (!previewHtml) return;
-  }
   const target = await chooseTarget(document, "html");
   if (!target) return;
+  if (previewKey !== keyOf(document)) await generatePreviewHtml(document);
   await copyFile(previewHtml, target.fsPath);
   void vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`);
 }
@@ -96,7 +96,7 @@ async function runPresentation(document, output, format) {
   const args = ["build", document.fileName, "--out", output, "--theme", themePath, "--gmc-renderer", gmcRendererPath];
   if (format) args.push("--format", format);
   if (browserPath) args.push("--browser", browserPath);
-  await run(executablePath, args, { windowsHide: true });
+  await run(executablePath, args, { windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
 }
 async function exportPresentation(format, document = activeMarkdown()) {
   const target = await chooseTarget(document, format);
@@ -108,10 +108,12 @@ async function exportPresentation(format, document = activeMarkdown()) {
   }, () => runPresentation(document, target.fsPath, format));
   void vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`);
 }
-async function buildPreview(document = activeMarkdown()) {
+function keyOf(document) {
+  return `${document.fileName}@${document.version}`;
+}
+async function generatePreviewHtml(document) {
   presentationSettings();
   await document.save();
-  panel?.dispose();
   await disposePreviewFiles();
   await vscode.window.withProgress({
     location: vscode.ProgressLocation.Notification,
@@ -124,11 +126,16 @@ async function buildPreview(document = activeMarkdown()) {
       await writeFile(output, withLightTheme(await inlineGmcImages(await readFile(output, "utf8"), document)));
       previewDirectory = directory;
       previewHtml = output;
+      previewKey = keyOf(document);
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
       throw error;
     }
   });
+}
+async function buildPreview(document = activeMarkdown()) {
+  panel?.dispose();
+  await generatePreviewHtml(document);
   const nextPanel = vscode.window.createWebviewPanel(
     "slides.preview",
     `Slides: ${path.basename(document.fileName)}`,
@@ -145,11 +152,14 @@ async function buildPreview(document = activeMarkdown()) {
     }
   });
   nextPanel.onDidDispose(() => {
-    if (panel === nextPanel) panel = void 0;
+    if (panel !== nextPanel) return;
+    panel = void 0;
+    void disposePreviewFiles();
   });
 }
 function guarded(action) {
-  return async () => {
+  return async (uri) => {
+    commandUri = uri instanceof vscode.Uri ? uri : void 0;
     try {
       await action();
     } catch (error) {

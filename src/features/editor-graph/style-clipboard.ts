@@ -1,7 +1,8 @@
-import type { GraphModel, GraphRelation, Size } from '@/core/model'
+import type { GraphModel, GraphRelation, ModelCommand, Size } from '@/core/model'
 import { notationRegistry } from '@/core/notation'
 
-const NODE_COLOR_KEYS = ['accentColor', 'backgroundColor', 'containerColor', 'color'] as const
+// `icon` is the tree-node glyph/image; it travels with the colours as part of the style
+const NODE_COLOR_KEYS = ['accentColor', 'backgroundColor', 'containerColor', 'color', 'icon'] as const
 const RELATION_COLOR_KEYS = ['accentColor', 'color'] as const
 
 type ElementFormat = { kind: 'element'; colors: Record<string, string>; size: Size }
@@ -61,6 +62,15 @@ export function elementFormatFor(model: GraphModel, elementId: string): { proper
   const element = model.elements[elementId]
   if (!element || clipboard?.kind !== 'element') return null
   return { properties: withCopiedColors(element.properties, clipboard.colors, NODE_COLOR_KEYS), size: clipboard.size }
+}
+
+/** Command pasting the copied node style onto every element of `ids`. */
+export function pasteElementFormatCommand(model: GraphModel, viewId: string, ids: string[]): ModelCommand | null {
+  const formats = ids.flatMap(id => {
+    const format = elementFormatFor(model, id)
+    return format ? [{ id, ...format }] : []
+  })
+  return formats.length ? { type: 'APPLY_ELEMENT_FORMAT', payload: { viewId, formats } } : null
 }
 
 export function relationFormatFor(model: GraphModel, relationId: string): Omit<RelationFormat, 'kind' | 'colors'> & { properties: Record<string, string> } | null {

@@ -1,4 +1,4 @@
-import { memo, useEffect, useReducer, useRef } from 'react'
+import { memo, useEffect, useReducer, useRef, useState } from 'react'
 import {
   BaseEdge,
   EdgeLabelRenderer,
@@ -11,9 +11,9 @@ import {
   type Node,
   Position,
 } from '@xyflow/react'
-import { useModelStore } from '@/store'
+import { useModelStore, type RelationTextField } from '@/store'
 import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, segmentCrossesRect, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
-import { END_LABEL_DISTANCE, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from './edge-label-position'
+import { END_LABEL_DISTANCE, pointOnBezier, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from './edge-label-position'
 
 // Routes of currently-mounted edges, so each edge can pay a malus for running
 // on the same pixel line as another relation (see overlapPenalty in the router).
@@ -186,11 +186,12 @@ function sceneFor(
     const nodeId = isSource ? edge.source : edge.target
     const otherId = isSource ? edge.target : edge.source
     const handle = isSource ? edge.sourceHandle : edge.targetHandle
-    if (nodeId === otherId || handle) return
+    if (nodeId === otherId || (handle && !SIDE_POS[handle])) return
     const node = nodeLookup.get(nodeId)
     const other = nodeLookup.get(otherId)
     if (!node || !other) return
-    const side = getEdgePosition(node, getNodeIntersection(node, other))
+    // pinned anchors share the fan with floating edges on the same side
+    const side = handle ? SIDE_POS[handle] : getEdgePosition(node, getNodeIntersection(node, other))
     const horizontal = side === Position.Top || side === Position.Bottom
     const coord = horizontal
       ? other.internals.positionAbsolute.x + (other.measured.width ?? 1) / 2
@@ -221,7 +222,7 @@ function sceneFor(
 }
 
 /**
- * Distribute the attachment points of floating edges that share a node side,
+ * Distribute the attachment points of edges (floating or pinned) that share a node side,
  * so two relations never leave/enter a node on the same pixel line. Siblings
  * are ordered by the position of their far node to keep the fan uncrossed.
  */
@@ -420,6 +421,65 @@ export function ganttAttachmentPoints(source: GanttNodeRect, target: GanttNodeRe
   }
 }
 
+// Label boxes of the last render, so near-parallel relations can keep their
+// mid labels apart. Each edge only yields to edges with a smaller id, which
+// keeps the placement deterministic instead of having pairs chase each other.
+const placedLabels = new Map<string, { x: number; y: number; w: number; h: number }>()
+const LABEL_FRACTIONS = [0.5, 0.38, 0.62, 0.28, 0.72, 0.2, 0.8]
+
+/** Slide a mid label along its path until it clears the labels of lower-id edges. */
+function placeLabel(id: string, label: string | undefined, at: (fraction: number) => Point): Point {
+  if (!label) {
+    placedLabels.delete(id)
+    return at(0.5)
+  }
+  const w = label.length * 6.2 + 16
+  const h = 20
+  const blockers = [...placedLabels].filter(([other]) => other < id).map(([, box]) => box)
+  const free = (candidate: Point) => !blockers.some(box => Math.abs(box.x - candidate.x) * 2 < box.w + w && Math.abs(box.y - candidate.y) * 2 < box.h + h)
+  const mid = at(0.5)
+  // slide along the path first; on short parallel runs stack above/below the midpoint
+  const stacked = [1, -1, 2, -2, 3, -3].map(step => ({ x: mid.x, y: mid.y + step * (h + 2) }))
+  const point = [...LABEL_FRACTIONS.map(at), ...stacked].find(free) ?? mid
+  placedLabels.set(id, { x: point.x, y: point.y, w, h })
+  return point
+}
+
+/** Inline relation-text input (label or an end multiplicity); commits on
+ *  Enter/blur, cancels on Escape. */
+function EdgeLabelEditor({ id, field, x, y }: { id: string; field: RelationTextField; x: number; y: number }) {
+  const relation = useModelStore.getState().model.relations[id]
+  const initial = (field === 'label' ? relation?.label : relation?.properties?.[field]) ?? ''
+  const [value, setValue] = useState(initial)
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { ref.current?.focus(); ref.current?.select() }, [])
+  const close = () => useModelStore.getState().setEditingRelation(null)
+  const commit = () => {
+    const next = value.trim()
+    if (next !== initial && relation) {
+      const properties = { ...relation.properties }
+      if (field !== 'label') { if (next) properties[field] = next; else delete properties[field] }
+      useModelStore.getState().dispatch({
+        type: 'UPDATE_RELATION',
+        payload: field === 'label' ? { id, label: next || undefined } : { id, properties },
+      })
+    }
+    close()
+  }
+  return (
+    <input
+      ref={ref}
+      value={value}
+      placeholder={field === 'label' ? 'Label' : field === 'sourceCard' ? '1' : '0..*'}
+      onChange={event => setValue(event.target.value)}
+      onBlur={commit}
+      onKeyDown={event => { event.stopPropagation(); if (event.key === 'Enter') commit(); if (event.key === 'Escape') close() }}
+      className={`nodrag nopan absolute ${field === 'label' ? 'w-36' : 'w-14'} rounded border border-[var(--accent)] bg-[var(--surface-1)] px-1.5 py-0.5 text-center text-[11px] font-medium text-[var(--fg)] shadow-lg outline-none`}
+      style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, pointerEvents: 'all', zIndex: 1000 }}
+    />
+  )
+}
+
 export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, style, data, selected, sourceHandleId, targetHandleId }: EdgeProps) => {
   const sourceNode = useInternalNode(source)
   const targetNode = useInternalNode(target)
@@ -428,10 +488,11 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   const rfEdges = useStore(s => s.edges)
   const dispatch = useModelStore(s => s.dispatch)
   const selectRelation = useModelStore(s => s.selectRelation)
+  const editingField = useModelStore(s => (s.editingRelation?.id === id ? s.editingRelation.field : null))
   const { screenToFlowPosition } = useReactFlow()
   const sequenceDrag = useRef<{ pointerId: number; startY: number } | null>(null)
   const scene = sceneFor(nodeLookup, rfEdges)
-  useEffect(() => () => { routedEdges.delete(id); routeCache.delete(id) }, [id])
+  useEffect(() => () => { routedEdges.delete(id); routeCache.delete(id); placedLabels.delete(id) }, [id])
   // settle pass: the first render of each edge happens before later edges are
   // in the registry, so re-route once after mount when the registry is full
   const [, settle] = useReducer((n: number) => n + 1, 0)
@@ -485,11 +546,11 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     const choice = openAutoSide(targetNode, sourceNode, targetPos, scene)
     tx = choice.point.x; ty = choice.point.y; targetPos = choice.side
   }
-  if (!selfCurve && !sourceHandleId && !chartRelation) {
+  if (!selfCurve && !chartRelation) {
     const p = spreadPoint(id, sourceNode, sourcePos, { x: sx, y: sy }, scene.spreadSlots)
     sx = p.x; sy = p.y
   }
-  if (!selfCurve && !targetHandleId && !chartRelation) {
+  if (!selfCurve && !chartRelation) {
     const p = spreadPoint(id, targetNode, targetPos, { x: tx, y: ty }, scene.spreadSlots)
     tx = p.x; ty = p.y
   }
@@ -680,12 +741,12 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     middleArrowAngle = gitCurve.angle
   } else if (routed) {
     path = pointsToRoundedPath(routed, edgeData?.cornerRadius ?? 8)
-    const mid = pointOnPolyline(routed, 0.5)
     const beforeMid = pointOnPolyline(routed, 0.47)
     const afterMid = pointOnPolyline(routed, 0.53)
     middleArrowAngle = Math.atan2(afterMid.y - beforeMid.y, afterMid.x - beforeMid.x) * 180 / Math.PI
-    labelX = mid.x
-    labelY = mid.y
+    const placed = placeLabel(id, edgeData?.label, fraction => pointOnPolyline(routed!, fraction))
+    labelX = placed.x
+    labelY = placed.y
     sourceLabelPoint = pointOnPolylineAtDistance(routed, END_LABEL_DISTANCE)
     targetLabelPoint = pointOnPolylineAtDistance(routed, END_LABEL_DISTANCE, true)
   } else {
@@ -694,6 +755,9 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       targetPosition: targetPos, targetX: tx, targetY: ty,
       curvature: 0.25,
     })
+    const placed = placeLabel(id, edgeData?.label, fraction => pointOnBezier({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, fraction))
+    labelX = placed.x
+    labelY = placed.y
     sourceLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE)
     targetLabelPoint = pointOnBezierAtDistance({ x: sx, y: sy }, { x: tx, y: ty }, sourcePos, targetPos, END_LABEL_DISTANCE, true)
     middleArrowAngle = Math.atan2(ty - sy, tx - sx) * 180 / Math.PI
@@ -730,14 +794,24 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     : style
   const renderedLabelY = d2?.middleArrow ? labelY - 18 : labelY
   // Multiplicity labels sit directly on the relation, near their respective ends.
-  const endLabel = (txt: string, x: number, y: number, key: string) => (
-    <EdgeLabelRenderer key={key}>
+  const editText = (field: RelationTextField) => (event: React.MouseEvent) => {
+    event.stopPropagation()
+    selectRelation(id)
+    useModelStore.getState().setEditingRelation(id, field)
+  }
+  const endLabel = (txt: string, x: number, y: number, field: RelationTextField) => (
+    <EdgeLabelRenderer key={field}>
       <div
         className="gms-edge-label nodrag nopan absolute rounded px-1 text-[10px] font-semibold shadow-sm"
-        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, background: 'var(--surface-1)', color: 'var(--edge-label)', pointerEvents: 'none' }}
+        style={{ transform: `translate(-50%,-50%) translate(${x}px,${y}px)`, background: 'var(--surface-1)', color: 'var(--edge-label)', pointerEvents: 'all' }}
+        onClick={() => selectRelation(id)}
+        onDoubleClick={editText(field)}
       >{txt}</div>
     </EdgeLabelRenderer>
   )
+  const editorPoint = editingField === 'sourceCard' ? sourceLabelPoint
+    : editingField === 'targetCard' ? targetLabelPoint
+      : { x: labelX, y: renderedLabelY }
   return (
     <>
       {d2?.underlayStroke && <BaseEdge id={`${id}-underlay`} path={path} style={{ stroke: d2.underlayStroke, strokeWidth: d2.underlayWidth ?? 18 }} />}
@@ -766,9 +840,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
             : <path d="M-6 -5 L6 0 L-6 5 Z" fill={d2.middleArrowColor ?? '#FF9828'} />}
         </g>
       )}
-      {d2?.sourceLabel && endLabel(d2.sourceLabel, sourceLabelPoint.x, sourceLabelPoint.y, 'sc')}
-      {d2?.targetLabel && endLabel(d2.targetLabel, targetLabelPoint.x, targetLabelPoint.y, 'tc')}
-      {label && (
+      {d2?.sourceLabel && editingField !== 'sourceCard' && endLabel(d2.sourceLabel, sourceLabelPoint.x, sourceLabelPoint.y, 'sourceCard')}
+      {d2?.targetLabel && editingField !== 'targetCard' && endLabel(d2.targetLabel, targetLabelPoint.x, targetLabelPoint.y, 'targetCard')}
+      {editingField && (
+        <EdgeLabelRenderer>
+          <EdgeLabelEditor key={editingField} id={id} field={editingField} x={editorPoint.x} y={editorPoint.y} />
+        </EdgeLabelRenderer>
+      )}
+      {label && editingField !== 'label' && (
         <EdgeLabelRenderer>
           <div
             className="gms-edge-label nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium shadow-sm"
@@ -779,6 +858,8 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
               border: selected ? `1px solid ${d2?.selectedStroke ?? 'var(--accent)'}` : '1px solid var(--border)',
               pointerEvents: 'all',
             }}
+            onClick={() => selectRelation(id)}
+            onDoubleClick={editText('label')}
           >
             {label}
           </div>

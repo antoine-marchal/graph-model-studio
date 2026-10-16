@@ -2,7 +2,7 @@
   "name": "graph-model-studio",
   "displayName": "Graph Model Studio + Markdown Toolkit",
   "description": "Full GMC tooling with live Markdown diagrams, recursive code/Markdown embeds, and rich-text paste as Markdown.",
-  "version": "3.7.3",
+  "version": "3.8.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
   "engines": {
@@ -84,7 +84,10 @@
       {
         "command": "slides.preview",
         "title": "Slides: Preview",
-        "icon": "$(open-preview)"
+        "icon": {
+          "light": "media/preview-slides-light.svg",
+          "dark": "media/preview-slides-dark.svg"
+        }
       },
       {
         "command": "slides.exportHtml",
@@ -109,7 +112,10 @@
       {
         "command": "gmc.openPreview",
         "title": "GMC: Open Graph Preview to the Side",
-        "icon": "$(open-preview)"
+        "icon": {
+          "light": "media/preview-graph-light.svg",
+          "dark": "media/preview-graph-dark.svg"
+        }
       },
       {
         "command": "gmc.exportPng",

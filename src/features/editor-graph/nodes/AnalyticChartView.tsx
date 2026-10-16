@@ -51,6 +51,47 @@ export function AnalyticChartView({ frame }: { frame: AnalyticChartFrame }) {
     selectElement(id)
     setEditingElement(id)
   }
+  // XY bubbles drag in data space; the model commits once on release
+  const dispatch = useModelStore(s => s.dispatch)
+  const [pointDrag, setPointDrag] = useState<{ id: string; x: number; y: number; moved: boolean } | null>(null)
+  const dragScale = useRef<{ toData: (e: React.PointerEvent) => { x: number; y: number }; startX: number; startY: number } | null>(null)
+  const startPointDrag = (e: React.PointerEvent<SVGGElement>, p: XyPointFrame, pw: number, ph: number) => {
+    if (frame.kind !== 'xy' || e.button !== 0) return
+    e.stopPropagation()
+    const svg = e.currentTarget.ownerSVGElement
+    const ctm = svg?.getScreenCTM()
+    if (!svg || !ctm) return
+    const inverse = ctm.inverse()
+    const { xMin, xMax, yMin, yMax } = frame
+    const xStep = 10 ** Math.floor(Math.log10((xMax - xMin) / 100)), yStep = 10 ** Math.floor(Math.log10((yMax - yMin) / 100))
+    const snap = (v: number, step: number) => Number((Math.round(v / step) * step).toFixed(Math.max(0, -Math.log10(step))))
+    dragScale.current = {
+      startX: e.clientX, startY: e.clientY,
+      toData: ev => {
+        const local = new DOMPoint(ev.clientX, ev.clientY).matrixTransform(inverse)
+        return {
+          x: snap(xMin + (local.x - PAD.l) / pw * (xMax - xMin), xStep),
+          y: snap(yMin + (PAD.t + ph - local.y) / ph * (yMax - yMin), yStep),
+        }
+      },
+    }
+    e.currentTarget.setPointerCapture(e.pointerId)
+    setPointDrag({ id: p.id, x: p.x, y: p.y, moved: false })
+  }
+  const movePointDrag = (e: React.PointerEvent) => {
+    const scale = dragScale.current
+    if (!pointDrag || !scale) return
+    if (!pointDrag.moved && Math.hypot(e.clientX - scale.startX, e.clientY - scale.startY) < 3) return
+    setPointDrag({ id: pointDrag.id, ...scale.toData(e), moved: true })
+  }
+  const endPointDrag = () => {
+    dragScale.current = null
+    if (pointDrag?.moved) {
+      const element = useModelStore.getState().model.elements[pointDrag.id]
+      if (element) dispatch({ type: 'UPDATE_ELEMENT', payload: { id: element.id, properties: { ...element.properties, x: String(pointDrag.x), y: String(pointDrag.y) } } })
+    }
+    setPointDrag(null)
+  }
   const { width: w, height: h } = frame
   const embeddedIds = frame.kind === 'sankey' ? frame.nodes.map(item => item.id)
     : frame.kind === 'xy' ? frame.series.flatMap(series => [series.id, ...series.points.map(point => point.id)])
@@ -80,7 +121,7 @@ export function AnalyticChartView({ frame }: { frame: AnalyticChartFrame }) {
     return <><svg className="absolute inset-0" width="100%" height="100%" viewBox={`0 0 ${w} ${h}`}>
       {[0,.25,.5,.75,1].map(t=><g key={t}><line x1={PAD.l} y1={PAD.t+t*ph} x2={w-PAD.r} y2={PAD.t+t*ph} stroke="var(--border)"/><text x={PAD.l-6} y={PAD.t+t*ph+3} textAnchor="end" fontSize="9" fill="var(--fg-muted)">{(frame.yMax-t*(frame.yMax-frame.yMin)).toFixed(1)}</text><text x={PAD.l+t*pw} y={h-PAD.b+16} textAnchor="middle" fontSize="9" fill="var(--fg-muted)">{(frame.xMin+t*(frame.xMax-frame.xMin)).toFixed(1)}</text></g>)}
       <line x1={PAD.l} y1={PAD.t} x2={PAD.l} y2={h-PAD.b} stroke="var(--fg-muted)"/><line x1={PAD.l} y1={h-PAD.b} x2={w-PAD.r} y2={h-PAD.b} stroke="var(--fg-muted)"/>
-      {frame.series.map(s => { const seriesSelected = selectedIds.includes(s.id); return <g key={s.id} className="nodrag nopan" onClick={e => onSelect(s.id, e)} onDoubleClick={e => onEdit(s.id, e)} style={{ cursor: 'pointer' }}>{frame.connect && <polyline points={[...s.points].sort((a,b)=>a.x-b.x).map(p=>`${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke={s.stroke} strokeWidth={seriesSelected ? 3.5 : 1.5}/>} {frame.regression && (()=>{const lr=regression(s.points); return lr?<line x1={sx(frame.xMin)} y1={sy(lr[0]*frame.xMin+lr[1])} x2={sx(frame.xMax)} y2={sy(lr[0]*frame.xMax+lr[1])} stroke={s.stroke} strokeWidth={seriesSelected ? 4 : 2} strokeDasharray="6 4"/>:null})()}{s.points.map(p=>{const pointSelected=selectedIds.includes(p.id), radius=Math.min(30,p.size), px=sx(p.x), py=sy(p.y), labelOnLeft=px>PAD.l+pw*.72; return <g key={p.id} onClick={e=>onSelect(p.id,e)} onDoubleClick={e=>onEdit(p.id,e)} role="button" aria-label={`Select point ${p.label ?? p.id}`} aria-pressed={pointSelected} style={{cursor:'pointer'}}><circle cx={px} cy={py} r={Math.max(14,radius+6)} fill="transparent" pointerEvents="all"/><circle cx={px} cy={py} r={radius+(pointSelected?3:seriesSelected?2:0)} fill={s.color} fillOpacity={pointSelected ? 1 : seriesSelected ? .9 : .75} stroke={s.stroke} strokeWidth={pointSelected?3:seriesSelected?2:1} pointerEvents="none"><title>{p.label}: {p.x}, {p.y}</title></circle>{p.description&&<text x={px+(labelOnLeft?-radius-5:radius+5)} y={py+3} textAnchor={labelOnLeft?'end':'start'} fontSize="9" fontWeight="600" fill="var(--fg)" stroke="var(--surface-1)" strokeWidth="3" paintOrder="stroke" pointerEvents="none">{p.description}</text>}</g>})}</g> })}
+      {frame.series.map(s => { const seriesSelected = selectedIds.includes(s.id); return <g key={s.id} className="nodrag nopan" onClick={e => onSelect(s.id, e)} onDoubleClick={e => onEdit(s.id, e)} style={{ cursor: 'pointer' }}>{frame.connect && <polyline points={[...s.points].sort((a,b)=>a.x-b.x).map(p=>`${sx(p.x)},${sy(p.y)}`).join(' ')} fill="none" stroke={s.stroke} strokeWidth={seriesSelected ? 3.5 : 1.5}/>} {frame.regression && (()=>{const lr=regression(s.points); return lr?<line x1={sx(frame.xMin)} y1={sy(lr[0]*frame.xMin+lr[1])} x2={sx(frame.xMax)} y2={sy(lr[0]*frame.xMax+lr[1])} stroke={s.stroke} strokeWidth={seriesSelected ? 4 : 2} strokeDasharray="6 4"/>:null})()}{s.points.map(p=>{const live=pointDrag?.id===p.id?pointDrag:p, pointSelected=selectedIds.includes(p.id), radius=Math.min(30,p.size), px=sx(live.x), py=sy(live.y), labelOnLeft=px>PAD.l+pw*.72; return <g key={p.id} data-element-id={p.id} className="nodrag nopan" onPointerDown={e=>startPointDrag(e,p,pw,ph)} onPointerMove={movePointDrag} onPointerUp={endPointDrag} onPointerCancel={()=>setPointDrag(null)} onClick={e=>onSelect(p.id,e)} onDoubleClick={e=>onEdit(p.id,e)} role="button" aria-label={`Select point ${p.label ?? p.id}`} aria-pressed={pointSelected} style={{cursor:'pointer'}}><circle cx={px} cy={py} r={Math.max(14,radius+6)} fill="transparent" pointerEvents="all"/><circle cx={px} cy={py} r={radius+(pointSelected?3:seriesSelected?2:0)} fill={s.color} fillOpacity={pointSelected ? 1 : seriesSelected ? .9 : .75} stroke={s.stroke} strokeWidth={pointSelected?3:seriesSelected?2:1} pointerEvents="none"><title>{p.label}: {live.x}, {live.y}</title></circle>{p.description&&<text x={px+(labelOnLeft?-radius-5:radius+5)} y={py+3} textAnchor={labelOnLeft?'end':'start'} fontSize="9" fontWeight="600" fill="var(--fg)" stroke="var(--surface-1)" strokeWidth="3" paintOrder="stroke" pointerEvents="none">{p.description}</text>}</g>})}</g> })}
       {frame.xLabel&&<text x={PAD.l+pw/2} y={h-8} textAnchor="middle" fontSize="11" fontWeight="600" fill="var(--fg)">{frame.xLabel}</text>}{frame.yLabel&&<text x="13" y={PAD.t+ph/2} textAnchor="middle" transform={`rotate(-90 13 ${PAD.t+ph/2})`} fontSize="11" fontWeight="600" fill="var(--fg)">{frame.yLabel}</text>}
     </svg>{nameEditor}</>
   }

@@ -88,9 +88,11 @@ function Glyph({ iconSrc, icon, color, size }: { iconSrc?: string; icon: IconKin
   return null
 }
 
-function Handles({ stroke, prominent = false }: { stroke: string; prominent?: boolean }) {
+function Handles({ stroke, prominent = false, invisible = false }: { stroke: string; prominent?: boolean; invisible?: boolean }) {
   // Keep node-level handles above embedded SVG/chart interaction layers.
-  const cls = `!z-50 !border-2 !bg-zinc-50 dark:!bg-zinc-900 ${prominent ? '!h-4 !w-4' : '!h-2.5 !w-2.5'}`
+  // `invisible` keeps them connectable but unpainted: on tiny discs (git
+  // commits) the four side handles would otherwise overlap into a cross.
+  const cls = `!z-50 !border-2 !bg-zinc-50 dark:!bg-zinc-900 ${prominent ? '!h-4 !w-4' : '!h-2.5 !w-2.5'}${invisible ? ' !opacity-0' : ''}`
   const style = { borderColor: stroke }
   return (
     <>
@@ -294,7 +296,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         <Handles stroke={stroke} />
         <SpecialGraphHeader data={d} stroke={stroke} accent={accent} />
         <div className="min-h-0 flex-1 px-1">
-          <TreeGraphView roots={d.tree ?? []} accent={accent} />
+          <TreeGraphView hostId={id} roots={d.tree ?? []} accent={accent} />
         </div>
       </div>
     )
@@ -489,7 +491,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
         className={cn('relative flex h-full w-full items-center justify-center rounded-full', ring && 'rounded-full ' + ring)}
         style={{ background: fill, border: `${borderWidth}px solid ${stroke}` }}
       >
-        <Handles stroke={stroke} />
+        <Handles stroke={stroke} invisible={isMergeCommit} />
         {shape === 'doubleCircle' && <div className="absolute rounded-full" style={{ inset: 3, border: `2px solid ${stroke}` }} />}
         {isMergeCommit ? (
           <>
@@ -659,7 +661,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
     // small disc with the label below (commits, quadrant items)
     body = (
       <div className={cn('relative h-full w-full', ring && 'rounded-full ' + ring)}>
-        <Handles stroke={stroke} />
+        <Handles stroke={stroke} invisible={d.elementType === 'commit'} />
         <ProjectionArrow projection={d.projection} width={width} height={height} />
         <div className="relative z-10 h-full w-full rounded-full" style={{ background: fill, border: `2.5px solid ${stroke}` }} />
         {d.badge && (

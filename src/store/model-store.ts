@@ -12,6 +12,8 @@ import { getVisibleElementIds, isRelationIncluded, relationKey } from '@/core/mo
 
 export type Theme = 'light' | 'dark'
 export type EdgeRouting = 'curved' | 'orthogonal'
+/** inline-editable relation texts: the label or the source/target multiplicity property */
+export type RelationTextField = 'label' | 'sourceCard' | 'targetCard'
 
 interface HistorySnapshot {
   model: GraphModel
@@ -47,6 +49,8 @@ export interface ModelStore {
   focusPropertiesNonce: number
   /** id of the element currently being renamed inline on the canvas */
   editingElementId: string | null
+  /** relation text (label or an end multiplicity) being edited inline on the canvas */
+  editingRelation: { id: string; field: RelationTextField } | null
   hoveredTreeNodeId: string | null
   layoutEngine: LayoutEngine
   snapToGrid: boolean
@@ -61,6 +65,7 @@ export interface ModelStore {
   undo(): void
   redo(): void
   setEditingElement(id: string | null): void
+  setEditingRelation(id: string | null, field?: RelationTextField): void
   setHoveredTreeNode(id: string | null): void
   setLayoutEngine(engine: LayoutEngine): void
   toggleSnapToGrid(): void
@@ -388,6 +393,17 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
       }
       break
     }
+    case 'REPARENT_ELEMENTS': {
+      const view = model.views[command.payload.viewId]
+      for (const move of command.payload.moves) {
+        if (model.elements[move.id]?.parentId === move.parentId) {
+          if (view) view.layoutPositions[move.id] = move.position
+        } else {
+          applyCommand(model, { type: 'REPARENT_ELEMENT', payload: { viewId: command.payload.viewId, ...move } }, activeViewId)
+        }
+      }
+      break
+    }
     case 'REPARENT_ELEMENT': {
       const element = model.elements[command.payload.id]
       if (!element || element.parentId === command.payload.parentId) break
@@ -446,12 +462,15 @@ function applyCommand(model: GraphModel, command: ModelCommand, activeViewId: st
       break
     }
     case 'APPLY_ELEMENT_FORMAT': {
-      const element = model.elements[command.payload.id]
       const view = model.views[command.payload.viewId]
-      if (element) element.properties = command.payload.properties
-      if (view) {
-        if (!view.nodeSizes) view.nodeSizes = {}
-        view.nodeSizes[command.payload.id] = command.payload.size
+      for (const { id, properties, size } of command.payload.formats) {
+        const element = model.elements[id]
+        if (!element) continue
+        element.properties = properties
+        if (view) {
+          if (!view.nodeSizes) view.nodeSizes = {}
+          view.nodeSizes[id] = size
+        }
       }
       break
     }
@@ -523,6 +542,7 @@ export const useModelStore = create<ModelStore>()(
       highlightRequest: null,
       focusPropertiesNonce: 0,
       editingElementId: null,
+      editingRelation: null,
       hoveredTreeNodeId: null,
       layoutEngine: prefs.layoutEngine,
       snapToGrid: prefs.snapToGrid,
@@ -587,6 +607,7 @@ export const useModelStore = create<ModelStore>()(
       },
 
       setEditingElement(id) { set(state => { state.editingElementId = id }) },
+      setEditingRelation(id, field = 'label') { set(state => { state.editingRelation = id ? { id, field } : null }) },
 
       setLayoutEngine(engine) { set(state => { state.layoutEngine = engine }); persistPrefs() },
       toggleSnapToGrid() { set(state => { state.snapToGrid = !state.snapToGrid }); persistPrefs() },

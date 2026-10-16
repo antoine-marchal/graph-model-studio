@@ -118,25 +118,45 @@ export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(m
   const extensionVersion = String(context.extension.packageJSON.version ?? '0.0.0')
   const preview = new PreviewManager(context.extensionUri, context.globalState, extensionVersion)
   context.subscriptions.push(preview)
+  let renderQueue: Promise<unknown> = Promise.resolve()
 
   context.subscriptions.push(vscode.commands.registerCommand(
     'gmc.renderFilePng',
-    async (sourceUri: vscode.Uri, targetUri: vscode.Uri, view?: string) => {
-      const document = await vscode.workspace.openTextDocument(sourceUri)
-      const size = dimensions()
-      const dataUrl = await preview.exportPng({
-        source: document.getText(),
-        name: path.basename(document.fileName),
-        view,
-        theme: configuredTheme(),
-      }, size.width, size.height, true)
-      await writePng(dataUrl, targetUri)
-      return targetUri
+    (sourceUri: vscode.Uri, targetUri: vscode.Uri, view?: string, theme?: string) => {
+      // One preview panel renders every export: run them one at a time, or
+      // concurrent embeds (Markdown embedder) overwrite each other's render.
+      const run = renderQueue.then(async () => {
+        const document = await vscode.workspace.openTextDocument(sourceUri)
+        const size = dimensions()
+        const dataUrl = await preview.exportPng({
+          source: document.getText(),
+          name: path.basename(document.fileName),
+          view,
+          theme: theme === 'light' || theme === 'dark' ? theme : configuredTheme(),
+        }, size.width, size.height, true)
+        await writePng(dataUrl, targetUri)
+        return targetUri
+      })
+      renderQueue = run.catch(() => undefined)
+      return run
     },
   ))
 
-  context.subscriptions.push(vscode.commands.registerCommand('gmc.openPreview', async () => {
-    const input = inputFromEditor()
+  context.subscriptions.push(vscode.commands.registerCommand('gmc.openPreview', async (uri?: vscode.Uri, blockIndex?: number) => {
+    // Callers without a text cursor (e.g. a custom Markdown editor) pass the
+    // document and the index of the GMC fence to open.
+    let input = inputFromEditor()
+    if (uri instanceof vscode.Uri && typeof blockIndex === 'number') {
+      const document = await vscode.workspace.openTextDocument(uri)
+      const block = scanGmcMarkdownBlocks(document)[blockIndex]
+      input = block && {
+        source: block.source,
+        name: `${path.basename(document.fileName)} · ${block.id}`,
+        view: block.info.view,
+        theme: configuredTheme(block),
+        target: { uri: document.uri.toString(), kind: 'markdown', blockIndex: block.index, blockId: block.id },
+      }
+    }
     if (!input) {
       void vscode.window.showInformationMessage('Open a .gmc file or place the cursor inside a fenced GMC Markdown block.')
       return
@@ -198,8 +218,10 @@ export function activate(context: vscode.ExtensionContext): { extendMarkdownIt(m
     },
   ))
 
-  context.subscriptions.push(vscode.commands.registerCommand('gmc.exportAllMarkdownDiagrams', async () => {
-    const document = vscode.window.activeTextEditor?.document
+  context.subscriptions.push(vscode.commands.registerCommand('gmc.exportAllMarkdownDiagrams', async (uri?: vscode.Uri) => {
+    const document = uri instanceof vscode.Uri
+      ? await vscode.workspace.openTextDocument(uri)
+      : vscode.window.activeTextEditor?.document
     if (!document || document.languageId !== 'markdown') {
       void vscode.window.showInformationMessage('Open a Markdown file containing fenced GMC blocks.')
       return

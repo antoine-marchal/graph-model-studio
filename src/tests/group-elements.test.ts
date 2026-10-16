@@ -46,4 +46,21 @@ describe('group elements', () => {
     expect(model.elements.grp.children).toEqual(['outer', 'c'])
     expect(model.elements.a.parentId).toBe('outer')
   })
+
+  it('moves a multi-node drag out of its group in one undo step', () => {
+    const before = useModelStore.getState().past.length
+    useModelStore.getState().dispatch({
+      type: 'REPARENT_ELEMENTS',
+      payload: { viewId: 'v', moves: [
+        { id: 'a', position: { x: 10, y: 20 } },
+        { id: 'b', position: { x: 210, y: 20 } },
+      ] },
+    })
+    const { model, past } = useModelStore.getState()
+    expect(model.elements.a.parentId).toBeUndefined()
+    expect(model.elements.b.parentId).toBeUndefined()
+    expect(model.elements.outer.children).toEqual([])
+    expect(model.views.v.layoutPositions.b).toEqual({ x: 210, y: 20 })
+    expect(past.length).toBe(before + 1)
+  })
 })

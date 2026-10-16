@@ -16,7 +16,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useModelStore } from '@/store'
+import { useModelStore, type RelationTextField } from '@/store'
 import {
   modelToFlow,
   computeAutoLayout,
@@ -36,6 +36,7 @@ import {
   runLayoutSubset, LAYOUT_ENGINES, type LayoutEngine,
 } from '@/core/layout'
 import { NodeContextMenu, type ContextMenuState } from './NodeContextMenu'
+import { ElementContextMenu, type ElementMenuState } from './ElementContextMenu'
 import { saveBinaryFile, filtersForExt } from '@/services/file-save'
 import { createElementId } from '@/core/model'
 import { setNodeRectProvider, type NodeRect } from './node-geometry'
@@ -53,7 +54,7 @@ import { isNodeOnTop } from './node-layering'
 import {
   copyElementFormat,
   copyRelationFormat,
-  elementFormatFor,
+  pasteElementFormatCommand,
   relationFormatFor,
 } from './style-clipboard'
 import { quadrantValuesFromPosition } from './quadrant-position'
@@ -67,6 +68,8 @@ const CHART_CHILD_AXIS: Record<string, 'x' | 'y' | undefined> = {
   ganttTask: 'y', ganttMilestone: 'y', ganttSection: 'y',
 }
 const edgeTypes = { floating: FloatingEdge }
+// positioned by chart semantics, never reparented by a multi-node drop
+const FIXED_DROP_TYPES = new Set(['activityBar', 'gridItem', 'quadrantItem', 'ganttTask', 'ganttMilestone'])
 
 /** Decode a "data:image/png;base64,…" URL into raw bytes. */
 function descendantIds(model: ReturnType<typeof useModelStore.getState>['model'], id: string): Set<string> {
@@ -111,7 +114,6 @@ function GraphEditorInner() {
   const selectElements = useModelStore(s => s.selectElements)
   const selectRelation = useModelStore(s => s.selectRelation)
   const requestHighlight = useModelStore(s => s.requestHighlight)
-  const requestFocusProperties = useModelStore(s => s.requestFocusProperties)
   const dispatch = useModelStore(s => s.dispatch)
   const setViewPositions = useModelStore(s => s.setViewPositions)
   const setEditingElement = useModelStore(s => s.setEditingElement)
@@ -145,6 +147,7 @@ function GraphEditorInner() {
   const [nodes, setNodes] = useState<GraphNode[]>([])
   const [edges, setEdges] = useState<GraphEdge[]>([])
   const [menu, setMenu] = useState<ContextMenuState | null>(null)
+  const [elementMenu, setElementMenu] = useState<ElementMenuState | null>(null)
 
   useEffect(() => {
     const workspace = wrapperRef.current as GraphCaptureWorkspace | null
@@ -302,15 +305,37 @@ function GraphEditorInner() {
   }, [commitSelection, getEdges, getNodes])
 
   // double-click a node → inline rename on the canvas
-  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: { id: string }) => {
-    selectElements([node.id])
-    setEditingElement(node.id)
+  const onNodeDoubleClick = useCallback((event: React.MouseEvent, node: { id: string }) => {
+    const embedded = (event.target as Element).closest?.('[data-element-id]')?.getAttribute('data-element-id')
+    const id = embedded ?? node.id
+    selectElements([id])
+    setEditingElement(id)
   }, [selectElements, setEditingElement])
-  const onEdgeDoubleClick = useCallback((_: React.MouseEvent, edge: { id: string }) => {
+  // double-click a relation → inline edit on the canvas: near either end it
+  // edits that end's multiplicity, elsewhere the label
+  const onEdgeDoubleClick = useCallback((event: React.MouseEvent, edge: { id: string }) => {
     selectRelation(edge.id)
-    requestHighlight('relation', edge.id, { focus: true })
-    requestFocusProperties()
-  }, [selectRelation, requestHighlight, requestFocusProperties])
+    requestHighlight('relation', edge.id)
+    const path = Array.from((event.target as Element).closest('.react-flow__edge')?.querySelectorAll<SVGPathElement>('path.react-flow__edge-path') ?? [])
+      .find(candidate => candidate.id === edge.id)
+    const ctm = path?.getScreenCTM()
+    let field: RelationTextField = 'label'
+    if (path && ctm) {
+      const local = new DOMPoint(event.clientX, event.clientY).matrixTransform(ctm.inverse())
+      const total = path.getTotalLength()
+      let along = total / 2
+      let best = Infinity
+      for (let i = 0; i <= 60; i++) {
+        const p = path.getPointAtLength(total * i / 60)
+        const distance = Math.hypot(p.x - local.x, p.y - local.y)
+        if (distance < best) { best = distance; along = total * i / 60 }
+      }
+      const reach = Math.min(48, total / 3)
+      if (along < reach) field = 'sourceCard'
+      else if (total - along < reach) field = 'targetCard'
+    }
+    useModelStore.getState().setEditingRelation(edge.id, field)
+  }, [selectRelation, requestHighlight])
 
   const onNodesDelete = useCallback((deleted: { id: string }[]) => {
     dispatch({ type: 'DELETE_ELEMENTS', payload: { ids: deleted.map(node => node.id) } })
@@ -336,6 +361,27 @@ function GraphEditorInner() {
     (event: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
       const gesture = dragGesture.current
       dragGesture.current = null
+      const liveNodesWith = (moved: GraphNode[]) => {
+        const byId = new Map(moved.map(candidate => [candidate.id, candidate]))
+        return nodes.map(candidate => byId.get(candidate.id) ?? candidate)
+      }
+      // The pointer, rather than an arbitrary amount of node overlap, decides
+      // the destination. Any model node may receive a child and thereby become
+      // a container; nested targets still prefer the smallest node.
+      const drop = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      const dropTarget = (excluded: Set<string>, accept: (candidate: GraphNode) => boolean = () => true) => {
+        const liveNodes = liveNodesWith(dragged)
+        let target: GraphNode | undefined
+        for (const candidate of liveNodes) {
+          if (excluded.has(candidate.id) || !model.elements[candidate.id] || !accept(candidate)) continue
+          const origin = absoluteNodePosition(candidate, liveNodes)
+          const width = candidate.measured?.width ?? candidate.width ?? 0
+          const height = candidate.measured?.height ?? candidate.height ?? 0
+          if (drop.x < origin.x || drop.x > origin.x + width || drop.y < origin.y || drop.y > origin.y + height) continue
+          if (!target || (candidate.width ?? 1) * (candidate.height ?? 1) < (target.width ?? 1) * (target.height ?? 1)) target = candidate
+        }
+        return target
+      }
       if (gesture && shiftPressed.current) {
         const primaryStart = gesture.starts.get(gesture.primaryId)
         const primary = dragged.find(candidate => candidate.id === gesture.primaryId) ?? node
@@ -452,30 +498,12 @@ function GraphEditorInner() {
           reorderSiblings(el.parentId, ordered)
           return
         }
-        const desc = descendantIds(model, node.id)
-        const draggedById = new Map(dragged.map(candidate => [candidate.id, candidate]))
-        const liveNodes = nodes.map(candidate => draggedById.get(candidate.id) ?? candidate)
-        const drop = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-        // The pointer, rather than an arbitrary amount of node overlap, decides
-        // the destination. Any model node may receive a child and thereby become
-        // a container; nested targets still prefer the smallest node.
-        const candidates = liveNodes.filter(candidate => {
-          if (candidate.id === node.id || desc.has(candidate.id) || !model.elements[candidate.id]) return false
-          if ((el?.type === 'ganttTask' || el?.type === 'ganttMilestone')
-            && !['ganttGraph', 'ganttSection'].includes(model.elements[candidate.id].type)) return false
-          const origin = absoluteNodePosition(candidate, liveNodes)
-          const width = candidate.measured?.width ?? candidate.width ?? 0
-          const height = candidate.measured?.height ?? candidate.height ?? 0
-          return drop.x >= origin.x && drop.x <= origin.x + width && drop.y >= origin.y && drop.y <= origin.y + height
-        })
-        let target: GraphNode | undefined
-        for (const n of candidates) {
-          const a = (n.width ?? 1) * (n.height ?? 1)
-          const ta = target ? (target.width ?? 1) * (target.height ?? 1) : Infinity
-          if (a < ta) target = n
-        }
+        const target = dropTarget(new Set([node.id, ...descendantIds(model, node.id)]),
+          candidate => !(el?.type === 'ganttTask' || el?.type === 'ganttMilestone')
+            || ['ganttGraph', 'ganttSection'].includes(model.elements[candidate.id].type))
         const newParent = target?.id
         if (newParent !== el?.parentId) {
+          const liveNodes = liveNodesWith(dragged)
           const position = droppedPosition(node, target, liveNodes)
           dispatch({ type: 'REPARENT_ELEMENT', payload: { viewId, id: node.id, parentId: newParent, position } })
           const newGanttHost = target && (model.elements[target.id]?.type === 'ganttGraph' ? target.id : ganttHostId(model, target.id))
@@ -493,6 +521,26 @@ function GraphEditorInner() {
               },
             })
           }
+          return
+        }
+      } else if (dragged.length > 1) {
+        // Multi-drag: the selection's top-level free nodes move together into
+        // whatever container lies under the pointer (or out to the canvas).
+        const draggedIds = new Set(dragged.map(candidate => candidate.id))
+        const excluded = new Set(draggedIds)
+        for (const id of draggedIds) for (const d of descendantIds(model, id)) excluded.add(d)
+        const target = dropTarget(excluded)
+        const liveNodes = liveNodesWith(dragged)
+        const moves = dragged.map(candidate => {
+          const el = model.elements[candidate.id]
+          const free = el && !draggedIds.has(el.parentId ?? '') && !FIXED_DROP_TYPES.has(el.type)
+            && !CHART_CHILD_AXIS[el.type] && !isNodeOnTop(el.properties)
+          return free && target?.id !== el.parentId
+            ? { id: candidate.id, parentId: target?.id, position: droppedPosition(candidate, target, liveNodes) }
+            : { id: candidate.id, parentId: el?.parentId, position: candidate.position }
+        })
+        if (moves.some(move => move.parentId !== model.elements[move.id]?.parentId)) {
+          dispatch({ type: 'REPARENT_ELEMENTS', payload: { viewId, moves } })
           return
         }
       }
@@ -573,8 +621,36 @@ function GraphEditorInner() {
     e.preventDefault()
     const me = e as React.MouseEvent
     const fp = screenToFlowPosition({ x: me.clientX, y: me.clientY })
+    setElementMenu(null)
     setMenu({ x: me.clientX, y: me.clientY, flowX: fp.x, flowY: fp.y })
   }, [screenToFlowPosition])
+  // right-click a node / selection / relation → compact Inspector actions.
+  // Right-clicking outside the current selection retargets it first.
+  const onNodeContextMenu = useCallback((e: React.MouseEvent, node: GraphNode) => {
+    // elements drawn inside a host node (tree rows, chart points) tag their DOM
+    const embedded = (e.target as Element).closest?.('[data-element-id]')?.getAttribute('data-element-id')
+    const targetId = embedded && model.elements[embedded] ? embedded : node.id
+    if (!model.elements[targetId]) return
+    e.preventDefault()
+    setMenu(null)
+    const selected = useModelStore.getState().selectedElementIds.filter(id => model.elements[id])
+    const ids = selected.includes(targetId) ? selected : [targetId]
+    if (!selected.includes(targetId)) selectElements(ids)
+    setElementMenu({ kind: 'elements', x: e.clientX, y: e.clientY, ids })
+  }, [model.elements, selectElements])
+  const onSelectionContextMenu = useCallback((e: React.MouseEvent, selected: GraphNode[]) => {
+    e.preventDefault()
+    setMenu(null)
+    const ids = selected.filter(node => model.elements[node.id]).map(node => node.id)
+    if (ids.length) setElementMenu({ kind: 'elements', x: e.clientX, y: e.clientY, ids })
+  }, [model.elements])
+  const onEdgeContextMenu = useCallback((e: React.MouseEvent, edge: GraphEdge) => {
+    if (!model.relations[edge.id]) return
+    e.preventDefault()
+    setMenu(null)
+    selectRelation(edge.id)
+    setElementMenu({ kind: 'relation', x: e.clientX, y: e.clientY, id: edge.id })
+  }, [model.relations, selectRelation])
   const openAddMenuFromButton = useCallback(() => {
     const rect = wrapperRef.current?.getBoundingClientRect()
     const cx = (rect?.left ?? 0) + 70
@@ -708,9 +784,9 @@ function GraphEditorInner() {
         if (state.selectedRelationId) {
           const format = relationFormatFor(state.model, state.selectedRelationId)
           if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id: state.selectedRelationId, ...format } })
-        } else if (state.activeViewId && state.selectedElementId) {
-          const format = elementFormatFor(state.model, state.selectedElementId)
-          if (format) dispatch({ type: 'APPLY_ELEMENT_FORMAT', payload: { viewId: state.activeViewId, id: state.selectedElementId, ...format } })
+        } else if (state.activeViewId && state.selectedElementIds.length) {
+          const command = pasteElementFormatCommand(state.model, state.activeViewId, state.selectedElementIds)
+          if (command) dispatch(command)
         }
       } else if (mod && key === 'd') {
         e.preventDefault(); duplicateSelection()
@@ -824,8 +900,11 @@ function GraphEditorInner() {
         onNodeDragStart={onNodeDragStart}
         onNodeDragStop={onNodeDragStop}
         onPaneContextMenu={onPaneContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
+        onSelectionContextMenu={onSelectionContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
         onMoveStart={event => { if (event) autoFit.current = false }}
-        onPaneClick={() => { selectElements([]); selectRelation(null); setMenu(null); setEditingElement(null) }}
+        onPaneClick={() => { selectElements([]); selectRelation(null); setMenu(null); setElementMenu(null); setEditingElement(null) }}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         connectionMode={ConnectionMode.Loose}
@@ -892,6 +971,7 @@ function GraphEditorInner() {
       </ReactFlow>
 
       {menu && <NodeContextMenu state={menu} onPick={addNodeAt} onClose={() => setMenu(null)} />}
+      {elementMenu && <ElementContextMenu state={elementMenu} onClose={() => setElementMenu(null)} onDuplicate={duplicateSelection} />}
     </div>
   )
 }

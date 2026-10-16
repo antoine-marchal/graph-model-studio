@@ -99,13 +99,16 @@ function activate(context) {
         });
     }
     // ── Update all embeds in active document ───────────────────────────────
-    const updateAllCommand = vscode.commands.registerCommand('markdown-embed.update', () => __awaiter(this, void 0, void 0, function* () {
+    const updateAllCommand = vscode.commands.registerCommand('markdown-embed.update', (uri) => __awaiter(this, void 0, void 0, function* () {
+        // Custom Markdown editors pass their document URI (no active text editor).
         const editor = vscode.window.activeTextEditor;
-        if (!editor) {
+        const document = uri instanceof vscode.Uri
+            ? yield vscode.workspace.openTextDocument(uri)
+            : editor === null || editor === void 0 ? void 0 : editor.document;
+        if (!document) {
             vscode.window.showErrorMessage('No active editor found.');
             return;
         }
-        const document = editor.document;
         yield vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
             title: 'Updating Code Embeds...',
@@ -113,12 +116,11 @@ function activate(context) {
         }, () => __awaiter(this, void 0, void 0, function* () {
             const edits = yield embedder.generateEdits(document);
             if (edits.length > 0) {
-                yield editor.edit(editBuilder => {
-                    edits.sort((a, b) => b.range.start.compareTo(a.range.start));
-                    for (const edit of edits) {
-                        editBuilder.replace(edit.range, edit.newText);
-                    }
-                });
+                const workspaceEdit = new vscode.WorkspaceEdit();
+                for (const edit of edits) {
+                    workspaceEdit.replace(document.uri, edit.range, edit.newText);
+                }
+                yield vscode.workspace.applyEdit(workspaceEdit);
                 vscode.window.showInformationMessage(`Updated ${edits.length} embeds.`);
             }
             else {
