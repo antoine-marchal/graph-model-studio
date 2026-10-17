@@ -45,8 +45,8 @@ export function SetupPrompt({
         </div>
         <div className="setup-prompt-body">
           <p>
-            Graph-Model-Studio VsCode Extension reformats files on open. Compacts lists, unifies
-            bullet markers, and similar tidy-ups. Then, it gets out of your way.
+            Opening a file never changes it. When you edit in the rich editor, the markdown is
+            written back normalized: compact lists, unified bullet markers, and similar tidy-ups.
           </p>
           <p>Pick how you'd like to handle the reformatting.</p>
           <p>You can change any of these later from the ⚙ settings panel.</p>

@@ -398,12 +398,6 @@
       {
         "title": "Markdown Studio",
         "properties": {
-          "markdownStudio.autoSave": {
-            "type": "boolean",
-            "default": true,
-            "order": 1,
-            "markdownDescription": "Save the file silently on first open to persist the normalization round-trip (md → html → md). Subsequent edits follow VS Code's own `#files.autoSave#` / manual-save behavior."
-          },
           "markdownStudio.saveOnEdit": {
             "type": "boolean",
             "default": false,

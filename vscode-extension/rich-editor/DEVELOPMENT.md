@@ -111,12 +111,23 @@ Grouping (`remarkGroupDirectives` / `rehypeUnwrapDirectives` in conversion-utils
 
 `markdownStudio.exportTheme` = `light` (default): `github-light` (or the user's light theme) on a transparent page, VS Code's color variables dropped, dark Mermaid / GMC diagrams redrawn light. Block frames (directive cards, diagram boxes, column outlines) are always flattened.
 
-DOCX (`integrations/markdown-toolkit/source/docx.js`): Pandoc `markdown` reader (+`gfm_auto_identifiers` so TOC links hit headings) with a Lua filter — columns → one-row "Columns" table, `<div align>` → "Center"/"Right" paragraph styles, `<mark>` → "Highlight <Color>", raw HTML re-read by Pandoc's HTML reader, `> [!NOTE]` labels. The reference DOCX (user template or Pandoc's default) gets those styles added when missing; without a template the default "Table" style also gets a grid.
+DOCX (`integrations/markdown-toolkit/source/docx.js`): Pandoc `markdown` reader (+`gfm_auto_identifiers` so TOC links hit headings) with a Lua filter — columns → one-row "Columns" table, `<div align>` → "Center"/"Right" paragraph styles, `<mark>` → "Highlight ", raw HTML re-read by Pandoc's HTML reader, `> [!NOTE]` labels. The reference DOCX (user template or Pandoc's default) gets those styles added when missing; without a template the default "Table" style also gets a grid.
+
 -   Inline `<mark data-color>` … `</mark>` → `highlight` → `Highlight` mark; written back by `rehypeRemarkHandlers.mark`.
 -   A table followed by `<!-- ms-table:cols=…;rows=… -->` gets cell `colwidth` / row `data-height` (column/row resizing); the comment is re-emitted after the table on save.
 -   `RawHtmlBlock` hides tool metadata comments (`<!-- key:value -->`, `isMetaComment`).
 
 GMC "interactive" opens `dist/webview` in a `srcdoc` iframe modal (`GmcBlock`). VS Code's webview service worker won't serve files to a nested `about:srcdoc` frame, so the editor fetches the graph JS/CSS (CSP `connect-src`) and inlines them with a nonce'd `acquireVsCodeApi` shim that relays to the editor; saves go through the host `gmcSave` message.
+
+The `.gmc` embed card (`DirectiveBlock`) opens the same modal on the embedded file: `gmcReadFile` loads it; Save / Ctrl+S (forwarded by the frame shim as `saveShortcut`) / closing with changes sends `gmcWriteFile`, which saves the file and regenerates the embeds (new PNG when the source hash changed).
+
+## Opening never writes
+
+The init `setContent` uses `emitUpdate: false` and `handleUpdate` sends no edit until the user has interacted (keydown / mousedown / paste / drop, or a host `insertDirective`), so opening a file never rewrites it. Normalization only reaches the file with the first real edit.
+
+## Diff editor panes
+
+VS Code's diff editor on a `.md` opens this custom editor on both sides with no API linking them. `pairDiffPane` (provider) pairs two panes of the same file resolved within 3 s, at least one non-`file:` (the non-file / earlier one is the original), and sends each `diffPeer` (own + other text) on ready and on every change. `DiffMarks` diffs top-level blocks (`splitBlocks`), tints blocks missing on the other side (`ms-diff-ins` / `ms-diff-del`), marks removal points (`ms-diff-gap`), and relays scroll (`diffScroll` → host → `diffScrollTo`) aligned by block.
 
 ## Rendered diff
 

@@ -64,6 +64,17 @@ export function useEditorState({
   const frontmatterRef = useRef("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isReadonly = useRef(false);
+  // Opening a file must never rewrite it: transactions fired while loading
+  // (node views, plugins) are not sent back until the user has interacted.
+  const userTouched = useRef(false);
+  useEffect(() => {
+    const touch = () => (userTouched.current = true);
+    const events = ["keydown", "mousedown", "paste", "drop"] as const;
+    for (const type of events) window.addEventListener(type, touch, true);
+    return () => {
+      for (const type of events) window.removeEventListener(type, touch, true);
+    };
+  }, []);
 
   const [status, setStatus] = useState<string | null>("Loading document...");
   const [readonly, setReadonly] = useState(false);
@@ -135,7 +146,7 @@ export function useEditorState({
             frontmatterRef.current = frontmatter;
             setFrontmatterState(frontmatterBody(frontmatter));
             const html = await markdownToHtml(noFm, baseUri.current);
-            editor.commands.setContent(html);
+            editor.commands.setContent(html, { emitUpdate: false });
             // Place the caret: restore the last-known position for this
             // file if we have one, otherwise drop it inside the first
             // heading (usually the title). Falls back to doc start.
@@ -196,6 +207,7 @@ export function useEditorState({
           // Ignore parse failures on external updates
         }
       } else if (msg.type === "insertDirective" && typeof msg.text === "string") {
+        userTouched.current = true;
         editor
           .chain()
           .focus()
@@ -277,7 +289,7 @@ export function useEditorState({
   // Sync: editor changes → extension host
   const handleUpdate = useCallback(() => {
     if (!initialized.current || !editor) return;
-    if (isReadonly.current) return;
+    if (isReadonly.current || !userTouched.current) return;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(async () => {
       try {

@@ -92,6 +92,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
   }
 
   private activeWebview: vscode.Webview | null = null;
+  private recentPanes: DiffPane[] = [];
   private openWebviews = new Set<vscode.Webview>();
   /** Most recently focused rich editor webview per document URI. */
   private webviewByUri = new Map<string, vscode.Webview>();
@@ -298,24 +299,23 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
 
     let pendingWebviewEdits = 0;
 
-    // The first edit the webview emits after init is the normalization
-    // round-trip (md → html → md). We save it silently so users don't see
-    // a surprise dirty state on open, then hand off: every subsequent edit
-    // follows VS Code's own save behavior (`files.autoSave`, Cmd+S, etc.)
-    // so we don't fight the user's configured save cadence.
-    let firstEditPending = true;
+    // The webview sends no edit on open (no normalization rewrite); edits
+    // follow VS Code's save behavior, or `saveOnEdit`.
     let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-    // First-run consent: the very first file opened post-install must not
-    // be silently rewritten before the user has chosen how to handle
-    // normalization. Snapshot the flag at start so a "Disable all" choice
-    // mid-session still suppresses this open's silent save.
+    // First-run setup prompt, shown once post-install.
     const consentShownAtStart =
       this.context.globalState.get<boolean>(CONSENT_SHOWN_KEY) === true;
 
     this.openWebviews.add(webview);
+    const pane: DiffPane = { document, webview, opened: Date.now(), ready: false, key: diffKey(document.uri) };
+    this.pairDiffPane(pane);
 
     const msgDisposable = webview.onDidReceiveMessage(async (msg) => {
+      if (msg.type === "diffScroll") {
+        pane.peer?.webview.postMessage({ ...msg, type: "diffScrollTo" });
+        return;
+      }
       if (msg.type === "ready") {
         webview.postMessage({
           type: "init",
@@ -334,6 +334,8 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           gmcVersion: String(this.context.extension.packageJSON.version ?? ""),
         });
         webview.postMessage({ type: "customCss", css: await readCustomCss() });
+        pane.ready = true;
+        sendDiff(pane);
         // Fire the first-run setup prompt only after the webview has
         // signalled `ready` — posting earlier would land before the
         // message listener is attached and the message would be lost.
@@ -371,6 +373,34 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           // Missing file: the card falls back to a text field.
         }
         webview.postMessage({ type: "gmcViewsResult", requestId: msg.requestId, views });
+      } else if (msg.type === "gmcReadFile") {
+        // Embed card → interactive graph editor on the embedded .gmc file.
+        let source: string | undefined;
+        try {
+          const file = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), String(msg.file)));
+          source = (await vscode.workspace.openTextDocument(file)).getText();
+        } catch (err) {
+          vscode.window.showErrorMessage(`Markdown Studio: could not open ${msg.file}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        webview.postMessage({ type: "gmcReadFileResult", requestId: msg.requestId, source });
+      } else if (msg.type === "gmcWriteFile") {
+        // Saved from that editor: write the .gmc, then regenerate the embeds
+        // (re-renders the PNG when the source hash changed).
+        try {
+          const file = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), String(msg.file)));
+          const target = await vscode.workspace.openTextDocument(file);
+          const source = String(msg.source);
+          if (target.getText() === source && !target.isDirty) return;
+          if (target.getText() !== source) {
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(file, new vscode.Range(0, 0, target.lineCount, 0), source);
+            await vscode.workspace.applyEdit(edit);
+          }
+          await target.save();
+          await this.refreshEmbeds(document, webview);
+        } catch (err) {
+          vscode.window.showErrorMessage(`Markdown Studio: could not save ${msg.file}: ${err instanceof Error ? err.message : String(err)}`);
+        }
       } else if (msg.type === "gmcExtract") {
         // GMC block → new .gmc file next to the document; reply with its
         // relative path for the embed directive.
@@ -519,20 +549,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           newContent,
         );
         await vscode.workspace.applyEdit(edit);
-        if (firstEditPending) {
-          firstEditPending = false;
-          const autoSave = vscode.workspace
-            .getConfiguration(CONFIG_NAMESPACE)
-            .get<boolean>("autoSave", true);
-          if (consentShownAtStart && autoSave) {
-            try {
-              await document.save();
-            } catch {
-              // Transient save failures (read-only FS, permission) leave
-              // the doc dirty; the user can retry with Cmd+S.
-            }
-          }
-        } else if (
+        if (
           vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>("saveOnEdit", false)
         ) {
           // Save shortly after the last change (typing stays smooth).
@@ -565,6 +582,8 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
       (e) => {
         if (e.document.uri.toString() !== document.uri.toString()) return;
         if (e.contentChanges.length === 0) return;
+        sendDiff(pane);
+        if (pane.peer) sendDiff(pane.peer);
 
         if (pendingWebviewEdits > 0) {
           pendingWebviewEdits--;
@@ -579,11 +598,42 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
     );
 
     webviewPanel.onDidDispose(() => {
+      pane.disposed = true;
+      if (pane.peer) pane.peer.peer = undefined;
       msgDisposable.dispose();
       docChangeDisposable.dispose();
       this.openWebviews.delete(webview);
       if (this.webviewByUri.get(uriKey) === webview) this.webviewByUri.delete(uriKey);
     });
+  }
+
+  /**
+   * VS Code's diff editor on a .md opens this editor on both sides, with no
+   * API telling either side about the other. Pair two panes of the same file
+   * resolved within a few seconds, at least one of them not `file:` (git:,
+   * …): the non-file / earlier one is the original. Each then gets the other
+   * side's text (`diffPeer`, for change marks) and scroll positions.
+   */
+  private pairDiffPane(pane: DiffPane): void {
+    const now = Date.now();
+    this.recentPanes = this.recentPanes.filter((p) => now - p.opened < 3000 && !p.peer && !p.disposed);
+    const partner = this.recentPanes.find(
+      (p) =>
+        p.key === pane.key &&
+        p.document.uri.toString() !== pane.document.uri.toString() &&
+        (p.document.uri.scheme !== "file" || pane.document.uri.scheme !== "file"),
+    );
+    if (!partner) {
+      this.recentPanes.push(pane);
+      return;
+    }
+    partner.peer = pane;
+    pane.peer = partner;
+    const paneIsOriginal = pane.document.uri.scheme !== "file" && partner.document.uri.scheme === "file";
+    pane.side = paneIsOriginal ? "original" : "modified";
+    partner.side = paneIsOriginal ? "modified" : "original";
+    sendDiff(pane);
+    sendDiff(partner);
   }
 
   private pngSequence = 0;
@@ -688,6 +738,40 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
 </body>
 </html>`;
   }
+}
+
+interface DiffPane {
+  document: vscode.TextDocument;
+  webview: vscode.Webview;
+  opened: number;
+  ready: boolean;
+  /** Lower-cased file path (git: URIs carry it in their query). */
+  key: string;
+  peer?: DiffPane;
+  side?: "original" | "modified";
+  disposed?: boolean;
+}
+
+function diffKey(uri: vscode.Uri): string {
+  let file = uri.fsPath;
+  if (uri.scheme !== "file") {
+    try {
+      file = JSON.parse(uri.query).path ?? file;
+    } catch {
+      // Not a git-style query: use the path.
+    }
+  }
+  return path.normalize(file).toLowerCase();
+}
+
+function sendDiff(pane: DiffPane): void {
+  if (!pane.ready || !pane.peer) return;
+  void pane.webview.postMessage({
+    type: "diffPeer",
+    side: pane.side,
+    own: pane.document.getText(),
+    other: pane.peer.document.getText(),
+  });
 }
 
 function getNonce(): string {

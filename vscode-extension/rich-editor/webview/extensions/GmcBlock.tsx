@@ -6,7 +6,7 @@ import {
   NodeViewWrapper,
   ReactNodeViewRenderer,
 } from "@tiptap/react";
-import { ChevronDown, ChevronRight, FileOutput, ImageDown, Maximize2, PanelRight, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileOutput, ImageDown, Maximize2, PanelRight, Save, X } from "lucide-react";
 import { gmcEmbedDirective, gmcViewNames, setFenceOption } from "../conversion-utils";
 import { fenceMetaAttribute } from "./CodeBlockView";
 import { vscodeApi } from "../vscode-api";
@@ -70,7 +70,8 @@ const FRAME_SHIM =
   "window.acquireVsCodeApi=function(){return{postMessage:send,getState:function(){return s},setState:function(v){s=v}}};" +
   "window.addEventListener('error',function(e){send({type:'frameError',message:String((e.error&&e.error.message)||e.message||'load error')})});" +
   "window.addEventListener('unhandledrejection',function(e){send({type:'frameError',message:String((e.reason&&e.reason.message)||e.reason)})});" +
-  "document.addEventListener('securitypolicyviolation',function(e){send({type:'frameError',message:'Blocked by CSP: '+e.blockedURI+' ('+e.violatedDirective+')'})});})();";
+  "document.addEventListener('securitypolicyviolation',function(e){send({type:'frameError',message:'Blocked by CSP: '+e.blockedURI+' ('+e.violatedDirective+')'})});" +
+  "document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();send({type:'saveShortcut'})}},true);})();";
 
 let graphEditorFiles: Promise<{ js: string; css: string }> | null = null;
 
@@ -111,9 +112,12 @@ interface GraphEditorModalProps {
   onChange(source: string): void;
   onClose(): void;
   onOpenBeside(): void;
+  /** Editing a file (embed card): header Save button and Ctrl+S. */
+  onSave?(): void;
+  hint?: string;
 }
 
-function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpenBeside }: GraphEditorModalProps) {
+export function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpenBeside, onSave, hint }: GraphEditorModalProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [srcdoc, setSrcdoc] = useState("");
   useEffect(() => {
@@ -131,6 +135,8 @@ function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpen
   const initial = useRef({ source, name, view, theme });
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
   const [ready, setReady] = useState(false);
   const [failure, setFailure] = useState("");
 
@@ -165,6 +171,8 @@ function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpen
         });
       } else if (m.type === "sourceChanged" && typeof m.source === "string") {
         onChangeRef.current(m.source);
+      } else if (m.type === "saveShortcut") {
+        onSaveRef.current?.();
       } else if (m.type === "saveText" || m.type === "saveBinary") {
         vscodeApi.postMessage({ type: "gmcSave", kind: m.type, requestId: m.requestId, content: m.content, options: m.options });
       }
@@ -186,7 +194,13 @@ function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpen
         <div className="gmc-modal-header">
           <span className="gmc-block-label">GMC</span>
           <span className="gmc-modal-title">{name}</span>
-          <span className="gmc-modal-hint">Changes are written to the block as you edit</span>
+          <span className="gmc-modal-hint">{hint ?? "Changes are written to the block as you edit"}</span>
+          {onSave && (
+            <button type="button" className="mermaid-block-toggle" onClick={onSave} title="Save the .gmc file and refresh the embed (Ctrl+S)">
+              <Save size={12} />
+              <span>save</span>
+            </button>
+          )}
           <button type="button" className="mermaid-block-toggle" onClick={onOpenBeside} title="Open the graph editor in a VS Code tab beside">
             <PanelRight size={12} />
             <span>beside</span>
@@ -277,7 +291,7 @@ export function parseFenceOptions(meta: string): Record<string, string> {
   return values;
 }
 
-function detectTheme(): "light" | "dark" {
+export function detectTheme(): "light" | "dark" {
   const body = document.body;
   const theme = body.dataset.theme;
   if (theme) return theme.includes("dark") ? "dark" : "light";

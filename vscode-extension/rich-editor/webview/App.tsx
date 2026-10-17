@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { SlashCommand } from "./extensions/SlashCommand";
 import { ZenFocus } from "./extensions/ZenFocus";
+import { DiffMarks } from "./extensions/DiffMarks";
 import { OutlineRail } from "./components/OutlineRail";
 import { LineNumbers } from "./components/LineNumbers";
 import { BlockHandle } from "./components/BlockHandle";
@@ -45,7 +46,7 @@ export function App() {
   useAppearance(settings);
 
   const editor = useEditor({
-    extensions: [...contentExtensions(), ZenFocus, SlashCommand],
+    extensions: [...contentExtensions(), ZenFocus, SlashCommand, DiffMarks],
     editorProps: {
       attributes: { class: "tiptap-editor" },
       // Excel-like ranges: a copied cell selection goes out as TSV (its

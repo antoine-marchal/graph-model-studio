@@ -3304,3 +3304,25 @@ body.zen-mode .tiptap-editor > .zen-here {
   color: var(--vscode-descriptionForeground, #888);
 }
 .gmc-block-toolbar .directive-param-input { max-width: 120px; }
+
+/* Diff editor pane (DiffMarks): blocks missing on the other side. */
+.tiptap-editor .ms-diff-ins,
+.tiptap-editor .ms-diff-del {
+  border-radius: 4px;
+  box-shadow: -8px 0 0 var(--ms-diff-bar), 8px 0 0 var(--ms-diff-bg);
+  background: var(--ms-diff-bg);
+}
+.tiptap-editor .ms-diff-ins {
+  --ms-diff-bg: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+  --ms-diff-bar: var(--vscode-editorGutter-addedBackground, #587c0c);
+}
+.tiptap-editor .ms-diff-del {
+  --ms-diff-bg: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+  --ms-diff-bar: var(--vscode-editorGutter-deletedBackground, #94151b);
+}
+.tiptap-editor .ms-diff-gap {
+  border-top: 2px dashed var(--vscode-editorGutter-deletedBackground, #94151b);
+}
+.tiptap-editor .ms-diff-gap-after {
+  border-bottom: 2px dashed var(--vscode-editorGutter-deletedBackground, #94151b);
+}

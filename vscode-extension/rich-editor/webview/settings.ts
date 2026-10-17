@@ -54,13 +54,6 @@ export interface BetterMarkdownSettings {
   diffMode: "source" | "rendered";
 
   // --- saving ---
-  /**
-   * Save the file silently on open to persist the normalization round-trip
-   * (md → html → md) that the rich editor applies. Only fires once per
-   * open; subsequent edits follow VS Code's own `files.autoSave` /
-   * manual-save behavior so we don't fight the user's configured cadence.
-   */
-  autoSave: boolean;
   /** Save the file automatically after every change in the rich editor. */
   saveOnEdit: boolean;
 
@@ -162,7 +155,6 @@ export const DEFAULT_SETTINGS: BetterMarkdownSettings = {
   defaultCodeBlockLang: "",
   diffLayout: "side-by-side",
   diffMode: "rendered",
-  autoSave: true,
   saveOnEdit: false,
   bubbleMenuShortcut: "Mod+/",
   theme: "default",
@@ -199,7 +191,6 @@ export const SETTING_KEYS: (keyof BetterMarkdownSettings)[] = [
   "defaultCodeBlockLang",
   "diffLayout",
   "diffMode",
-  "autoSave",
   "saveOnEdit",
   "bubbleMenuShortcut",
   "theme",

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import {
@@ -10,10 +10,12 @@ import {
   ListTree,
   Lock,
   LockOpen,
+  Maximize2,
   RefreshCw,
 } from "lucide-react";
 import { vscodeApi } from "../vscode-api";
 import { parseDirective, setDirectiveAttr, type DirectiveKind as Kind } from "../conversion-utils";
+import { GraphEditorModal, detectTheme } from "./GmcBlock";
 
 /**
  * A toolkit directive and its generated content as one card:
@@ -55,6 +57,34 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
     vscodeApi.postMessage({ type: "gmcViews", requestId, file: attrs.file });
     return () => window.removeEventListener("message", receive);
   }, [gmc, attrs.file, node.attrs.close]);
+  // Interactive graph editor on the embedded .gmc file: the host reads it,
+  // saves (button / Ctrl+S / closing with changes) write it back and
+  // regenerate the embeds, which re-renders the PNG.
+  const [graph, setGraph] = useState<{ file: string; source: string } | null>(null);
+  const latest = useRef<string | null>(null);
+  const openGraph = () => {
+    const file = attrs.file;
+    const requestId = `gmc-read-${Math.random().toString(36).slice(2)}`;
+    const receive = (e: MessageEvent) => {
+      if (e.data?.type !== "gmcReadFileResult" || e.data.requestId !== requestId) return;
+      window.removeEventListener("message", receive);
+      if (typeof e.data.source !== "string") return;
+      latest.current = null;
+      setGraph({ file, source: e.data.source });
+    };
+    window.addEventListener("message", receive);
+    vscodeApi.postMessage({ type: "gmcReadFile", requestId, file });
+  };
+  const saveGraph = useCallback(() => {
+    if (!graph || latest.current === null) return;
+    vscodeApi.postMessage({ type: "gmcWriteFile", file: graph.file, source: latest.current });
+    latest.current = null;
+  }, [graph]);
+  const closeGraph = useCallback(() => {
+    saveGraph();
+    setGraph(null);
+  }, [saveGraph]);
+
   const viewOptions = views && attrs.view && !views.includes(attrs.view) ? [...views, attrs.view] : views;
 
   const setAttr = (name: string, value: string) =>
@@ -144,6 +174,8 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
           </span>
         ))}
         <span className="directive-spacer" />
+        {gmc && editable &&
+          button("Edit the .gmc file in the interactive graph editor", <Maximize2 size={12} />, openGraph, "interactive")}
         {kind !== "toc" && attrs.file &&
           button("Open source file", <ExternalLink size={12} />, () =>
             vscodeApi.postMessage({ type: "openLink", href: attrs.file }),
@@ -171,6 +203,22 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
         </div>
       )}
       <NodeViewContent className={`directive-content${collapsed ? " collapsed" : ""}`} />
+      {graph && (
+        <GraphEditorModal
+          source={graph.source}
+          name={graph.file.split("/").pop() ?? graph.file}
+          view={attrs.view}
+          theme={attrs.theme === "light" || attrs.theme === "dark" ? attrs.theme : detectTheme()}
+          hint="Save (Ctrl+S) writes the file and refreshes the embed"
+          onChange={(source) => (latest.current = source)}
+          onSave={saveGraph}
+          onClose={closeGraph}
+          onOpenBeside={() => {
+            closeGraph();
+            vscodeApi.postMessage({ type: "openLink", href: graph.file });
+          }}
+        />
+      )}
     </NodeViewWrapper>
   );
 }

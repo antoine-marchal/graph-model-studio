@@ -221,12 +221,6 @@ export function SettingsPanel({
             <h3>Saving</h3>
 
             <Toggle
-              label="Save normalization on open (Recommended)"
-              description="Rich editor requires a stable round-trip, so opening a file always re-emits its markdown according to the normalization settings below. This setting turns on the auto-save feature for the first time Markdown Studio looks at a markdown file."
-              checked={settings.autoSave}
-              onChange={(v) => set("autoSave", v)}
-            />
-            <Toggle
               label="Auto-save on modify"
               description="Save the file automatically a moment after every change in the rich editor."
               checked={settings.saveOnEdit}
