@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest';
-import { documentToDeck, parseMarkdown, sourceKindOf } from './index.js';
+import { applyMarkdownMutations, documentToDeck, parseMarkdown, sourceKindOf } from './index.js';
 
 test('.deck files use the hybrid Markdown + YAML syntax', () => {
   expect(sourceKindOf('archi.deck')).toBe('markdown');
@@ -25,4 +25,15 @@ test('documentToDeck writes placeholder text as `::: id` blocks and reads it bac
   const back = parseMarkdown(deck);
   expect(back.errors).toEqual([]);
   expect(strip(back.doc)).toEqual(strip(doc));
+});
+
+test('editing a placeholder written with `content:` moves its text to a `::: id` block', () => {
+  const text = ['---', 'title: T', '---', '', '---', 'id: s1', 'layout: section', 'elements:', '  - id: body-1', '    type: text', '    placeholder: body', '    content: "1"', '---', '', '# Titre', '', '---', 'id: s2', 'layout: section', '---', '', '# Deux', ''].join('\n');
+  const out = applyMarkdownMutations(text, [{ kind: 'updateElement', slideId: 's1', elementId: 'body-1', patch: { paragraphs: [{ runs: [{ text: '2' }] }] } }]);
+  expect(out).toContain('    placeholder: body\n---\n\n# Titre\n\n::: body-1\n2\n:::\n\n---\nid: s2');
+  expect(out).not.toContain('content:');
+  const back = parseMarkdown(out);
+  expect(back.errors).toEqual([]);
+  expect(back.doc.slides[0]!.elements.find((e) => e.id === 'body-1')).toMatchObject({ placeholder: 'body', paragraphs: [{ runs: [{ text: '2' }] }] });
+  expect(back.doc.slides).toHaveLength(2);
 });

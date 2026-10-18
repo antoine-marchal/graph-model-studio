@@ -602,9 +602,26 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       }
       const el = current.slides[si]?.elements.find((e) => e.id === m.elementId);
       if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
-      return editSlideFm(out, si, (d) => {
+      const fmNode = (d: Document) => {
         const node = fmEntry(d, m.elementId, false);
         if (!node) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable dans l'en-tête`, `Element “${m.elementId}” not found in the header`));
+        return node;
+      };
+      // A placeholder whose text sits in the header (`content:`) moves to a `::: id` block once edited.
+      const { source: _src, ...bare } = el as SlideElement & { source?: unknown };
+      const slot = slotBody(applyToDocument({ ...current, slides: [{ ...current.slides[si]!, elements: [bare as SlideElement] }] }, [{ ...m, slideId: current.slides[si]!.id }]).slides[0]!.elements[0]!);
+      if (slot !== null) {
+        const { paragraphs: _p, src: _s, rows: _r, colAlign: _c, ...p } = patch;
+        out = editSlideFm(out, si, (d) => {
+          const node = fmNode(d);
+          patchElementNode(d, node, p, { allowText: false });
+          node.delete('content');
+          node.delete('paragraphs');
+        });
+        return appendSlot(out, si, m.elementId, slot);
+      }
+      return editSlideFm(out, si, (d) => {
+        const node = fmNode(d);
         const { src: _s, rows: _r, ...p } = patch;
         patchElementNode(d, node, p, { allowText: true });
         if (src !== undefined) node.set('src', src);
@@ -615,7 +632,11 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     case 'addElement': {
       const si = slideIndex(model, m.slideId);
       if (current.slides[si]?.elements.some((e) => e.id === m.element.id)) throw new MutationError(tr(`Identifiant « ${m.element.id} » déjà utilisé`, `Identifier “${m.element.id}” already used`));
-      return editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(elementToDsl(m.element))));
+      const dsl = elementToDsl(m.element);
+      const slot = slotBody(m.element);
+      if (slot !== null) delete dsl.content;
+      const out = editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl)));
+      return slot === null ? out : appendSlot(out, si, m.element.id, slot);
     }
     case 'deleteElement': {
       const si = slideIndex(model, m.slideId);
@@ -758,6 +779,13 @@ function slotBody(e: SlideElement): string | null {
   if (!body.trim() || body.split('\n').some((l) => SLOT_OPEN_RE.test(l) || SLOT_CLOSE_RE.test(l))) return null;
   const back = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
   return paragraphsToContent(back) === paragraphsToContent(e.paragraphs) ? body : null;
+}
+
+/** Append a `::: id` block at the end of slide `index`'s body. */
+function appendSlot(text: string, index: number, id: string, body: string): string {
+  const s = buildMdModel(text).slides[index]!;
+  const before = text.slice(0, s.end).replace(/\s*$/, '');
+  return `${before}\n\n::: ${id}\n${body}\n:::\n${s.end < text.length ? '\n' : ''}${text.slice(s.end)}`;
 }
 
 function blockify(node: unknown): void {

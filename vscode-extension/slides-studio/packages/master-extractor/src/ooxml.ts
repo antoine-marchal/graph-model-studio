@@ -70,13 +70,11 @@ export interface PackageInventory {
   externalRelationships: string[];
 }
 
+// Groups, alternate content (see flattenPart) and crops (see picturesIn) are handled, so not listed.
 const FEATURE_PATTERNS: { feature: string; re: RegExp; impact: string }[] = [
-  { feature: tr('Formes groupées (p:grpSp)', 'Grouped shapes (p:grpSp)'), re: /<p:grpSp>/g, impact: tr('Ignorées par pptx-masters v0.1 : absentes des dispositions reconstruites', 'Ignored by pptx-masters v0.1: missing from the reconstructed layouts') },
   { feature: tr('Remplissage dégradé (a:gradFill)', 'Gradient fill (a:gradFill)'), re: /<a:gradFill/g, impact: tr('Approximé par la première couleur du dégradé', 'Approximated by the first gradient color') },
   { feature: tr('Remplissage motif (a:pattFill)', 'Pattern fill (a:pattFill)'), re: /<a:pattFill/g, impact: tr('Approximé par la couleur de premier plan', 'Approximated by the foreground color') },
-  { feature: tr('Géométrie libre (a:custGeom)', 'Freeform geometry (a:custGeom)'), re: /<a:custGeom/g, impact: tr('Non reconstruite (forme ignorée ou rectangle)', 'Not rebuilt (shape ignored or rectangle)') },
-  { feature: tr('Image rognée (a:srcRect)', 'Cropped picture (a:srcRect)'), re: /<a:srcRect [^/]*[lrtb]="/g, impact: tr('Rognage non reproduit : image affichée entière', 'Crop not reproduced: whole picture shown') },
-  { feature: tr('Contenu alternatif (mc:AlternateContent)', 'Alternate content (mc:AlternateContent)'), re: /<mc:AlternateContent/g, impact: tr('Branche de repli ignorée', 'Fallback branch ignored') },
+  { feature: tr('Géométrie libre (a:custGeom)', 'Freeform geometry (a:custGeom)'), re: /<a:custGeom/g, impact: tr('Non reconstruite (rectangle, ou ignorée dans un groupe)', 'Not rebuilt (rectangle, or dropped inside a group)') },
   { feature: tr('Animations (p:timing)', 'Animations (p:timing)'), re: /<p:timing/g, impact: tr('Non reproduites', 'Not reproduced') },
   { feature: tr('Transitions (p:transition)', 'Transitions (p:transition)'), re: /<p:transition/g, impact: tr('Non reproduites', 'Not reproduced') },
   { feature: tr('Objets OLE (p:oleObj)', 'OLE objects (p:oleObj)'), re: /<p:oleObj/g, impact: tr('Non reproduits', 'Not reproduced') },
@@ -84,7 +82,7 @@ const FEATURE_PATTERNS: { feature: string; re: RegExp; impact: string }[] = [
   { feature: tr('Graphiques (c:chart)', 'Charts (c:chart)'), re: /drawingml\/2006\/chart"/g, impact: tr('Non reproduits dans les dispositions', 'Not reproduced in layouts') },
   { feature: tr('Tableaux (a:tbl)', 'Tables (a:tbl)'), re: /<a:tbl>/g, impact: tr('Non reproduits dans les dispositions', 'Not reproduced in layouts') },
   { feature: tr('Effets 3D (a:scene3d/a:sp3d)', '3D effects (a:scene3d/a:sp3d)'), re: /<a:(scene3d|sp3d)/g, impact: tr('Non reproduits', 'Not reproduced') },
-  { feature: tr('Texte WordArt (a:prstTxWarp)', 'WordArt text (a:prstTxWarp)'), re: /<a:prstTxWarp/g, impact: tr('Non reproduit', 'Not reproduced') },
+  { feature: tr('Texte WordArt (a:prstTxWarp)', 'WordArt text (a:prstTxWarp)'), re: /<a:prstTxWarp prst="(?!textNoShape")/g, impact: tr('Non reproduit', 'Not reproduced') },
 ];
 
 const num = (s: string): number => parseInt(/\d+/.exec(s)?.[0] ?? '0', 10);
@@ -183,6 +181,56 @@ export async function inventoryPackage(zip: JSZip): Promise<PackageInventory> {
     features,
     externalRelationships,
   };
+}
+
+const GROUP = /<p:grpSp>((?:(?!<p:grpSp>)[\s\S])*?)<\/p:grpSp>/; // innermost group
+const GROUP_CHILD = /<(p:sp|p:pic|p:cxnSp|p:graphicFrame)(?=[\s>])[\s\S]*?<\/\1>/g;
+
+/** Children of one group, moved from the group's child space to its parent's coordinates. */
+function ungroup(body: string): string {
+  if (/<p:cNvPr [^>]*hidden="(1|true)"/.test(/<p:nvGrpSpPr>[\s\S]*?<\/p:nvGrpSpPr>/.exec(body)?.[0] ?? '')) return '';
+  const xfrm = /<p:grpSpPr[^>]*>[\s\S]*?<\/p:grpSpPr>/.exec(body)?.[0] ?? '';
+  const n = (tag: string, a: string) => Number(new RegExp(`<a:${tag} [^>]*\\b${a}="(-?\\d+)"`).exec(xfrm)?.[1]);
+  const [ox, oy, ex, ey, cx, cy, cw, ch] = [n('off', 'x'), n('off', 'y'), n('ext', 'cx'), n('ext', 'cy'), n('chOff', 'x'), n('chOff', 'y'), n('chExt', 'cx'), n('chExt', 'cy')];
+  const ok = [ox, oy, ex, ey, cx, cy, cw, ch].every(Number.isFinite);
+  const sx = ok && cw ? ex / cw : 1;
+  const sy = ok && ch ? ey / ch : 1;
+  return [...body.matchAll(GROUP_CHILD)]
+    .map((m) => m[0])
+    // pptx-masters draws freeforms as filled rectangles: inside a group (logos, pictograms) that is worse than nothing.
+    .filter((c) => !/<a:custGeom/.test(c) || /<a:t>/.test(c))
+    .map((c) =>
+      !ok
+        ? c
+        : c
+            .replace(/<a:off x="(-?\d+)" y="(-?\d+)"/, (_, x, y) => `<a:off x="${Math.round(ox + (x - cx) * sx)}" y="${Math.round(oy + (y - cy) * sy)}"`)
+            .replace(/<a:ext cx="(\d+)" cy="(\d+)"/, (_, w, h) => `<a:ext cx="${Math.round(w * sx)}" cy="${Math.round(h * sy)}"`),
+    )
+    .join('');
+}
+
+/**
+ * pptx-masters only reads top-level p:sp / p:pic: unwrap mc:AlternateContent (Fallback branch) and
+ * flatten p:grpSp (group rotation/flip is not applied to the children).
+ */
+export function flattenPart(xml: string): string {
+  let out = xml.replace(/<mc:AlternateContent\b[\s\S]*?<\/mc:AlternateContent>/g, (m) => /<mc:Fallback\b[^>]*>([\s\S]*?)<\/mc:Fallback>/.exec(m)?.[1] ?? '');
+  for (let m; (m = GROUP.exec(out)); ) out = out.slice(0, m.index) + ungroup(m[1]!) + out.slice(m.index + m[0].length);
+  return out;
+}
+
+/** Rewrites the given parts in place with {@link flattenPart}; true when anything changed. */
+export async function flattenPackage(zip: JSZip, parts: string[]): Promise<boolean> {
+  let changed = false;
+  for (const part of parts) {
+    const xml = await readText(zip, part);
+    if (xml === null) continue;
+    const flat = flattenPart(xml);
+    if (flat === xml) continue;
+    zip.file(part, flat);
+    changed = true;
+  }
+  return changed;
 }
 
 export interface PictureInfo {

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, readdir, writeFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { basename, extname, join, posix, relative } from 'node:path';
 import { imageSize } from 'image-size';
 import { extract } from 'pptx-masters';
@@ -10,7 +11,7 @@ import { parseClrMap } from 'pptx-masters/src/parser/theme.js';
 import { extractTextProps } from 'pptx-masters/src/parser/text.js';
 import { CorporateMaster, type AssetDef, tr } from '@corporate-slides/core';
 import { loadPackageSafely } from './safety.js';
-import { inventoryPackage, picturesIn, type PictureInfo } from './ooxml.js';
+import { flattenPackage, inventoryPackage, picturesIn, type PictureInfo } from './ooxml.js';
 import { buildCorporateMaster, type MasterTextStyles } from './normalize.js';
 import { compatibilityReport, extractionReport, generatedMastersTs, slideMastersDoc, STYLE_GUIDE_TEMPLATE } from './docs.js';
 import { convertMetafileToPng, renderLayoutThumbnails } from './reference.js';
@@ -74,7 +75,19 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
   const inv = await inventoryPackage(zip);
 
   log(tr('Extraction des masques (pptx-masters)…', 'Extracting masters (pptx-masters)…'));
-  const r = await extract(templatePath);
+  // pptx-masters reads from a path: give it a flattened copy when groups / alternate content were rewritten.
+  const shapeParts = [...inv.masters.map((m) => m.part), ...inv.layouts.map((l) => l.part)];
+  let r: Awaited<ReturnType<typeof extract>>;
+  if (await flattenPackage(zip, shapeParts)) {
+    const tmp = await mkdtemp(join(tmpdir(), 'corporate-slides-'));
+    try {
+      const flat = join(tmp, basename(templatePath));
+      await writeFile(flat, await zip.generateAsync({ type: 'nodebuffer' }));
+      r = await extract(flat);
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
+  } else r = await extract(templatePath);
   r.palette = generateThemeJson(r.themeColors, r.themeFonts, r.dimensions, r.masterData).palette;
 
   // Master text styles (p:txStyles) are not exposed by extract(): resolve them with pptx-masters internals.
@@ -127,7 +140,7 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
   }
 
   const pictures = new Map<string, PictureInfo[]>();
-  for (const part of [...inv.masters.map((m) => m.part), ...inv.layouts.map((l) => l.part)]) pictures.set(part, await picturesIn(zip, part));
+  for (const part of shapeParts) pictures.set(part, await picturesIn(zip, part));
 
   const master = CorporateMaster.parse(
     buildCorporateMaster({

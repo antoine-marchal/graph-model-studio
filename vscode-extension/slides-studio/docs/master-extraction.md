@@ -5,7 +5,8 @@ Commande : `Corporate Slides: Importer un gabarit PowerPoint` ou `slides master 
 ## Étapes
 
 1. **Contrôle de sûreté** (`safety.ts`) : taille ≤ 300 Mo, ≤ 10 000 entrées, pas de traversée de chemin, ratio de compression, présence de `presentation.xml`.
-2. **Inventaire OOXML** (`ooxml.ts`) : masques (`sldMasterIdLst`), dispositions par masque dans l'ordre (`sldLayoutIdLst`), type OOXML des dispositions, utilisation par les diapositives du gabarit (masque principal = le plus utilisé), médias, polices incorporées, relations externes, fonctionnalités non prises en charge (groupes, dégradés, motifs, géométries libres, rognages, SmartArt, graphiques, animations, OLE…).
+2. **Inventaire OOXML** (`ooxml.ts`) : masques (`sldMasterIdLst`), dispositions par masque dans l'ordre (`sldLayoutIdLst`), type OOXML des dispositions, utilisation par les diapositives du gabarit (masque principal = le plus utilisé), médias, polices incorporées, relations externes, fonctionnalités non prises en charge (dégradés, motifs, géométries libres, SmartArt, graphiques, animations, OLE…).
+   Groupes (`p:grpSp`) aplatis et `mc:AlternateContent` remplacé par sa branche `mc:Fallback` (`flattenPart`) dans une copie temporaire transmise à pptx-masters, qui ne lit que les `p:sp`/`p:pic` de premier niveau ; les formes libres d'un groupe sont omises (pptx-masters les dessinerait en rectangles pleins).
 3. **pptx-masters `extract()`** : thème, palette (via `generateThemeJson`), arrière-plans, espaces réservés, numéros de diapositive, objets statiques au format `defineSlideMaster`.
 4. **Styles de texte du masque** : `p:txStyles` (titres, corps par niveau : tailles, couleurs, puces) et style du numéro de diapositive, résolus avec les fonctions internes de pptx-masters (`createColorResolver`, `extractTextProps`).
 5. **Adaptateurs de normalisation** (`normalize.ts`) :
