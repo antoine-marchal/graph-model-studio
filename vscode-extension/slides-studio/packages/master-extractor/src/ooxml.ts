@@ -1,6 +1,7 @@
 import type JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 import { posix } from 'node:path';
+import { tr } from '@corporate-slides/core';
 
 export const xmlParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '@_', allowBooleanAttributes: true });
 
@@ -70,20 +71,20 @@ export interface PackageInventory {
 }
 
 const FEATURE_PATTERNS: { feature: string; re: RegExp; impact: string }[] = [
-  { feature: 'Formes groupées (p:grpSp)', re: /<p:grpSp>/g, impact: 'Ignorées par pptx-masters v0.1 : absentes des dispositions reconstruites' },
-  { feature: 'Remplissage dégradé (a:gradFill)', re: /<a:gradFill/g, impact: 'Approximé par la première couleur du dégradé' },
-  { feature: 'Remplissage motif (a:pattFill)', re: /<a:pattFill/g, impact: 'Approximé par la couleur de premier plan' },
-  { feature: 'Géométrie libre (a:custGeom)', re: /<a:custGeom/g, impact: 'Non reconstruite (forme ignorée ou rectangle)' },
-  { feature: 'Image rognée (a:srcRect)', re: /<a:srcRect [^/]*[lrtb]="/g, impact: 'Rognage non reproduit : image affichée entière' },
-  { feature: 'Contenu alternatif (mc:AlternateContent)', re: /<mc:AlternateContent/g, impact: 'Branche de repli ignorée' },
-  { feature: 'Animations (p:timing)', re: /<p:timing/g, impact: 'Non reproduites' },
-  { feature: 'Transitions (p:transition)', re: /<p:transition/g, impact: 'Non reproduites' },
-  { feature: 'Objets OLE (p:oleObj)', re: /<p:oleObj/g, impact: 'Non reproduits' },
-  { feature: 'SmartArt (dgm)', re: /drawingml\/2006\/diagram/g, impact: 'Non reproduit' },
-  { feature: 'Graphiques (c:chart)', re: /drawingml\/2006\/chart"/g, impact: 'Non reproduits dans les dispositions' },
-  { feature: 'Tableaux (a:tbl)', re: /<a:tbl>/g, impact: 'Non reproduits dans les dispositions' },
-  { feature: 'Effets 3D (a:scene3d/a:sp3d)', re: /<a:(scene3d|sp3d)/g, impact: 'Non reproduits' },
-  { feature: 'Texte WordArt (a:prstTxWarp)', re: /<a:prstTxWarp/g, impact: 'Non reproduit' },
+  { feature: tr('Formes groupées (p:grpSp)', 'Grouped shapes (p:grpSp)'), re: /<p:grpSp>/g, impact: tr('Ignorées par pptx-masters v0.1 : absentes des dispositions reconstruites', 'Ignored by pptx-masters v0.1: missing from the reconstructed layouts') },
+  { feature: tr('Remplissage dégradé (a:gradFill)', 'Gradient fill (a:gradFill)'), re: /<a:gradFill/g, impact: tr('Approximé par la première couleur du dégradé', 'Approximated by the first gradient color') },
+  { feature: tr('Remplissage motif (a:pattFill)', 'Pattern fill (a:pattFill)'), re: /<a:pattFill/g, impact: tr('Approximé par la couleur de premier plan', 'Approximated by the foreground color') },
+  { feature: tr('Géométrie libre (a:custGeom)', 'Freeform geometry (a:custGeom)'), re: /<a:custGeom/g, impact: tr('Non reconstruite (forme ignorée ou rectangle)', 'Not rebuilt (shape ignored or rectangle)') },
+  { feature: tr('Image rognée (a:srcRect)', 'Cropped picture (a:srcRect)'), re: /<a:srcRect [^/]*[lrtb]="/g, impact: tr('Rognage non reproduit : image affichée entière', 'Crop not reproduced: whole picture shown') },
+  { feature: tr('Contenu alternatif (mc:AlternateContent)', 'Alternate content (mc:AlternateContent)'), re: /<mc:AlternateContent/g, impact: tr('Branche de repli ignorée', 'Fallback branch ignored') },
+  { feature: tr('Animations (p:timing)', 'Animations (p:timing)'), re: /<p:timing/g, impact: tr('Non reproduites', 'Not reproduced') },
+  { feature: tr('Transitions (p:transition)', 'Transitions (p:transition)'), re: /<p:transition/g, impact: tr('Non reproduites', 'Not reproduced') },
+  { feature: tr('Objets OLE (p:oleObj)', 'OLE objects (p:oleObj)'), re: /<p:oleObj/g, impact: tr('Non reproduits', 'Not reproduced') },
+  { feature: tr('SmartArt (dgm)', 'SmartArt (dgm)'), re: /drawingml\/2006\/diagram/g, impact: tr('Non reproduit', 'Not reproduced') },
+  { feature: tr('Graphiques (c:chart)', 'Charts (c:chart)'), re: /drawingml\/2006\/chart"/g, impact: tr('Non reproduits dans les dispositions', 'Not reproduced in layouts') },
+  { feature: tr('Tableaux (a:tbl)', 'Tables (a:tbl)'), re: /<a:tbl>/g, impact: tr('Non reproduits dans les dispositions', 'Not reproduced in layouts') },
+  { feature: tr('Effets 3D (a:scene3d/a:sp3d)', '3D effects (a:scene3d/a:sp3d)'), re: /<a:(scene3d|sp3d)/g, impact: tr('Non reproduits', 'Not reproduced') },
+  { feature: tr('Texte WordArt (a:prstTxWarp)', 'WordArt text (a:prstTxWarp)'), re: /<a:prstTxWarp/g, impact: tr('Non reproduit', 'Not reproduced') },
 ];
 
 const num = (s: string): number => parseInt(/\d+/.exec(s)?.[0] ?? '0', 10);
@@ -161,14 +162,14 @@ export async function inventoryPackage(zip: JSZip): Promise<PackageInventory> {
   const metafiles = media.filter((m) => m.ext === 'emf' || m.ext === 'wmf');
   if (metafiles.length) {
     features.push({
-      feature: 'Images vectorielles Windows (EMF/WMF)',
+      feature: tr('Images vectorielles Windows (EMF/WMF)', 'Windows vector pictures (EMF/WMF)'),
       parts: metafiles.map((m) => m.part),
       count: metafiles.length,
-      impact: 'Conservées dans le PPTX (type MIME ajouté par l’adaptateur) ; aperçu navigateur via conversion PNG locale',
+      impact: tr('Conservées dans le PPTX (type MIME ajouté par l’adaptateur) ; aperçu navigateur via conversion PNG locale', 'Kept in the PPTX (MIME type added by the adapter); browser preview via local PNG conversion'),
     });
   }
   if (embeddedFonts.length) {
-    features.push({ feature: 'Polices incorporées', parts: ['ppt/presentation.xml'], count: embeddedFonts.length, impact: 'Non réincorporées' });
+    features.push({ feature: tr('Polices incorporées', 'Embedded fonts'), parts: ['ppt/presentation.xml'], count: embeddedFonts.length, impact: tr('Non réincorporées', 'Not re-embedded') });
   }
 
   return {

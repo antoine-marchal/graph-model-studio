@@ -6,6 +6,8 @@
   </head>
   <body>
     <div id="root" data-mode="editor"></div>
+    <!-- ?lang=en: the UI language is read from <html lang> when the modules load -->
+    <script>document.documentElement.lang = new URLSearchParams(location.search).get('lang') || 'fr';</script>
     <script type="module" src="./harness/host.ts"></script>
   </body>
 </html>

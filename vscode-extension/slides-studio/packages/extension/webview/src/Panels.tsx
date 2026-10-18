@@ -13,6 +13,7 @@ import {
   type ResolvedElement,
   type ShapeKind,
   type SlideNode,
+  imageFit,
   isDiagramSrc,
   type SlideElement,
   tr,
@@ -434,16 +435,12 @@ export function ColorPicker({ label, value, onChange, allowNone, testId }: { lab
 function ElementInspector({ r }: { r: ResolvedElement }) {
   const slide = useEditor(currentSlide)!;
   const master = useEditor((s) => s.master)!;
-  const { mutate, select } = useEditor.getState();
+  const { mutate } = useEditor.getState();
   const el = r.element;
   const layout = findLayout(master, slide.layout);
   const upd = (patch: ElementPatch) => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch }]);
-  const style = (k: keyof ElementStyle, v: unknown) => upd({ style: { [k]: v } });
-  const hasText = el.type === 'text' || (el.type === 'shape' && el.shape !== 'line') || el.type === 'table';
   const geom = (k: 'x' | 'y' | 'w' | 'h', v: number) => upd({ x: r.box.x, y: r.box.y, w: r.box.w, h: r.box.h, [k]: v });
   const TYPE_LABEL: Record<string, string> = { text: tr('Texte', 'Text'), shape: tr('Forme', 'Shape'), image: el.type === 'image' && isDiagramSrc(el.src) ? tr('Diagramme GMC', 'GMC diagram') : 'Image', table: tr('Tableau', 'Table'), connector: tr('Connecteur', 'Connector') };
-  const fonts = [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])];
-
   return (
     <>
       <div className="insp-head">
@@ -452,97 +449,26 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
         <span className="grow" />
         <IconButton icon={el.locked ? 'lock' : 'unlock'} label={el.locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock')} active={el.locked} onClick={() => upd({ locked: !el.locked })} />
         <IconButton icon={el.hidden ? 'eyeOff' : 'eye'} label={el.hidden ? tr('Afficher', 'Show') : tr('Masquer', 'Hide')} active={el.hidden} onClick={() => upd({ hidden: !el.hidden })} />
-        <IconButton
-          icon="trash"
-          label={tr("Supprimer l'élément", "Delete element")}
-          onClick={() => {
-            mutate(deleteMutations(slide, [el.id]));
-            select(slide.id, []);
-          }}
-        />
       </div>
 
       {el.type === 'image' && isDiagramSrc(el.src) && (
         <Section title="Graph Model Studio">
-          <p className="hint"><code>{el.src}</code> → rendu <code>{el.src.replace(/\.gmc$/i, '.png')}</code></p>
-          <div className="row">
-            <button className="btn grow" data-testid="inspector-edit-gmc" onClick={() => useEditor.getState().set({ gmcEdit: el.src })}><Icon name="diagram" /> {tr('Modifier', 'Edit')}</button>
-            <button className="btn grow" onClick={() => post({ type: 'refreshGmc', src: el.src })}><Icon name="refresh" /> {tr('Actualiser', 'Refresh')}</button>
-          </div>
+          <p className="hint"><code>{el.src}</code> → <code>{el.src.replace(/\.gmc$/i, '.png')}</code> · {tr('onglet Diagramme pour le modifier', 'Diagram tab to edit it')}</p>
         </Section>
       )}
-
-      <ShapeSections r={r} upd={upd} />
 
       {el.type !== 'connector' && <Section title={tr("Position et taille", "Position and size")} aside={r.inheritedGeometry ? <span className="hint">{tr('hérité de la disposition', 'inherited from the layout')}</span> : undefined}>
         <div className="grid2">
           <NumField label="X" unit="in" value={r.box.x} onCommit={(v) => geom('x', v)} testId="field-x" disabled={el.locked} />
           <NumField label="Y" unit="in" value={r.box.y} onCommit={(v) => geom('y', v)} testId="field-y" disabled={el.locked} />
-          <NumField label="L" unit="in" value={r.box.w} onCommit={(v) => geom('w', Math.max(0, v))} testId="field-w" disabled={el.locked} />
+          <NumField label={tr('L', 'W')} unit="in" value={r.box.w} onCommit={(v) => geom('w', Math.max(0, v))} testId="field-w" disabled={el.locked} />
           <NumField label="H" unit="in" value={r.box.h} onCommit={(v) => geom('h', Math.max(0, v))} testId="field-h" disabled={el.locked} />
           <NumField label="Rot." unit="°" step={1} value={el.rotation ?? 0} onCommit={(v) => upd({ rotation: v })} disabled={el.locked} />
         </div>
+        {el.type === 'image' && <ImageFitControls r={r} upd={upd} />}
       </Section>}
 
-      {hasText && (
-        <Section title={tr("Typographie", "Typography")}>
-          <div className="row">
-            <select
-              className="select grow"
-              aria-label={tr("Police", "Font")}
-              value={el.style?.fontFace ?? ''}
-              onChange={(e) => style('fontFace', e.target.value || null)}
-            >
-              <option value="">{tr('Disposition', 'Layout')} ({r.style.fontFace})</option>
-              <option value="theme.heading">Titres — {master.theme.fonts.heading}</option>
-              <option value="theme.body">Corps — {master.theme.fonts.body}</option>
-              {fonts.map((f) => (
-                <option key={f} value={f}>{f}</option>
-              ))}
-            </select>
-            <NumField label="pt" value={el.style?.fontSize ?? r.style.fontSize} step={1} onCommit={(v) => style('fontSize', Math.max(4, v))} testId="field-size" />
-            <div className="seg" role="group" aria-label={tr("Taille de police", "Font size")}>
-              <IconButton icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} onClick={() => style('fontSize', stepFontSize(r.style.fontSize, 1))} />
-              <IconButton icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} onClick={() => style('fontSize', stepFontSize(r.style.fontSize, -1))} />
-            </div>
-          </div>
-          <div className="row">
-            <div className="seg" role="group" aria-label="Style">
-              <IconButton icon="bold" label={tr("Gras", "Bold")} active={!!el.style?.bold} onClick={() => style('bold', el.style?.bold ? null : true)} />
-              <IconButton icon="italic" label={tr("Italique", "Italic")} active={!!el.style?.italic} onClick={() => style('italic', el.style?.italic ? null : true)} />
-              <IconButton icon="underline" label={tr("Souligné", "Underline")} active={!!el.style?.underline} onClick={() => style('underline', el.style?.underline ? null : true)} />
-            </div>
-            <div className="seg" role="group" aria-label={tr("Alignement horizontal", "Horizontal alignment")}>
-              {(['left', 'center', 'right', 'justify'] as const).map((a) => (
-                <IconButton key={a} icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: tr('Aligner à gauche', 'Align left'), center: tr('Centrer', 'Center'), right: tr('Aligner à droite', 'Align right'), justify: tr('Justifier', 'Justify') }[a]} active={r.style.align === a} onClick={() => style('align', a)} />
-              ))}
-            </div>
-          </div>
-          <div className="row">
-            <div className="seg" role="group" aria-label={tr("Alignement vertical", "Vertical alignment")}>
-              {(['top', 'middle', 'bottom'] as const).map((a) => (
-                <IconButton key={a} icon={a === 'top' ? 'vTop' : a === 'middle' ? 'vMiddle' : 'vBottom'} label={{ top: tr('Haut', 'Top'), middle: tr('Milieu', 'Middle'), bottom: tr('Bas', 'Bottom') }[a]} active={r.style.valign === a} onClick={() => style('valign', a)} />
-              ))}
-            </div>
-          </div>
-        </Section>
-      )}
-
-      <Section title={tr("Couleurs de la charte", "Brand colors")}>
-        <div className="stack">
-          {el.type !== 'image' && el.type !== 'connector' && <ColorPicker label={tr("Texte", "Text")} value={el.style?.color} onChange={(v) => style('color', v)} testId="color-text" />}
-          {el.type === 'text' && <ColorPicker label={tr("Fond", "Background")} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
-          {el.type === 'shape' && el.shape !== 'line' && <ColorPicker label={tr("Remplissage", "Fill")} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
-        </div>
-      </Section>
-
-      <Section title={tr("Calque", "Layer")}>
-        <div className="seg" role="group" aria-label={tr("Ordre des calques", "Layer order")}>
-          {(['front', 'forward', 'backward', 'back'] as const).map((d) => (
-            <IconButton key={d} icon={d} label={{ front: tr('Premier plan', 'Bring to front'), forward: tr('Avancer', 'Bring forward'), backward: tr('Reculer', 'Send backward'), back: tr('Arrière-plan', 'Send to back') }[d]} onClick={() => mutate([{ kind: 'reorderElement', slideId: slide.id, elementId: el.id, direction: d }])} />
-          ))}
-        </div>
-      </Section>
+      <ShapeSections r={r} upd={upd} />
 
       {(el.type === 'text' || el.type === 'image') && layout && (
         <Section title={tr("Espace réservé", "Placeholder")}>
@@ -569,6 +495,47 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
         </Section>
       )}
     </>
+  );
+}
+
+/** Intrinsic ratio (width / height) of a picture, read from its rendering on the canvas. */
+function naturalRatio(id: string): number | null {
+  const img = document.querySelector<HTMLImageElement>(`[data-testid="slide-canvas"] [data-element-id="${CSS.escape(id)}"] img`);
+  return img?.naturalWidth && img.naturalHeight ? img.naturalWidth / img.naturalHeight : null;
+}
+
+/** Picture fit in its box (stretch / fit inside / fill and crop) and back to the original ratio. */
+function ImageFitControls({ r, upd }: { r: ResolvedElement; upd: (p: ElementPatch) => void }) {
+  const el = r.element;
+  if (el.type !== 'image') return null;
+  const fit = imageFit(el);
+  const modes = [
+    { id: 'contain', label: tr('Ajuster', 'Fit'), title: tr('Image entière dans la zone, proportions d’origine', 'Whole picture inside the box, original ratio') },
+    { id: 'cover', label: tr('Remplir', 'Fill'), title: tr('Remplit la zone, proportions d’origine, bords rognés', 'Fills the box, original ratio, edges cropped') },
+    { id: 'stretch', label: tr('Étirer', 'Stretch'), title: tr('Étirée aux dimensions de la zone (peut déformer)', 'Stretched to the box (may distort)') },
+  ] as const;
+  const restore = () => {
+    const ar = naturalRatio(el.id);
+    if (!ar) return;
+    // Same width and center, height from the picture's own ratio; the picture then fills its box exactly.
+    const h = round4(r.box.w / ar);
+    upd({ x: r.box.x, y: round4(r.box.y + (r.box.h - h) / 2), w: r.box.w, h, fit: 'stretch' });
+  };
+  const ar = naturalRatio(el.id);
+  const distorted = !!ar && fit === 'stretch' && Math.abs(r.box.w / r.box.h / ar - 1) > 0.01;
+  return (
+    <div className="stack fit-controls">
+      <div className="seg" role="radiogroup" aria-label={tr('Ajustement de l’image', 'Picture fit')}>
+        {modes.map((m) => (
+          <button key={m.id} type="button" role="radio" aria-checked={fit === m.id} className={`ibtn has-label${fit === m.id ? ' is-active' : ''}`} title={m.title} onClick={() => upd({ fit: m.id })} data-testid={`image-fit-${m.id}`} disabled={el.locked}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <button type="button" className="btn" onClick={restore} disabled={el.locked || !ar} data-testid="image-restore-ratio" title={tr('Hauteur recalculée depuis la largeur et les proportions de l’image', 'Height recomputed from the width and the picture ratio')}>
+        <Icon name="fit" /> {tr('Proportions d’origine', 'Original ratio')}{distorted ? ` · ${tr('déformée', 'distorted')} ${Math.round(Math.abs(r.box.w / r.box.h / ar! - 1) * 100)} %` : ''}
+      </button>
+    </div>
   );
 }
 
@@ -643,33 +610,10 @@ export function Inspector() {
 function MultiInspector({ rs }: { rs: ResolvedElement[] }) {
   const slide = useEditor(currentSlide)!;
   const { mutate } = useEditor.getState();
-  const align = (mode: 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom') => {
-    const x0 = Math.min(...rs.map((r) => r.box.x)), x1 = Math.max(...rs.map((r) => r.box.x + r.box.w));
-    const y0 = Math.min(...rs.map((r) => r.box.y)), y1 = Math.max(...rs.map((r) => r.box.y + r.box.h));
-    mutate(rs.filter((r) => !r.element.locked).map((r) => {
-      const b = { ...r.box };
-      if (mode === 'left') b.x = x0;
-      if (mode === 'right') b.x = x1 - b.w;
-      if (mode === 'hcenter') b.x = (x0 + x1) / 2 - b.w / 2;
-      if (mode === 'top') b.y = y0;
-      if (mode === 'bottom') b.y = y1 - b.h;
-      if (mode === 'vcenter') b.y = (y0 + y1) / 2 - b.h / 2;
-      return { kind: 'updateElement', slideId: slide.id, elementId: r.element.id, patch: { x: round4(b.x), y: round4(b.y), w: b.w, h: b.h } } as Mutation;
-    }));
-  };
   return (
     <>
       <div className="insp-head"><span className="insp-kind">{rs.length} {tr('éléments', 'elements')}</span></div>
-      <Section title={tr("Aligner", "Align")}>
-        <div className="seg" role="group" aria-label={tr("Aligner la sélection", "Align the selection")}>
-          <IconButton icon="alignLeft" label={tr("Aligner à gauche", "Align left")} onClick={() => align('left')} />
-          <IconButton icon="alignCenter" label={tr("Centrer horizontalement", "Center horizontally")} onClick={() => align('hcenter')} />
-          <IconButton icon="alignRight" label={tr("Aligner à droite", "Align right")} onClick={() => align('right')} />
-          <IconButton icon="vTop" label={tr("Aligner en haut", "Align top")} onClick={() => align('top')} />
-          <IconButton icon="vMiddle" label={tr("Centrer verticalement", "Center vertically")} onClick={() => align('vcenter')} />
-          <IconButton icon="vBottom" label={tr("Aligner en bas", "Align bottom")} onClick={() => align('bottom')} />
-        </div>
-      </Section>
+      <p className="hint insp-hint">{tr('Aligner, répartir et ordonner : Accueil › Organiser, ou clic droit sur la sélection.', 'Align, distribute and order: Home › Arrange, or right-click the selection.')}</p>
     </>
   );
 }
@@ -706,7 +650,7 @@ export function StatusBar() {
       </button>
       <span className="grow" />
       <button type="button" className={`status-btn${notesOpen ? ' is-active' : ''}`} aria-pressed={notesOpen} onClick={() => set({ notesOpen: !notesOpen })}><Icon name="notes" size={14} /> Notes</button>
-      <button type="button" className={`status-btn${pane === 'comments' ? ' is-active' : ''}`} aria-pressed={pane === 'comments'} onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })}><Icon name="comment" size={14} /> Commentaires{open ? ` (${open})` : ''}</button>
+      <button type="button" className={`status-btn${pane === 'comments' ? ' is-active' : ''}`} aria-pressed={pane === 'comments'} onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })}><Icon name="comment" size={14} /> {tr('Commentaires', 'Comments')}{open ? ` (${open})` : ''}</button>
       <span className="sep" />
       <div className="zoom" role="group" aria-label="Zoom">
         <button type="button" className="status-btn" aria-label={tr("Zoom arrière", "Zoom out")} onClick={() => setZoom(Math.max(0.1, round4(z / 1.2)))}><Icon name="zoomOut" size={14} /></button>

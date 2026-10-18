@@ -17,7 +17,8 @@ import {
   type SlideNode,
   type TextRun,
 } from '@corporate-slides/core';
-import { readRels, readText } from './ooxml.js';
+import { readRels, readText, type Rel } from './ooxml.js';
+import { loadZipSafely } from './safety.js';
 
 /*
  * PowerPoint slides → canonical `SlideDocument` (the masters themselves come from `importTemplate`).
@@ -32,7 +33,10 @@ const parser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: '',
 
 type X = Record<string, unknown>;
 const tagOf = (n: X) => Object.keys(n).find((k) => k !== ':@') ?? '';
-const kids = (n: X | undefined): X[] => (n ? ((n[tagOf(n)] as X[] | undefined) ?? []) : []);
+const kids = (n: X | undefined): X[] => {
+  const v = n ? n[tagOf(n)] : undefined;
+  return Array.isArray(v) ? (v as X[]) : [];
+};
 const attr = (n: X | undefined, a: string): string | undefined => {
   const v = (n?.[':@'] as Record<string, string> | undefined)?.[a];
   return v === undefined ? v : decodeXml(String(v));
@@ -264,6 +268,244 @@ function matchPlaceholder(layout: LayoutDef | undefined, type: string | undefine
   return (idx !== undefined ? layout.placeholders.find((p) => p.idx === idx && (p.type === t || t === 'body')) : undefined) ?? layout.placeholders.find((p) => p.type === t) ?? (t === 'subtitle' ? layout.placeholders.find((p) => p.type === 'body') : undefined);
 }
 
+interface TreeContext {
+  zip: JSZip;
+  master: CorporateMaster;
+  layout: LayoutDef | undefined;
+  /** Relationships of the part holding the tree (pictures). */
+  relById: Map<string, Rel>;
+  /** "Slide 3" etc., prefixed to warnings. */
+  where: string;
+  media: Map<string, ConvertedMedia>;
+  warnings: string[];
+  stats: ConvertResult['stats'];
+}
+
+/** A DrawingML shape tree (slide `p:spTree`, clipboard locked canvas…) → canonical elements. */
+async function convertTree(tree: X | undefined, ctx: TreeContext): Promise<SlideElement[]> {
+  const { zip, master, layout, relById, where, media, warnings, stats } = ctx;
+  const elements: SlideElement[] = [];
+  const taken = new Set<string>();
+  /** OOXML shape id → element id, for connectors. */
+  const byShapeId = new Map<string, string>();
+  const idFor = (preferred: string, kind: string) => {
+    let base = preferred.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || kind;
+    if (!/^[a-z0-9]/.test(base)) base = `${kind}-${base}`;
+    let id = base;
+    for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
+    taken.add(id);
+    return id;
+  };
+  const push = (raw: Record<string, unknown>, shapeId: string | undefined) => {
+    if (!raw.name || String(raw.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === raw.id) delete raw.name;
+    const r = SlideElement.safeParse(raw);
+    if (!r.success) {
+      stats.skipped++;
+      warnings.push(`${where} : ${tr('élément ignoré', 'element skipped')} « ${String(raw.name ?? raw.id)} » (${r.error.issues[0]?.path.join('.')} : ${r.error.issues[0]?.message})`);
+      return;
+    }
+    elements.push(r.data);
+    if (shapeId) byShapeId.set(shapeId, r.data.id);
+    stats.elements++;
+  };
+  const pendingConnectors: { raw: Record<string, unknown>; st?: [string, number]; end?: [string, number]; shapeId?: string }[] = [];
+  let bodyTaken = false;
+
+  const walk = async (tree: X | undefined, f: Frame): Promise<void> => {
+    for (const n of kids(tree)) {
+      const tag = tagOf(n);
+      if (tag === 'mc:AlternateContent') {
+        await walk(child(n, 'mc:Fallback') ?? child(n, 'mc:Choice'), f);
+        continue;
+      }
+      const nv = child(n, tag === 'p:sp' ? 'p:nvSpPr' : tag === 'p:pic' ? 'p:nvPicPr' : tag === 'p:cxnSp' ? 'p:nvCxnSpPr' : tag === 'p:graphicFrame' ? 'p:nvGraphicFramePr' : 'p:nvGrpSpPr');
+      const cNvPr = child(nv, 'p:cNvPr');
+      const name = attr(cNvPr, 'name') ?? '';
+      const shapeId = attr(cNvPr, 'id');
+      const hidden = attr(cNvPr, 'hidden') === '1' ? { hidden: true } : {};
+      const ph = path(nv, 'p:nvPr', 'p:ph');
+      const phType = attr(ph, 'type');
+      if (ph && SKIPPED_PH.has(phType ?? '')) continue; // footer, date and number come from the master
+      const spPr = child(n, 'p:spPr');
+
+      if (tag === 'p:grpSp') {
+        const gx = path(n, 'p:grpSpPr', 'a:xfrm');
+        const off = child(gx, 'a:off'), ext = child(gx, 'a:ext'), chOff = child(gx, 'a:chOff'), chExt = child(gx, 'a:chExt');
+        if (!off || !ext || !chOff || !chExt) {
+          await walk(n, f);
+          continue;
+        }
+        const sx = Number(attr(chExt, 'cx')) ? Number(attr(ext, 'cx')) / Number(attr(chExt, 'cx')) : 1;
+        const sy = Number(attr(chExt, 'cy')) ? Number(attr(ext, 'cy')) / Number(attr(chExt, 'cy')) : 1;
+        const o = f.map(emu(attr(off, 'x')), emu(attr(off, 'y')));
+        const cx = emu(attr(chOff, 'x')), cy = emu(attr(chOff, 'y'));
+        await walk(n, { map: (x, y) => ({ x: o.x + (x - cx) * sx * f.sx, y: o.y + (y - cy) * sy * f.sy }), sx: sx * f.sx, sy: sy * f.sy });
+        continue;
+      }
+
+      if (tag === 'p:sp') {
+        const g = geometry(child(spPr, 'a:xfrm'), f);
+        const phDef = ph ? matchPlaceholder(layout, phType, attr(ph, 'idx')) : undefined;
+        const text = textBody(child(n, 'p:txBody'), master, phDef);
+        const hasText = !!text?.paragraphs.some((p) => p.runs.length);
+        const prst = attr(child(spPr, 'a:prstGeom'), 'prst');
+        const fill = colorOf(spPr && (child(spPr, 'a:solidFill') || child(spPr, 'a:noFill')) ? spPr : undefined, master);
+        const line = outline(child(spPr, 'a:ln'), master);
+        if (child(spPr, 'a:custGeom')) warnings.push(`${where} : ${tr('forme libre', 'freeform shape')} « ${name} » ${tr('convertie en rectangle', 'converted to a rectangle')}`);
+        if (child(spPr, 'a:gradFill')) warnings.push(`${where} : ${tr('dégradé de', 'gradient of')} « ${name} » ${tr('non repris', 'not kept')}`);
+        if (ph) {
+          if (!hasText) continue; // empty placeholder: the layout shows it
+          const key = phDef?.key;
+          const kind = phDef?.type === 'title' ? 'title' : phDef?.type === 'subtitle' ? 'subtitle' : phDef?.type === 'body' && !bodyTaken ? 'body' : (key ?? 'text');
+          if (kind === 'body') bodyTaken = true;
+          if (!phDef && !g) warnings.push(`${where} : ${tr('espace réservé sans équivalent dans la disposition', 'placeholder with no match in the layout')} « ${name} »`);
+          push(inheritedStripped({ id: idFor(kind, 'text'), type: 'text', ...(key ? { placeholder: key } : {}), ...(g ? { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) } : {}), ...hidden, paragraphs: text!.paragraphs, ...styleOf({ ...text!.style, ...(fill && fill !== 'none' ? { fill } : {}), ...line }) }, phDef, master), shapeId);
+          continue;
+        }
+        if (!g) continue;
+        const isTextBox = attr(child(nv, 'p:cNvSpPr'), 'txBox') === '1' || ((!prst || prst === 'rect') && (!fill || fill === 'none') && !line.line && hasText);
+        const geom = { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) };
+        if (isTextBox) {
+          push({ id: idFor(name, 'text'), type: 'text', name, ...geom, ...hidden, paragraphs: text?.paragraphs ?? [], ...styleOf({ ...(text?.style ?? {}), ...(fill && fill !== 'none' ? { fill } : {}), ...line }) }, shapeId);
+          continue;
+        }
+        const shape = prst && SHAPES.has(prst) ? prst : 'rect';
+        // Shapes center their text by default.
+        if (text?.style.align === 'center') delete text.style.align;
+        if (text?.style.valign === 'middle') delete text.style.valign;
+        if (prst && !SHAPES.has(prst)) warnings.push(`${where} : ${tr('forme', 'shape')} « ${prst} » ${tr('remplacée par un rectangle', 'replaced by a rectangle')} (« ${name} »)`);
+        // Preset adjustments (avLst): roundRect / snip1Rect corners become the radius, the rest is kept as is.
+        const gds = all(path(spPr, 'a:prstGeom', 'a:avLst'), 'a:gd').map((gd) => [attr(gd, 'name') ?? '', Number(/val (-?\d+)/.exec(attr(gd, 'fmla') ?? '')?.[1])] as const).filter(([k, v]) => /^adj\d?$/.test(k) && Number.isFinite(v));
+        const corner = (shape === 'roundRect' || shape === 'snip1Rect') && gds.find(([k]) => k === 'adj');
+        const adjust = !corner && gds.length ? { adjust: Object.fromEntries(gds) } : {};
+        if (corner) line.radius = round4((corner[1] / 100000) * Math.min(g.w, g.h));
+        push({
+          id: idFor(name, 'shape'), type: 'shape', name, shape, ...geom, ...hidden, ...adjust,
+          ...(g.flipH ? { flipH: true } : {}), ...(g.flipV ? { flipV: true } : {}),
+          ...(hasText ? { paragraphs: text!.paragraphs } : {}),
+          ...styleOf({ ...(text?.style ?? {}), ...(fill ? { fill } : {}), ...line }),
+        }, shapeId);
+        continue;
+      }
+
+      if (tag === 'p:pic') {
+        const g = geometry(child(spPr, 'a:xfrm'), f);
+        const blip = path(n, 'p:blipFill', 'a:blip');
+        const rel = relById.get(attr(blip, 'r:embed') ?? '');
+        if (!rel || rel.external) {
+          stats.skipped++;
+          warnings.push(`${where} : ${tr('image liée (externe) ignorée', 'linked (external) picture skipped')} « ${name} »`);
+          continue;
+        }
+        const file = zip.file(rel.target);
+        const ext = posix.extname(rel.target).toLowerCase();
+        if (!file || !/^\.(png|jpe?g|gif|svg|bmp|webp|emf|wmf)$/.test(ext)) {
+          stats.skipped++;
+          warnings.push(`${where} : ${tr('image illisible', 'unreadable picture')} « ${name} »`);
+          continue;
+        }
+        if (/^\.(emf|wmf)$/.test(ext)) warnings.push(`${where} : ${tr('image EMF/WMF', 'EMF/WMF picture')} « ${name} » ${tr(': aperçu limité dans l’éditeur', ': limited preview in the editor')}`);
+        if (attr(path(n, 'p:blipFill', 'a:srcRect'), 'l') || attr(path(n, 'p:blipFill', 'a:srcRect'), 't')) warnings.push(`${where} : ${tr('rognage de', 'crop of')} « ${name} » ${tr('non repris', 'not kept')}`);
+        const mediaName = posix.basename(rel.target);
+        if (!media.has(mediaName)) media.set(mediaName, { name: mediaName, data: await file.async('uint8array') });
+        const phDef = ph ? matchPlaceholder(layout, phType ?? 'pic', attr(ph, 'idx')) : undefined;
+        const descr = attr(cNvPr, 'descr');
+        push(inheritedStripped({ id: idFor(name, 'image'), type: 'image', name, src: `media/${mediaName}`, ...(descr ? { alt: descr } : {}), ...(phDef ? { placeholder: phDef.key } : {}), ...(g ? { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) } : {}), ...hidden, ...styleOf(outline(child(spPr, 'a:ln'), master)) }, phDef, master), shapeId);
+        stats.images++;
+        continue;
+      }
+
+      if (tag === 'p:cxnSp') {
+        const g = geometry(child(spPr, 'a:xfrm'), f);
+        if (!g) continue;
+        const c = child(nv, 'p:cNvCxnSpPr');
+        const st = child(c, 'a:stCxn'), en = child(c, 'a:endCxn');
+        const prst = attr(child(spPr, 'a:prstGeom'), 'prst') ?? 'straightConnector1';
+        const style = outline(child(spPr, 'a:ln'), master);
+        pendingConnectors.push({
+          raw: { id: idFor(name, 'connector'), name, route: ROUTE(prst), ...hidden, g, ...styleOf(style) },
+          st: st ? [attr(st, 'id') ?? '', Number(attr(st, 'idx') ?? 0)] : undefined,
+          end: en ? [attr(en, 'id') ?? '', Number(attr(en, 'idx') ?? 0)] : undefined,
+          shapeId,
+        });
+        continue;
+      }
+
+      if (tag === 'p:graphicFrame') {
+        const data = path(n, 'a:graphic', 'a:graphicData');
+        const tbl = child(data, 'a:tbl');
+        const g = geometry(child(n, 'p:xfrm') ?? child(n, 'a:xfrm'), f);
+        if (!tbl || !g) {
+          stats.skipped++;
+          const uri = attr(data, 'uri') ?? '';
+          warnings.push(`${where} : ${/chart/.test(uri) ? tr('graphique', 'chart') : /diagram/.test(uri) ? 'SmartArt' : tr('objet', 'object')} « ${name} » ${tr('non converti', 'not converted')}`);
+          continue;
+        }
+        push({ id: idFor(name, 'table'), type: 'table', name, x: g.x, y: g.y, w: g.w, h: g.h, ...hidden, ...tableOf(tbl, master) }, shapeId);
+        stats.tables++;
+        continue;
+      }
+
+      if (tag === 'p:contentPart' || tag === 'p:extLst' || tag.startsWith('p:nv') || tag === 'p:grpSpPr') continue;
+      if (tag) {
+        stats.skipped++;
+        warnings.push(`${where} : ${tr('élément non pris en charge', 'unsupported element')} <${tag}> « ${name} »`);
+      }
+    }
+  };
+  await walk(tree, IDENTITY);
+
+  // Connectors last: they need the element ids of both ends. Unattached ones become lines.
+  for (const c of pendingConnectors) {
+    const g = c.raw.g as NonNullable<ReturnType<typeof geometry>>;
+    delete c.raw.g;
+    const from = c.st && byShapeId.get(c.st[0]), to = c.end && byShapeId.get(c.end[0]);
+    const side = (idx: number, elId: string) => {
+      const e = elements.find((x) => x.id === elId);
+      return e && (e.type === 'text' || e.type === 'image' || (e.type === 'shape' && ['rect', 'roundRect', 'snip1Rect', 'flowChartTerminator'].includes(e.shape))) ? RECT_SIDES[idx] : undefined;
+    };
+    if (from && to && from !== to) {
+      const fs = side(c.st![1], from), ts = side(c.end![1], to);
+      push({ ...c.raw, type: 'connector', from, to, ...(fs ? { fromSide: fs } : {}), ...(ts ? { toSide: ts } : {}) }, c.shapeId);
+    } else {
+      push({ ...c.raw, type: 'shape', shape: 'line', id: c.raw.id, x: g.x, y: g.y, w: g.w, h: g.h, ...(g.flipH !== g.flipV ? { flipV: true } : {}) }, c.shapeId);
+    }
+  }
+
+  return elements;
+}
+
+/**
+ * PowerPoint's clipboard drawing ("Art::GVML ClipFormat": a small OOXML package whose
+ * `clipboard/drawings/drawing1.xml` holds the copied shapes in a locked canvas) → elements, with
+ * the same conversion as slides. Locked-canvas shapes use `a:` names: they are mapped to `p:`.
+ */
+export async function convertClipboardDrawing(bytes: Uint8Array, master: CorporateMaster): Promise<{ elements: SlideElement[]; media: ConvertedMedia[]; warnings: string[] }> {
+  const zip = await loadZipSafely(bytes);
+  const part = Object.keys(zip.files).find((n) => /drawings\/drawing\d*\.xml$/.test(n));
+  if (!part) return { elements: [], media: [], warnings: [tr('Presse-papiers PowerPoint sans dessin', 'PowerPoint clipboard without a drawing')] };
+  let xml = (await readText(zip, part)) ?? '';
+  xml = xml
+    .replace(/<a:txSp>\s*<a:txBody>([\s\S]*?)<\/a:txBody>[\s\S]*?<\/a:txSp>/g, '<p:txBody>$1</p:txBody>')
+    .replace(/<(\/?)a:(sp|nvSpPr|cNvSpPr|spPr|pic|nvPicPr|cNvPicPr|blipFill|grpSp|nvGrpSpPr|cNvGrpSpPr|grpSpPr|cxnSp|nvCxnSpPr|cNvCxnSpPr|graphicFrame|nvGraphicFramePr|cNvGraphicFramePr|cNvPr)([\s>/])/g, '<$1p:$2$3');
+  const find = (nodes: X[]): X | undefined => {
+    for (const n of nodes) {
+      if (tagOf(n) === 'lc:lockedCanvas') return n;
+      const k = find(kids(n));
+      if (k) return k;
+    }
+    return undefined;
+  };
+  const canvas = find(parser.parse(xml) as X[]);
+  const relById = new Map((await readRels(zip, part)).map((r) => [r.id, r]));
+  const media = new Map<string, ConvertedMedia>();
+  const warnings: string[] = [];
+  const stats = { slides: 0, elements: 0, images: 0, tables: 0, skipped: 0 };
+  // The canvas' own group transform is the copied shapes' bounding box: children keep slide positions.
+  const elements = await convertTree(canvas ? { root: kids(canvas).filter((k) => tagOf(k) !== 'p:nvGrpSpPr' && tagOf(k) !== 'p:grpSpPr') } : undefined, { zip, master, layout: undefined, relById, where: tr('Presse-papiers', 'Clipboard'), media, warnings, stats });
+  return { elements, media: [...media.values()], warnings };
+}
+
 export async function convertSlides(zip: JSZip, master: CorporateMaster): Promise<ConvertResult> {
   const warnings: string[] = [];
   const media = new Map<string, ConvertedMedia>();
@@ -285,189 +527,7 @@ export async function convertSlides(zip: JSZip, master: CorporateMaster): Promis
     const doc = (parser.parse((await readText(zip, part)) ?? '') as X[]).find((n) => tagOf(n) === 'p:sld');
     const slideId = `slide-${si + 1}`;
     const where = tr(`Diapositive ${si + 1}`, `Slide ${si + 1}`);
-    const elements: SlideElement[] = [];
-    const taken = new Set<string>();
-    /** OOXML shape id → element id, for connectors. */
-    const byShapeId = new Map<string, string>();
-    const idFor = (preferred: string, kind: string) => {
-      let base = preferred.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || kind;
-      if (!/^[a-z0-9]/.test(base)) base = `${kind}-${base}`;
-      let id = base;
-      for (let i = 2; taken.has(id); i++) id = `${base}-${i}`;
-      taken.add(id);
-      return id;
-    };
-    const push = (raw: Record<string, unknown>, shapeId: string | undefined) => {
-      if (!raw.name || String(raw.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') === raw.id) delete raw.name;
-      const r = SlideElement.safeParse(raw);
-      if (!r.success) {
-        stats.skipped++;
-        warnings.push(`${where} : ${tr('élément ignoré', 'element skipped')} « ${String(raw.name ?? raw.id)} » (${r.error.issues[0]?.path.join('.')} : ${r.error.issues[0]?.message})`);
-        return;
-      }
-      elements.push(r.data);
-      if (shapeId) byShapeId.set(shapeId, r.data.id);
-      stats.elements++;
-    };
-    const pendingConnectors: { raw: Record<string, unknown>; st?: [string, number]; end?: [string, number]; shapeId?: string }[] = [];
-    let bodyTaken = false;
-
-    const walk = async (tree: X | undefined, f: Frame): Promise<void> => {
-      for (const n of kids(tree)) {
-        const tag = tagOf(n);
-        if (tag === 'mc:AlternateContent') {
-          await walk(child(n, 'mc:Fallback') ?? child(n, 'mc:Choice'), f);
-          continue;
-        }
-        const nv = child(n, tag === 'p:sp' ? 'p:nvSpPr' : tag === 'p:pic' ? 'p:nvPicPr' : tag === 'p:cxnSp' ? 'p:nvCxnSpPr' : tag === 'p:graphicFrame' ? 'p:nvGraphicFramePr' : 'p:nvGrpSpPr');
-        const cNvPr = child(nv, 'p:cNvPr');
-        const name = attr(cNvPr, 'name') ?? '';
-        const shapeId = attr(cNvPr, 'id');
-        const hidden = attr(cNvPr, 'hidden') === '1' ? { hidden: true } : {};
-        const ph = path(nv, 'p:nvPr', 'p:ph');
-        const phType = attr(ph, 'type');
-        if (ph && SKIPPED_PH.has(phType ?? '')) continue; // footer, date and number come from the master
-        const spPr = child(n, 'p:spPr');
-
-        if (tag === 'p:grpSp') {
-          const gx = path(n, 'p:grpSpPr', 'a:xfrm');
-          const off = child(gx, 'a:off'), ext = child(gx, 'a:ext'), chOff = child(gx, 'a:chOff'), chExt = child(gx, 'a:chExt');
-          if (!off || !ext || !chOff || !chExt) {
-            await walk(n, f);
-            continue;
-          }
-          const sx = Number(attr(chExt, 'cx')) ? Number(attr(ext, 'cx')) / Number(attr(chExt, 'cx')) : 1;
-          const sy = Number(attr(chExt, 'cy')) ? Number(attr(ext, 'cy')) / Number(attr(chExt, 'cy')) : 1;
-          const o = f.map(emu(attr(off, 'x')), emu(attr(off, 'y')));
-          const cx = emu(attr(chOff, 'x')), cy = emu(attr(chOff, 'y'));
-          await walk(n, { map: (x, y) => ({ x: o.x + (x - cx) * sx * f.sx, y: o.y + (y - cy) * sy * f.sy }), sx: sx * f.sx, sy: sy * f.sy });
-          continue;
-        }
-
-        if (tag === 'p:sp') {
-          const g = geometry(child(spPr, 'a:xfrm'), f);
-          const phDef = ph ? matchPlaceholder(layout, phType, attr(ph, 'idx')) : undefined;
-          const text = textBody(child(n, 'p:txBody'), master, phDef);
-          const hasText = !!text?.paragraphs.some((p) => p.runs.length);
-          const prst = attr(child(spPr, 'a:prstGeom'), 'prst');
-          const fill = colorOf(spPr && (child(spPr, 'a:solidFill') || child(spPr, 'a:noFill')) ? spPr : undefined, master);
-          const line = outline(child(spPr, 'a:ln'), master);
-          if (child(spPr, 'a:custGeom')) warnings.push(`${where} : ${tr('forme libre', 'freeform shape')} « ${name} » ${tr('convertie en rectangle', 'converted to a rectangle')}`);
-          if (child(spPr, 'a:gradFill')) warnings.push(`${where} : ${tr('dégradé de', 'gradient of')} « ${name} » ${tr('non repris', 'not kept')}`);
-          if (ph) {
-            if (!hasText) continue; // empty placeholder: the layout shows it
-            const key = phDef?.key;
-            const kind = phDef?.type === 'title' ? 'title' : phDef?.type === 'subtitle' ? 'subtitle' : phDef?.type === 'body' && !bodyTaken ? 'body' : (key ?? 'text');
-            if (kind === 'body') bodyTaken = true;
-            if (!phDef && !g) warnings.push(`${where} : ${tr('espace réservé sans équivalent dans la disposition', 'placeholder with no match in the layout')} « ${name} »`);
-            push(inheritedStripped({ id: idFor(kind, 'text'), type: 'text', ...(key ? { placeholder: key } : {}), ...(g ? { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) } : {}), ...hidden, paragraphs: text!.paragraphs, ...styleOf({ ...text!.style, ...(fill && fill !== 'none' ? { fill } : {}), ...line }) }, phDef, master), shapeId);
-            continue;
-          }
-          if (!g) continue;
-          const isTextBox = attr(child(nv, 'p:cNvSpPr'), 'txBox') === '1' || ((!prst || prst === 'rect') && (!fill || fill === 'none') && !line.line && hasText);
-          const geom = { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) };
-          if (isTextBox) {
-            push({ id: idFor(name, 'text'), type: 'text', name, ...geom, ...hidden, paragraphs: text?.paragraphs ?? [], ...styleOf({ ...(text?.style ?? {}), ...(fill && fill !== 'none' ? { fill } : {}), ...line }) }, shapeId);
-            continue;
-          }
-          const shape = prst && SHAPES.has(prst) ? prst : 'rect';
-          // Shapes center their text by default.
-          if (text?.style.align === 'center') delete text.style.align;
-          if (text?.style.valign === 'middle') delete text.style.valign;
-          if (prst && !SHAPES.has(prst)) warnings.push(`${where} : ${tr('forme', 'shape')} « ${prst} » ${tr('remplacée par un rectangle', 'replaced by a rectangle')} (« ${name} »)`);
-          push({
-            id: idFor(name, 'shape'), type: 'shape', name, shape, ...geom, ...hidden,
-            ...(g.flipH ? { flipH: true } : {}), ...(g.flipV ? { flipV: true } : {}),
-            ...(hasText ? { paragraphs: text!.paragraphs } : {}),
-            ...styleOf({ ...(text?.style ?? {}), ...(fill ? { fill } : {}), ...line }),
-          }, shapeId);
-          continue;
-        }
-
-        if (tag === 'p:pic') {
-          const g = geometry(child(spPr, 'a:xfrm'), f);
-          const blip = path(n, 'p:blipFill', 'a:blip');
-          const rel = relById.get(attr(blip, 'r:embed') ?? '');
-          if (!rel || rel.external) {
-            stats.skipped++;
-            warnings.push(`${where} : ${tr('image liée (externe) ignorée', 'linked (external) picture skipped')} « ${name} »`);
-            continue;
-          }
-          const file = zip.file(rel.target);
-          const ext = posix.extname(rel.target).toLowerCase();
-          if (!file || !/^\.(png|jpe?g|gif|svg|bmp|webp|emf|wmf)$/.test(ext)) {
-            stats.skipped++;
-            warnings.push(`${where} : ${tr('image illisible', 'unreadable picture')} « ${name} »`);
-            continue;
-          }
-          if (/^\.(emf|wmf)$/.test(ext)) warnings.push(`${where} : ${tr('image EMF/WMF', 'EMF/WMF picture')} « ${name} » ${tr(': aperçu limité dans l’éditeur', ': limited preview in the editor')}`);
-          if (attr(path(n, 'p:blipFill', 'a:srcRect'), 'l') || attr(path(n, 'p:blipFill', 'a:srcRect'), 't')) warnings.push(`${where} : ${tr('rognage de', 'crop of')} « ${name} » ${tr('non repris', 'not kept')}`);
-          const mediaName = posix.basename(rel.target);
-          if (!media.has(mediaName)) media.set(mediaName, { name: mediaName, data: await file.async('uint8array') });
-          const phDef = ph ? matchPlaceholder(layout, phType ?? 'pic', attr(ph, 'idx')) : undefined;
-          const descr = attr(cNvPr, 'descr');
-          push(inheritedStripped({ id: idFor(name, 'image'), type: 'image', name, src: `media/${mediaName}`, ...(descr ? { alt: descr } : {}), ...(phDef ? { placeholder: phDef.key } : {}), ...(g ? { x: g.x, y: g.y, w: g.w, h: g.h, ...(g.rotation ? { rotation: g.rotation } : {}) } : {}), ...hidden, ...styleOf(outline(child(spPr, 'a:ln'), master)) }, phDef, master), shapeId);
-          stats.images++;
-          continue;
-        }
-
-        if (tag === 'p:cxnSp') {
-          const g = geometry(child(spPr, 'a:xfrm'), f);
-          if (!g) continue;
-          const c = child(nv, 'p:cNvCxnSpPr');
-          const st = child(c, 'a:stCxn'), en = child(c, 'a:endCxn');
-          const prst = attr(child(spPr, 'a:prstGeom'), 'prst') ?? 'straightConnector1';
-          const style = outline(child(spPr, 'a:ln'), master);
-          pendingConnectors.push({
-            raw: { id: idFor(name, 'connector'), name, route: ROUTE(prst), ...hidden, g, ...styleOf(style) },
-            st: st ? [attr(st, 'id') ?? '', Number(attr(st, 'idx') ?? 0)] : undefined,
-            end: en ? [attr(en, 'id') ?? '', Number(attr(en, 'idx') ?? 0)] : undefined,
-            shapeId,
-          });
-          continue;
-        }
-
-        if (tag === 'p:graphicFrame') {
-          const data = path(n, 'a:graphic', 'a:graphicData');
-          const tbl = child(data, 'a:tbl');
-          const g = geometry(child(n, 'p:xfrm'), f);
-          if (!tbl || !g) {
-            stats.skipped++;
-            const uri = attr(data, 'uri') ?? '';
-            warnings.push(`${where} : ${/chart/.test(uri) ? tr('graphique', 'chart') : /diagram/.test(uri) ? 'SmartArt' : tr('objet', 'object')} « ${name} » ${tr('non converti', 'not converted')}`);
-            continue;
-          }
-          push({ id: idFor(name, 'table'), type: 'table', name, x: g.x, y: g.y, w: g.w, h: g.h, ...hidden, ...tableOf(tbl, master) }, shapeId);
-          stats.tables++;
-          continue;
-        }
-
-        if (tag === 'p:contentPart' || tag === 'p:extLst' || tag.startsWith('p:nv') || tag === 'p:grpSpPr') continue;
-        if (tag) {
-          stats.skipped++;
-          warnings.push(`${where} : ${tr('élément non pris en charge', 'unsupported element')} <${tag}> « ${name} »`);
-        }
-      }
-    };
-    await walk(path(doc, 'p:cSld', 'p:spTree'), IDENTITY);
-
-    // Connectors last: they need the element ids of both ends. Unattached ones become lines.
-    for (const c of pendingConnectors) {
-      const g = c.raw.g as NonNullable<ReturnType<typeof geometry>>;
-      delete c.raw.g;
-      const from = c.st && byShapeId.get(c.st[0]), to = c.end && byShapeId.get(c.end[0]);
-      const side = (idx: number, elId: string) => {
-        const e = elements.find((x) => x.id === elId);
-        return e && (e.type === 'text' || e.type === 'image' || (e.type === 'shape' && ['rect', 'roundRect', 'snip1Rect', 'flowChartTerminator'].includes(e.shape))) ? RECT_SIDES[idx] : undefined;
-      };
-      if (from && to && from !== to) {
-        const fs = side(c.st![1], from), ts = side(c.end![1], to);
-        push({ ...c.raw, type: 'connector', from, to, ...(fs ? { fromSide: fs } : {}), ...(ts ? { toSide: ts } : {}) }, c.shapeId);
-      } else {
-        push({ ...c.raw, type: 'shape', shape: 'line', id: c.raw.id, x: g.x, y: g.y, w: g.w, h: g.h, ...(g.flipH !== g.flipV ? { flipV: true } : {}) }, c.shapeId);
-      }
-    }
-
+    const elements = await convertTree(path(doc, 'p:cSld', 'p:spTree'), { zip, master, layout, relById, where, media, warnings, stats });
     if (child(path(doc, 'p:cSld'), 'p:bg')) warnings.push(`${where} : ${tr('arrière-plan propre à la diapositive non repris (celui de la disposition s’applique)', 'slide-specific background not kept (the layout one applies)')}`);
 
     // Speaker notes: the body placeholder of the notes slide.

@@ -69,8 +69,9 @@ export function estimateFit(r: ResolvedElement, paragraphs: Paragraph[]): FitEst
     const look = paragraphLook(r, p);
     const width = Math.max(0.1, r.box.w - ml - mr - look.indent);
     const bold = look.bold || p.runs.some((x) => x.bold);
-    const lines = estimateLines(plainText(p) || ' ', look.fontSize, r.style.fontFace, bold, width);
-    required += (lines * look.fontSize * LINE_HEIGHT * r.style.lineSpacing) / 72;
+    const size = Math.max(look.fontSize, ...p.runs.map((x) => x.size ?? 0));
+    const lines = estimateLines(plainText(p) || ' ', size, r.style.fontFace, bold, width);
+    required += (lines * size * LINE_HEIGHT * r.style.lineSpacing) / 72;
   }
   return { requiredHeight: required, availableHeight, overflows: required > availableHeight + 0.02 };
 }

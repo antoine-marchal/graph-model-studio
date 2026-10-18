@@ -2,6 +2,7 @@ import JSZip from 'jszip';
 import { readFile } from 'node:fs/promises';
 import { XMLValidator } from 'fast-xml-parser';
 import { posix } from 'node:path';
+import { tr } from '@corporate-slides/core';
 
 /**
  * OOXML post-processing adapter for pptxgenjs-plus 4.3.4 output. Kept isolated and minimal:
@@ -19,19 +20,35 @@ const EXTRA_CONTENT_TYPES: Record<string, string> = { emf: 'image/x-emf', wmf: '
 export interface PostProcessInput {
   /** Layout name (cSld@name) → distinct image source files in pptxgenjs registration order. */
   layoutMedia?: Map<string, string[]>;
+  adjustments?: { slide: number; name: string; values: Record<string, number> }[];
 }
 
 export async function postProcess(buffer: Buffer, input: PostProcessInput = {}): Promise<{ buffer: Buffer; fixes: string[] }> {
   const zip = await JSZip.loadAsync(buffer);
   const fixes: string[] = [];
   if (input.layoutMedia) fixes.push(...(await fixLayoutMediaCollisions(zip, input.layoutMedia)));
+  // Shape adjustments (ring thickness, arrow heads, callout tail…): `a:avLst` of the named shape.
+  for (const a of input.adjustments ?? []) {
+    const part = `ppt/slides/slide${a.slide}.xml`;
+    const xml = await zip.file(part)?.async('string');
+    if (!xml) continue;
+    const at = xml.search(new RegExp(`<p:cNvPr id="\\d+" name="${a.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`));
+    if (at < 0) continue;
+    const end = xml.indexOf('</p:sp>', at);
+    const seg = xml.slice(at, end);
+    const gd = Object.entries(a.values).map(([k, v]) => `<a:gd name="${k}" fmla="val ${Math.round(v)}"/>`).join('');
+    const next = seg.replace(/<a:avLst\/>|<a:avLst>[\s\S]*?<\/a:avLst>/, `<a:avLst>${gd}</a:avLst>`);
+    if (next === seg) continue;
+    zip.file(part, xml.slice(0, at) + next + xml.slice(end));
+    fixes.push(`${tr('Ajustements de forme', 'Shape adjustments')} : ${a.name}`);
+  }
   let ct = await zip.file('[Content_Types].xml')!.async('string');
   const present = new Set([...ct.matchAll(/<Default Extension="([^"]+)"/g)].map((m) => m[1]!.toLowerCase()));
   const used = new Set(Object.keys(zip.files).map(extOf).filter(Boolean));
   for (const ext of used) {
     if (present.has(ext) || !EXTRA_CONTENT_TYPES[ext]) continue;
     ct = ct.replace('<Default Extension="xml"', `<Default Extension="${ext}" ContentType="${EXTRA_CONTENT_TYPES[ext]}"/><Default Extension="xml"`);
-    fixes.push(`Type de contenu ajouté pour .${ext} (${EXTRA_CONTENT_TYPES[ext]})`);
+    fixes.push(tr(`Type de contenu ajouté pour .${ext} (${EXTRA_CONTENT_TYPES[ext]})`, `Content type added for .${ext} (${EXTRA_CONTENT_TYPES[ext]})`));
   }
   if (!fixes.length) return { buffer, fixes };
   zip.file('[Content_Types].xml', ct);
@@ -61,17 +78,17 @@ export async function validatePackage(buffer: Buffer): Promise<PackageCheck> {
   const errors: string[] = [];
   const files = Object.keys(zip.files).filter((f) => !zip.files[f]!.dir);
   const ct = (await zip.file('[Content_Types].xml')?.async('string')) ?? '';
-  if (!ct) errors.push('[Content_Types].xml absent');
+  if (!ct) errors.push(tr('[Content_Types].xml absent', '[Content_Types].xml missing'));
   const defaults = new Set([...ct.matchAll(/<Default Extension="([^"]+)"/g)].map((m) => m[1]!.toLowerCase()));
   const overrides = new Set([...ct.matchAll(/<Override PartName="([^"]+)"/g)].map((m) => m[1]!.slice(1)));
   for (const f of files) {
     if (f === '[Content_Types].xml') continue;
     const ext = extOf(f);
-    if (!defaults.has(ext) && !overrides.has(f)) errors.push(`Aucun type de contenu pour ${f}`);
+    if (!defaults.has(ext) && !overrides.has(f)) errors.push(tr(`Aucun type de contenu pour ${f}`, `No content type for ${f}`));
     if (ext === 'xml' || ext === 'rels') {
       const xml = await zip.file(f)!.async('string');
       const v = XMLValidator.validate(xml);
-      if (v !== true) errors.push(`XML invalide dans ${f} : ${v.err.msg}`);
+      if (v !== true) errors.push(tr(`XML invalide dans ${f} : ${v.err.msg}`, `Invalid XML in ${f}: ${v.err.msg}`));
       if (ext === 'rels') {
         const dir = posix.dirname(posix.dirname(f));
         for (const m of xml.matchAll(/<Relationship [^>]*>/g)) {
@@ -79,7 +96,7 @@ export async function validatePackage(buffer: Buffer): Promise<PackageCheck> {
           const target = /Target="([^"]+)"/.exec(m[0])?.[1];
           if (!target) continue;
           const resolved = target.startsWith('/') ? target.slice(1) : posix.normalize(posix.join(dir, target));
-          if (!zip.file(resolved)) errors.push(`Relation cassée dans ${f} → ${target}`);
+          if (!zip.file(resolved)) errors.push(tr(`Relation cassée dans ${f} → ${target}`, `Broken relationship in ${f} → ${target}`));
         }
       }
     }
@@ -102,7 +119,7 @@ export async function validatePackage(buffer: Buffer): Promise<PackageCheck> {
     });
   }
   const declared = (pres.match(/<p:sldId /g) ?? []).length;
-  if (declared !== slideParts.length) errors.push(`presentation.xml déclare ${declared} diapositives, ${slideParts.length} présentes`);
+  if (declared !== slideParts.length) errors.push(tr(`presentation.xml déclare ${declared} diapositives, ${slideParts.length} présentes`, `presentation.xml declares ${declared} slides, ${slideParts.length} present`));
   return { ok: errors.length === 0, errors, slideCount: slideParts.length, slideSize: sz ? { cx: Number(sz[1]), cy: Number(sz[2]) } : null, slides };
 }
 
@@ -141,6 +158,6 @@ async function fixLayoutMediaCollisions(zip: JSZip, layoutMedia: Map<string, str
     });
     zip.file(relsPart, rels);
   }
-  if (retargeted) fixes.push(`${retargeted} relation(s) d'image de disposition renommée(s) (collision layout-image-N de pptxgenjs-plus 4.3.4)`);
+  if (retargeted) fixes.push(tr(`${retargeted} relation(s) d'image de disposition renommée(s) (collision layout-image-N de pptxgenjs-plus 4.3.4)`, `${retargeted} layout picture relationship(s) renamed (pptxgenjs-plus 4.3.4 layout-image-N collision)`));
   return fixes;
 }

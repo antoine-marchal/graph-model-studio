@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { isDiagramSrc, resolveSlide, tr, uniqueId, type Mutation, type ResolvedElement } from '@corporate-slides/core';
+import { isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type Mutation, type ResolvedElement } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
-import { alignMutations, deleteMutations, duplicateMutations, type AlignMode } from './Format';
+import { alignMutations, deleteMutations, duplicateMutations, FONT_SIZES, inlineEditor, stepFontSize, type AlignMode, type RunFormat } from './Format';
 import { copyFormat, copyFromRibbon, hasCopiedFormat, pasteFormat, pasteFromRibbon } from './clipboard';
 
 /*
@@ -23,6 +23,8 @@ interface Cmd {
   checked?: boolean;
   danger?: boolean;
   items?: Entry[];
+  /** Color chip shown in place of the icon. */
+  swatch?: string;
 }
 type Entry = Cmd | 'sep';
 
@@ -30,7 +32,7 @@ const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 const key = (k: string) => (MAC ? k.replace(/Ctrl\+/g, '⌘').replace(/Shift\+/g, '⇧').replace(/Alt\+/g, '⌥') : tr(k.replace(/Shift/g, 'Maj').replace(/Delete/g, 'Suppr').replace(/Enter/g, 'Entrée'), k));
 
 /** Commands for the current target, built from the editor state at open time. */
-function useCommands(target: 'element' | 'slide'): { quick: Cmd[]; entries: Entry[] } {
+function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cmd[]; entries: Entry[] } {
   const st = useEditor.getState();
   const slide = currentSlide(st);
   const doc = st.doc;
@@ -43,6 +45,7 @@ function useCommands(target: 'element' | 'slide'): { quick: Cmd[]; entries: Entr
   const { mutate, select, set } = st;
   const frame = { w: master.dimensions.width, h: master.dimensions.height };
   const all = (fn: (r: ResolvedElement) => Mutation) => () => mutate(rs.map(fn));
+  if (target === 'text') return textCommands(master);
   const paste: Cmd = { id: 'paste', label: tr('Coller', 'Paste'), icon: 'paste', kbd: key('Ctrl+V'), disabled: ro, run: () => void pasteFromRibbon() };
 
   if (target === 'slide' || !rs.length) {
@@ -145,6 +148,51 @@ function useCommands(target: 'element' | 'slide'): { quick: Cmd[]; entries: Entr
   };
 }
 
+/** Selected text inside the inline editor: clipboard, character marks, size and color of the selection. */
+function textCommands(master: NonNullable<ReturnType<typeof useEditor.getState>['master']>): { quick: Cmd[]; entries: Entry[] } {
+  const ed = inlineEditor.current;
+  const fmt = (f: RunFormat) => () => void ed?.format(f);
+  const exec = (cmd: 'cut' | 'copy') => () => (ed?.restoreRange(), document.execCommand(cmd));
+  const state = (cmd: string) => {
+    try {
+      return document.queryCommandState(cmd);
+    } catch {
+      return false;
+    }
+  };
+  const size = ed?.selectionSize() ?? null;
+  const base = paletteTokens(master).filter((t) => t.token.split('.').length === 2);
+  return {
+    quick: [
+      { id: 'cut', label: tr('Couper', 'Cut'), icon: 'cut', kbd: key('Ctrl+X'), run: exec('cut') },
+      { id: 'copy', label: tr('Copier', 'Copy'), icon: 'copy', kbd: key('Ctrl+C'), run: exec('copy') },
+      {
+        id: 'paste', label: tr('Coller', 'Paste'), icon: 'paste', kbd: key('Ctrl+V'), run: () => {
+          ed?.restoreRange();
+          void navigator.clipboard?.readText().then((t) => document.execCommand('insertText', false, t), () => undefined);
+        },
+      },
+      { id: 'clear-format', label: tr('Effacer', 'Clear'), icon: 'clearFormat', run: fmt('clear') },
+    ],
+    entries: [
+      { id: 'bold', label: tr('Gras', 'Bold'), icon: 'bold', kbd: key('Ctrl+B'), checked: state('bold') || undefined, run: fmt({ bold: true }) },
+      { id: 'italic', label: tr('Italique', 'Italic'), icon: 'italic', kbd: key('Ctrl+I'), checked: state('italic') || undefined, run: fmt({ italic: true }) },
+      { id: 'underline', label: tr('Souligné', 'Underline'), icon: 'underline', kbd: key('Ctrl+U'), checked: state('underline') || undefined, run: fmt({ underline: true }) },
+      'sep',
+      {
+        id: 'size', label: size ? `${tr('Taille', 'Size')} · ${size} pt` : tr('Taille', 'Size'), icon: 'heading',
+        items: [{ id: 'size-auto', label: tr('Taille de la zone', 'Box size'), run: fmt({ size: null }) }, 'sep', ...FONT_SIZES.map((s) => ({ id: `size-${s}`, label: `${s} pt`, checked: s === size || undefined, run: fmt({ size: s }) }))],
+      },
+      { id: 'grow', label: tr('Agrandir le texte', 'Increase text size'), icon: 'fontGrow', kbd: key('Ctrl+Shift+>'), run: fmt({ size: stepFontSize(size ?? 18, 1) }) },
+      { id: 'shrink', label: tr('Réduire le texte', 'Decrease text size'), icon: 'fontShrink', kbd: key('Ctrl+Shift+<'), run: fmt({ size: stepFontSize(size ?? 18, -1) }) },
+      {
+        id: 'color', label: tr('Couleur du texte', 'Text color'), icon: 'fillColor',
+        items: [{ id: 'color-auto', label: tr('Automatique', 'Automatic'), run: fmt({ color: null }) }, 'sep', ...base.map((t) => ({ id: `color-${t.token}`, label: t.token.replace('theme.', ''), swatch: `#${t.hex}`, run: fmt({ color: t.token }) }))],
+      },
+    ],
+  };
+}
+
 /** Focusable items of one menu panel (not of its submenus). */
 const itemsOf = (panel: HTMLElement | null) => (panel ? [...panel.querySelectorAll<HTMLButtonElement>(':scope > [role="menuitem"], :scope > [role="menuitemcheckbox"], :scope > [role="menuitemradio"], :scope > .ctx-quick > [role="menuitem"], :scope > .ctx-row > [role="menuitem"]')].filter((b) => !b.disabled) : []);
 
@@ -240,7 +288,7 @@ function Panel({ entries, quick, onRun, origin, parentRef, sub, autoFocus }: { e
 function Row({ c, open, openedByKey, onHover, onKeyOpen, onRun, onClose }: { c: Cmd; open: boolean; openedByKey: boolean; onHover: (id: string | null) => void; onKeyOpen: (id: string) => void; onRun: (c: Cmd) => void; onClose: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
   const role = c.checked !== undefined ? 'menuitemcheckbox' : 'menuitem';
-  const icon: ReactNode = c.checked ? <Icon name="check" className="ctx-check" /> : c.icon ? <Icon name={c.icon} /> : <span className="ctx-icon-pad" />;
+  const icon: ReactNode = c.swatch ? <span className={`ctx-swatch${c.checked ? ' is-checked' : ''}`} style={{ background: c.swatch }} /> : c.checked ? <Icon name="check" className="ctx-check" /> : c.icon ? <Icon name={c.icon} /> : <span className="ctx-icon-pad" />;
   const subApi = useRef({ close: () => (onClose(), ref.current?.focus()) });
   subApi.current.close = () => (onClose(), ref.current?.focus());
   return (
@@ -277,14 +325,15 @@ export function ContextMenu() {
   return <OpenMenu key={`${menu.x}:${menu.y}:${menu.target}`} {...menu} />;
 }
 
-function OpenMenu({ x, y, target }: { x: number; y: number; target: 'element' | 'slide' }) {
+function OpenMenu({ x, y, target }: { x: number; y: number; target: 'element' | 'slide' | 'text' }) {
   const { quick, entries } = useCommands(target);
   const [origin] = useState({ x, y });
   const root = useRef<HTMLDivElement>(null);
   const restore = useRef(document.activeElement as HTMLElement | null);
   const close = () => {
     useEditor.getState().set({ contextMenu: null });
-    restore.current?.focus?.();
+    if (target === 'text') inlineEditor.current?.restoreRange();
+    else restore.current?.focus?.();
   };
   useEffect(() => {
     const outside = (e: Event) => !root.current?.contains(e.target as Node) && close();

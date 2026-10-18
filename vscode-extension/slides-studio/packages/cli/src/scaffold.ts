@@ -1,4 +1,4 @@
-import { findLayout, type CorporateMaster } from '@corporate-slides/core';
+import { findLayout, type CorporateMaster, tr } from '@corporate-slides/core';
 import { documentToDsl, sourceKindOf } from '@corporate-slides/parser';
 
 /** Pick a layout reference: alias when the template provides it, else the first layout id. */
@@ -21,11 +21,11 @@ export function newPresentationSource(fileName: string, m: CorporateMaster, titl
       slides: [
         { id: 'cover', layout: titleL, elements: [
           { id: 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs: [{ text: title }] }] },
-          { id: 'subtitle', type: 'text', placeholder: 'subtitle', paragraphs: [{ runs: [{ text: 'Sous-titre' }] }] },
+          { id: 'subtitle', type: 'text', placeholder: 'subtitle', paragraphs: [{ runs: [{ text: tr('Sous-titre', 'Subtitle') }] }] },
         ] },
         { id: 'slide-2', layout: contentL, elements: [
-          { id: 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs: [{ text: 'Titre de la diapositive' }] }] },
-          { id: 'body', type: 'text', placeholder: 'body', paragraphs: [{ runs: [{ text: 'Premier point' }], list: 'bullet' }, { runs: [{ text: 'Second point' }], list: 'bullet' }] },
+          { id: 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs: [{ text: tr('Titre de la diapositive', 'Slide title') }] }] },
+          { id: 'body', type: 'text', placeholder: 'body', paragraphs: [{ runs: [{ text: tr('Premier point', 'First point') }], list: 'bullet' }, { runs: [{ text: tr('Second point', 'Second point') }], list: 'bullet' }] },
         ] },
       ],
     });
@@ -43,16 +43,16 @@ layout: ${titleL}
 
 # ${title}
 
-Sous-titre
+${tr('Sous-titre', 'Subtitle')}
 
 ---
 id: slide-2
 layout: ${contentL}
 ---
 
-# Titre de la diapositive
+# ${tr('Titre de la diapositive', 'Slide title')}
 
-- Premier point
-- Second point
+- ${tr('Premier point', 'First point')}
+- ${tr('Second point', 'Second point')}
 `;
 }

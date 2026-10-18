@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { fmtNumber, tableWeights, tr, type CellStyle, type ElementPatch, type ResolvedElement } from '@corporate-slides/core';
+import { fmtNumber, mergeRuns, tableWeights, tr, type CellStyle, type ElementPatch, type ResolvedElement, type TextRun } from '@corporate-slides/core';
 import { PPI, tableCellStyle, tokenHex } from '@corporate-slides/renderer';
 import { useEditor } from './store';
 import { Icon, type IconName } from './icons';
 import { Menu, PaletteGrid, PaletteMenu } from './Panels';
 import { htmlTableGrid, tsvRows } from './clipboard';
+import { formatSelection, RunView } from './Canvas';
+import { inlineEditor } from './Format';
 
 /*
  * Table editing with the Markdown Studio UX: cells edited in place, Tab / Enter / arrows move
@@ -37,7 +39,33 @@ const parseNum = (t: string): number | null => {
   return c && NUM_RE.test(c) ? parseFloat(c.replace(',', '.')) : null;
 };
 const fmt = (n: number) => fmtNumber(n);
-type Cell = CellStyle | null;
+/** Cell look plus, while editing, its formatted text runs (split into `cellStyles` / `cellRuns` on commit). */
+type Cell = (CellStyle & { runs?: TextRun[] }) | null;
+const plain = (runs: TextRun[]) => runs.map((r) => r.text).join('');
+const marked = (runs: TextRun[]) => runs.some((r) => r.bold || r.italic || r.underline || r.color || r.size);
+
+/** Runs of a contentEditable cell: bold / italic / underline tags, `data-color`, `data-size` spans. */
+function cellRuns(td: HTMLElement): TextRun[] {
+  const out: TextRun[] = [];
+  const walk = (n: Node, m: Omit<TextRun, 'text'>) => {
+    if (n.nodeType === Node.TEXT_NODE) {
+      const text = (n.textContent ?? '').replace(/\n/g, ' ');
+      if (text) out.push({ text, ...m });
+      return;
+    }
+    if (!(n instanceof HTMLElement)) return;
+    const st = n.style;
+    const next: Omit<TextRun, 'text'> = { ...m };
+    if (n.tagName === 'B' || n.tagName === 'STRONG' || Number(st.fontWeight) >= 600 || st.fontWeight === 'bold') next.bold = true;
+    if (n.tagName === 'I' || n.tagName === 'EM' || st.fontStyle === 'italic') next.italic = true;
+    if (n.tagName === 'U' || st.textDecoration.includes('underline')) next.underline = true;
+    if (n.dataset.color) next.color = n.dataset.color as TextRun['color'];
+    if (n.dataset.size) next.size = Number(n.dataset.size);
+    n.childNodes.forEach((c) => walk(c, next));
+  };
+  td.childNodes.forEach((c) => walk(c, {}));
+  return mergeRuns(out);
+}
 type CellPatch = Partial<Record<keyof CellStyle, unknown>>;
 const BORDER_WIDTHS = [0.5, 1, 1.5, 2.25, 3, 4.5, 6];
 const DASHES = [
@@ -76,7 +104,14 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   const [header, setHeader] = useState(el.header !== false);
   const [colW, setColW] = useState(() => tableWeights(el.colWidths, width));
   const [rowH, setRowH] = useState(() => tableWeights(el.rowHeights, el.rows.length));
-  const initialCells = () => el.rows.map((_, ri) => Array.from({ length: width }, (_, ci) => el.cellStyles?.[ri]?.[ci] ?? null));
+  const initialCells = (): Cell[][] =>
+    el.rows.map((row, ri) =>
+      Array.from({ length: width }, (_, ci) => {
+        const st = el.cellStyles?.[ri]?.[ci] ?? null;
+        const runs = el.cellRuns?.[ri]?.[ci];
+        return runs && plain(runs) === (row[ci] ?? '') ? { ...(st ?? {}), runs } : st;
+      }),
+    );
   const [cells, setCells] = useState<Cell[][]>(initialCells);
   const [sel, setSel] = useState<{ a: { r: number; c: number }; h: { r: number; c: number } }>({ a: { r: 0, c: 0 }, h: { r: 0, c: 0 } });
   const [gen, setGen] = useState(0);
@@ -94,12 +129,45 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     typed.current = rows.map((row) => [...row]);
   }, [rows]);
   const rect = norm(sel.a, sel.h);
+  /**
+   * Formatted cell content as rendered: a snapshot taken at each rebuild (`gen`). Between rebuilds
+   * the DOM is the live state, so re-renders must not replace a cell's children (that would drop
+   * the caret and the text selection).
+   */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const shown = useMemo(() => cells.map((row) => row.map((c) => c?.runs ?? null)), [gen]);
+
+  /**
+   * Text and character formatting of one cell from its DOM, kept on `typed` and on the cell (in
+   * place): on every keystroke and format, since a click outside unmounts the table before any read.
+   */
+  const syncCell = (td: HTMLElement, ri: number, ci: number): string => {
+    const cs = state.current.cells;
+    const runs = cellRuns(td);
+    const cur = cs[ri]?.[ci] ?? null;
+    if (cs[ri]) {
+      if (marked(runs)) cs[ri]![ci] = { ...(cur ?? {}), runs };
+      else if (cur?.runs) {
+        const { runs: _r, ...rest } = cur;
+        cs[ri]![ci] = Object.keys(rest).length ? rest : null;
+      }
+    }
+    const text = plain(runs).trimEnd() || td.innerText.replace(/\n/g, ' ').trimEnd();
+    const row = typed.current[ri];
+    if (row) row[ci] = text;
+    return text;
+  };
 
   /** Cell texts as typed (the DOM is the live state while editing). */
   const read = (): string[][] => {
     const t = tableRef.current;
     if (!t) return typed.current;
-    return state.current.rows.map((row, ri) => row.map((v, ci) => (t.querySelector<HTMLElement>(`[data-cell="${ri}:${ci}"]`)?.innerText ?? v).replace(/\n/g, ' ').trimEnd()));
+    return state.current.rows.map((row, ri) =>
+      row.map((v, ci) => {
+        const td = t.querySelector<HTMLElement>(`[data-cell="${ri}:${ci}"]`);
+        return td ? syncCell(td, ri, ci) : v;
+      }),
+    );
   };
   /** Structural change: sync typed text, rebuild the cells, keep the caret at (r, c). */
   const restructure = (next: string[][], align: Align[], at: { r: number; c: number }, widths = colW, heights = rowH, styles = cells) => {
@@ -128,9 +196,72 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     const same = (a: number[], b: number[]) => JSON.stringify(round(a)) === JSON.stringify(round(b));
     if (!same(s.colW, tableWeights(el.colWidths, next[0]?.length ?? 1))) patch.colWidths = round(s.colW);
     if (!same(s.rowH, tableWeights(el.rowHeights, next.length))) patch.rowHeights = round(s.rowH);
-    if (!sameCells(s.cells, initialCells())) patch.cellStyles = s.cells.some((row) => row.some(Boolean)) ? s.cells : null;
+    // Runs whose text no longer matches the cell (typed over, filled, pasted) are dropped.
+    const runsOf = (c: Cell, ri: number, ci: number) => (c?.runs && plain(c.runs).trimEnd() === next[ri]?.[ci] ? c.runs : null);
+    const styleOf = (c: Cell): CellStyle | null => {
+      if (!c) return null;
+      const { runs: _r, ...st } = c;
+      return Object.keys(st).length ? st : null;
+    };
+    const styles = s.cells.map((row) => row.map(styleOf));
+    const runs = s.cells.map((row, ri) => row.map((c, ci) => runsOf(c, ri, ci)));
+    const before: Cell[][] = initialCells();
+    if (!sameCells(styles, before.map((row) => row.map(styleOf)))) patch.cellStyles = styles.some((row) => row.some(Boolean)) ? styles : null;
+    if (JSON.stringify(runs) !== JSON.stringify(before.map((row, ri) => row.map((c, ci) => (c?.runs ? c.runs : null)))) && (runs.some((row) => row.some(Boolean)) || el.cellRuns)) patch.cellRuns = runs.some((row) => row.some(Boolean)) ? runs : null;
     onDone(Object.keys(patch).length ? patch : null);
   };
+  // Ribbon Font group and text context menu: format the characters selected in the focused cell.
+  const savedRange = useRef<Range | null>(null);
+  const hex = (token: string) => tokenHex(token, master);
+  const focusedCell = () => {
+    const n = window.getSelection()?.anchorNode;
+    const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
+    const td = el?.closest<HTMLElement>('[data-cell]');
+    return td && tableRef.current?.contains(td) ? td : null;
+  };
+  const restoreRange = () => {
+    const r = savedRange.current;
+    if (!r) return;
+    const td = (r.startContainer.nodeType === Node.TEXT_NODE ? r.startContainer.parentElement : (r.startContainer as HTMLElement))?.closest<HTMLElement>('[data-cell]');
+    td?.focus();
+    const s = window.getSelection();
+    s?.removeAllRanges();
+    s?.addRange(r);
+    savedRange.current = null;
+  };
+  useLayoutEffect(() => {
+    inlineEditor.current = {
+      read: () => ({ paragraphs: [], from: 0, to: 0 }),
+      replace: () => undefined,
+      format(f) {
+        restoreRange();
+        const td = focusedCell();
+        if (!td) return false;
+        const ok = formatSelection(td, f, hex);
+        const [ri, ci] = td.dataset.cell!.split(':').map(Number);
+        syncCell(td, ri!, ci!);
+        return ok;
+      },
+      saveRange() {
+        const s = window.getSelection();
+        savedRange.current = s?.rangeCount && focusedCell() ? s.getRangeAt(0).cloneRange() : null;
+      },
+      restoreRange,
+      hasSelection: () => !!focusedCell() && !window.getSelection()!.isCollapsed,
+      formatCells: (patch) => styleRangeRef.current(patch === 'clear' ? { color: null, bold: null, italic: null, underline: null, size: null } : patch),
+      cellStyle: () => activeRef.current,
+      selectionSize() {
+        const n = window.getSelection()?.anchorNode;
+        const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
+        return el && focusedCell() ? Math.round(((parseFloat(getComputedStyle(el).fontSize) * 72) / PPI) * 2) / 2 : null;
+      },
+    };
+    return () => {
+      inlineEditor.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const commitRef = useRef(commit);
   commitRef.current = commit;
   // Leaving editing (click elsewhere clears editingId) unmounts us: commit then.
@@ -313,6 +444,11 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   /** Merge a cell style into every cell of the range (`null` values drop the key); `null` clears all formatting. */
   const styleRange = (patch: CellPatch | null) => {
     setRows(read());
+    // Clearing also drops character formatting typed into the cells (it lives in the DOM).
+    if (!patch) tableRef.current?.querySelectorAll<HTMLElement>('[data-cell]').forEach((td) => {
+      const [ri, ci] = td.dataset.cell!.split(':').map(Number);
+      if (ri! >= rect.r0 && ri! <= rect.r1 && ci! >= rect.c0 && ci! <= rect.c1 && td.children.length) td.textContent = td.innerText.replace(/\n/g, ' ');
+    });
     setCells((cur) =>
       cur.map((row, ri) =>
         row.map((c, ci) => {
@@ -329,6 +465,11 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     );
   };
   const active = cells[rect.r0]?.[rect.c0] ?? null;
+  // The ribbon bridge is registered once: it reaches the current range through refs.
+  const styleRangeRef = useRef(styleRange);
+  styleRangeRef.current = styleRange;
+  const activeRef = useRef<Cell>(active);
+  activeRef.current = active;
 
   /** Spreadsheet range pasted into a cell: written from the active cell, the table grows to fit. */
   const onPaste = (e: React.ClipboardEvent) => {
@@ -336,7 +477,12 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     const html = htmlTableGrid(e.clipboardData.getData('text/html'));
     const grid = html?.rows ?? tsvRows(e.clipboardData.getData('text/plain'));
     const gw = grid ? Math.max(...grid.map((g) => g.length)) : 0;
-    if (!grid || (grid.length === 1 && gw <= 1)) return; // single value: native paste into the cell
+    if (!grid || (grid.length === 1 && gw <= 1)) {
+      // Single value: plain text into the cell (the cell is rich: no foreign HTML).
+      e.preventDefault();
+      document.execCommand('insertText', false, e.clipboardData.getData('text/plain').replace(/\r?\n/g, ' '));
+      return;
+    }
     e.preventDefault();
     const next = read();
     const r0 = rect.r0, c0 = rect.c0;
@@ -415,19 +561,25 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
                     data-cell={`${ri}:${ci}`}
                     className={`${inRect(rect, ri, ci) && multi ? 'is-range' : ''}${sel.h.r === ri && sel.h.c === ci ? ' is-active' : ''}${inRect(fillRect, ri, ci) && !inRect(rect, ri, ci) ? ' is-fill' : ''}`}
                     style={style}
-                    contentEditable="plaintext-only"
+                    contentEditable
                     suppressContentEditableWarning
                     spellCheck
                     onFocus={() => !dragging.current && setSel((x) => (x.a.r === ri && x.a.c === ci && x.h.r === ri && x.h.c === ci ? x : multi ? x : { a: { r: ri, c: ci }, h: { r: ri, c: ci } }))}
                     onPointerDown={(e) => onCellPointerDown(e, ri, ci)}
                     onKeyDown={(e) => onKeyDown(e, ri, ci)}
                     onPaste={onPaste}
-                    onInput={(e) => {
-                      const row = typed.current[ri];
-                      if (row) row[ci] = e.currentTarget.innerText.replace(/\n/g, ' ').trimEnd();
+                    onContextMenu={(e) => {
+                      // Selected characters get the text menu (font, size, color…), as in text boxes.
+                      const sel = window.getSelection();
+                      if (!sel || sel.isCollapsed) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      inlineEditor.current?.saveRange();
+                      useEditor.getState().set({ contextMenu: { x: e.clientX, y: e.clientY, target: 'text' } });
                     }}
+                    onInput={(e) => void syncCell(e.currentTarget, ri, ci)}
                   >
-                    {v}
+                    {shown[ri]?.[ci] && plain(shown[ri]![ci]!).trimEnd() === v ? shown[ri]![ci]!.map((run, k) => <RunView key={k} run={run} hex={hex} />) : v}
                   </td>
                 );
               })}

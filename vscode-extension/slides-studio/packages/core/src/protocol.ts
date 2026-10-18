@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Transaction } from './mutations.js';
+import { tr } from './i18n.js';
 
 /** Which revision the visual diff compares the document with. */
 export const DiffBaseKind = z.enum(['none', 'head', 'mr']);
@@ -31,11 +32,15 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('save') }),
   z.object({ type: z.literal('export') }),
   z.object({ type: z.literal('validate') }),
+  /** The slide shown changed: other editors of the same file (diff view) follow. */
+  z.object({ type: z.literal('slideShown'), slideId: z.string().max(64) }),
   z.object({ type: z.literal('reveal'), slideId: z.string().max(64), elementId: z.string().max(64).optional() }),
   z.object({ type: z.literal('pickImage'), slideId: z.string().max(64) }),
   /** Image pasted from the clipboard (base64), saved under `images/` next to the presentation. */
   z.object({ type: z.literal('pasteImage'), slideId: z.string().max(64), mime: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml']), data: z.string().max(30_000_000) }),
   z.object({ type: z.literal('readClipboard') }),
+  /** PowerPoint objects on the clipboard: the host reads PowerPoint's own drawing format. */
+  z.object({ type: z.literal('pastePowerPoint'), slideId: z.string().max(64) }),
   z.object({ type: z.literal('renderReference'), slideIndex: z.number().int().min(0) }),
   z.object({ type: z.literal('newFromLayout'), layout: z.string().max(120) }),
   z.object({ type: z.literal('openSource') }),
@@ -54,7 +59,7 @@ export const WebviewMessage = z.discriminatedUnion('type', [
     type: z.literal('insertGmc'),
     slideId: z.string().max(64),
     /** Path of the `.gmc` source relative to the presentation folder. */
-    path: z.string().min(5).max(260).regex(/^[^:*?"<>|]+\.gmc$/i, 'chemin .gmc invalide'),
+    path: z.string().min(5).max(260).regex(/^[^:*?"<>|]+\.gmc$/i, tr('chemin .gmc invalide', 'invalid .gmc path')),
     create: z.boolean(),
     template: z.enum(['blank', 'context', 'flow']).optional(),
   }),
@@ -91,6 +96,10 @@ export type HostMessage =
   | { type: 'gmcEditor'; src: string; name: string; source?: string; editorJs?: string; editorCss?: string; version?: string; error?: string }
   | { type: 'select'; slideId: string; elementId?: string }
   | { type: 'clipboard'; text: string }
+  /** PowerPoint objects converted by the host, pasted like copied elements. */
+  | { type: 'pasteElements'; elements: unknown[]; warnings: string[] }
+  /** No PowerPoint drawing readable: the webview pastes the HTML / image / text itself. */
+  | { type: 'pasteFallback' }
   | { type: 'gmcEdit'; src: string }
   | { type: 'ack'; txId: string; version: number }
   | { type: 'rejected'; txId: string; reason: string; conflict: boolean }

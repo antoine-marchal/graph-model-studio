@@ -139,6 +139,10 @@ window.acquireVsCodeApi = () => ({
         return void save();
       case 'readClipboard':
         return void navigator.clipboard.readText().then((t) => toWebview({ type: 'clipboard', text: t }), () => toWebview({ type: 'clipboard', text: '' }));
+      case 'slideShown':
+        return;
+      case 'pastePowerPoint':
+        return void toWebview({ type: 'pasteFallback' });
       default:
         toWebview({ type: 'notice', level: 'info', message: `« ${msg.type} » est géré par l'extension VS Code (indisponible dans le harnais).` });
     }

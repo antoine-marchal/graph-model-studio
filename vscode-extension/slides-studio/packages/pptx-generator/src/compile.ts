@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import {
   findLayout,
   renderedImageSrc,
+  imageFit,
   paragraphLook,
   resolveColor,
   resolveSlide,
@@ -14,6 +15,7 @@ import {
   type ResolvedElement,
   type SlideDocument,
   type SlideElement,
+  tr
 } from '@corporate-slides/core';
 
 export interface CompileOptions {
@@ -21,6 +23,8 @@ export interface CompileOptions {
   masterDir: string;
   /** Directory of the presentation source (image paths are relative to it). */
   sourceDir: string;
+  /** Intrinsic pixel size of a picture source, for `contain` / `cover` pictures. */
+  imageSize?: (src: string) => { width: number; height: number } | undefined;
 }
 
 export interface CompileStats {
@@ -35,6 +39,8 @@ export interface CompileStats {
   layoutsUsed: string[];
   /** Layout id → distinct image sources in registration order (for the OOXML media adapter). */
   layoutMedia: Map<string, string[]>;
+  /** Preset adjustments pptxgenjs cannot write, injected into `a:avLst` after generation. */
+  adjustments: { slide: number; name: string; values: Record<string, number> }[];
 }
 
 type PptxGen = InstanceType<typeof pptxgen>;
@@ -72,7 +78,7 @@ export function connectorShape(r: ResolvedElement): { type: string; x: number; y
 /** Resolve an asset path from the master directory, refusing anything that escapes it. */
 function masterAsset(masterDir: string, rel: string): string {
   const p = resolve(masterDir, rel);
-  if (!p.startsWith(resolve(masterDir))) throw new Error(`Chemin de ressource hors du dossier du masque : ${rel}`);
+  if (!p.startsWith(resolve(masterDir))) throw new Error(tr(`Chemin de ressource hors du dossier du masque : ${rel}`, `Resource path outside the master folder: ${rel}`));
   return p;
 }
 
@@ -131,7 +137,7 @@ function textRuns(r: ResolvedElement, paragraphs: Paragraph[], master: Corporate
         } else options.bullet = false;
         options.paraSpaceBefore = i === 0 ? 0 : 4;
       }
-      options.fontSize = look.fontSize;
+      options.fontSize = run.size ?? look.fontSize;
       options.color = resolveColor(run.color, master) ?? look.color;
       if (run.bold || look.bold) options.bold = true;
       if (run.italic || r.style.italic) options.italic = true;
@@ -190,12 +196,12 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
   if (doc.metadata.subject) pres.subject = doc.metadata.subject;
   pres.company = master.name;
 
-  const stats: CompileStats = { slides: 0, nativeText: 0, nativeShapes: 0, nativeImages: 0, nativeTables: 0, placeholderBound: 0, flattened: [], unsupported: [], layoutsUsed: [], layoutMedia: new Map() };
+  const stats: CompileStats = { slides: 0, nativeText: 0, nativeShapes: 0, nativeImages: 0, nativeTables: 0, placeholderBound: 0, flattened: [], unsupported: [], layoutsUsed: [], layoutMedia: new Map(), adjustments: [] };
 
   // Register only the layouts the document uses (keeps files small and deterministic).
   for (const slide of doc.slides) {
     const layout = findLayout(master, slide.layout);
-    if (!layout) throw new Error(`Disposition « ${slide.layout} » introuvable (diapositive « ${slide.id} »)`);
+    if (!layout) throw new Error(tr(`Disposition « ${slide.layout} » introuvable (diapositive « ${slide.id} »)`, `Layout “${slide.layout}” not found (slide “${slide.id}”)`));
     if (stats.layoutsUsed.includes(layout.id)) continue;
     stats.layoutsUsed.push(layout.id);
     const def = layoutToSlideMaster(layout, master, doc, opts.masterDir) as { background?: { path?: string }; objects: Record<string, { path?: string }>[] };
@@ -234,6 +240,7 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
           const base = { ...common, ...fillLine(r), ...(el.flipH ? { flipH: true } : {}), ...(el.flipV ? { flipV: true } : {}) };
           if (el.shape === 'roundRect' || el.shape === 'snip1Rect') (base as Record<string, unknown>).rectRadius = r.style.radius ?? Math.min(r.box.w, r.box.h) * 0.15;
           // Preset names are the OOXML prstGeom names; `line` is pptxgenjs' straight line.
+          if (el.adjust && el.shape !== 'roundRect' && el.shape !== 'snip1Rect') stats.adjustments.push({ slide: stats.slides, name: el.id, values: el.adjust });
           if (el.paragraphs?.length) {
             s.addText(textRuns(r, el.paragraphs, master) as never, { ...base, ...textBoxOptions(r), shape: el.shape } as never);
           } else s.addShape(el.shape as never, base as never);
@@ -243,7 +250,22 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
         case 'image': {
           const file = renderedImageSrc(el.src);
           const path = isAbsolute(file) ? file : join(opts.sourceDir, file);
-          s.addImage({ ...boxOptions(r), path, ...(el.alt ? { altText: el.alt } : {}), objectName: el.id } as never);
+          // contain: the picture box shrinks to the original ratio, centered; cover: the full box, cropped.
+          const fit = imageFit(el);
+          const size = fit !== 'stretch' ? opts.imageSize?.(el.src) : undefined;
+          let place: Record<string, unknown> = boxOptions(r);
+          if (size && size.width > 0 && size.height > 0 && r.box.w > 0 && r.box.h > 0) {
+            const ar = size.width / size.height, bar = r.box.w / r.box.h;
+            if (fit === 'contain') {
+              const w = ar > bar ? r.box.w : r.box.h * ar, h = ar > bar ? r.box.w / ar : r.box.h;
+              place = { ...place, x: r.box.x + (r.box.w - w) / 2, y: r.box.y + (r.box.h - h) / 2, w, h };
+            } else {
+              // pptxgenjs-plus crop: window in frame units (srcRect = window / frame).
+              const fx = ar > bar ? bar / ar : 1, fy = ar > bar ? 1 : ar / bar;
+              place = { ...place, sizing: { type: 'crop', x: ((1 - fx) / 2) * r.box.w, y: ((1 - fy) / 2) * r.box.h, w: fx * r.box.w, h: fy * r.box.h } };
+            }
+          }
+          s.addImage({ ...place, path, ...(el.alt ? { altText: el.alt } : {}), objectName: el.id } as never);
           // Pictures have no outline option in pptxgenjs: the border is an unfilled rectangle on top.
           if (r.style.line) s.addShape('rect' as never, { ...boxOptions(r), line: fillLine(r).line, objectName: `${el.id}-border` } as never);
           stats.nativeImages++;
@@ -251,7 +273,7 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
         }
         case 'connector': {
           if (!r.path) {
-            stats.unsupported.push(`${slide.id}/${el.id} : connecteur sans extrémités (« ${el.from} » → « ${el.to} »)`);
+            stats.unsupported.push(tr(`${slide.id}/${el.id} : connecteur sans extrémités (« ${el.from} » → « ${el.to} »)`, `${slide.id}/${el.id}: connector without ends (“${el.from}” → “${el.to}”)`));
             break;
           }
           const g = connectorShape(r);
@@ -285,14 +307,24 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
             row.map((text, ci) => {
               const cs = el.cellStyles?.[ri]?.[ci];
               const fill = cs?.fill && cs.fill !== 'none' ? resolveColor(cs.fill, master) : null;
+              // Formatted cells: pptxgenjs takes an array of runs as the cell text.
+              const runs = el.cellRuns?.[ri]?.[ci];
+              const rich = runs && runs.map((x) => x.text).join('') === text
+                ? runs.map((x) => ({ text: x.text, options: { ...(x.bold ? { bold: true } : {}), ...(x.italic ? { italic: true } : {}), ...(x.underline ? { underline: { style: 'sng' } } : {}), ...(x.color ? { color: resolveColor(x.color, master) ?? undefined } : {}), ...(x.size ? { fontSize: x.size } : {}) } }))
+                : null;
               return {
-                text,
+                text: rich ?? text,
                 options: {
                   ...(ri === 0 && header ? { bold: true, color: 'FFFFFF', fill: { color: head } } : {}),
                   ...(el.colAlign?.[ci] ? { align: el.colAlign[ci] } : {}),
                   ...(fill ? { fill: { color: fill } } : {}),
                   ...(cs?.color ? { color: resolveColor(cs.color, master) ?? undefined } : {}),
                   ...(cs?.bold !== undefined ? { bold: cs.bold } : {}),
+                  ...(cs?.italic ? { italic: true } : {}),
+                  ...(cs?.underline ? { underline: { style: 'sng' } } : {}),
+                  ...(cs?.size ? { fontSize: cs.size } : {}),
+                  ...(cs?.align ? { align: cs.align } : {}),
+                  ...(cs?.valign ? { valign: cs.valign } : {}),
                   ...(cs?.line || cs?.lineWidth !== undefined || cs?.dash ? { border: border(cs.line ?? el.style?.line, cs.lineWidth ?? el.style?.lineWidth, cs.dash ?? el.style?.dash, grid) } : {}),
                 },
               };

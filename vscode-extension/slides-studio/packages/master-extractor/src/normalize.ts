@@ -1,6 +1,7 @@
 import type { AssetDef, Constraints, CorporateMaster, LayoutDef, LevelStyle, PlaceholderDef, StaticObject } from '@corporate-slides/core';
 import { PALETTE_VARIANTS, RULES, THEME_SLOTS, staticObjectBox, type Box } from '@corporate-slides/core';
 import type { PackageInventory, PictureInfo } from './ooxml.js';
+import { tr } from '@corporate-slides/core';
 
 /** Shape of `pptx-masters` `extract()` output that we rely on (verified against v0.1.1). */
 export interface PptxMastersResult {
@@ -203,7 +204,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
         const file = String(obj.image!.path ?? '').split('/').pop() ?? '';
         assetId = assetByFilename.get(file);
         if (assetId) obj.image!.path = `assets/${file}`;
-        else warnings.push(`[${l.name}] image ${file} non résolue`);
+        else warnings.push(tr(`[${l.name}] image ${file} non résolue`, `[${l.name}] picture ${file} not resolved`));
         // Small images near a corner are treated as logos for overlap checks.
         if (box && box.w * box.h < 6 && (box.x < 2 || box.x + box.w > W - 3) && (box.y < 1.8 || box.y + box.h > H - 1)) role = 'logo';
       }
@@ -220,8 +221,8 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
       objects.push({ role, object: obj, ...(assetId ? { assetId } : {}), ...(crop ? { crop } : {}) });
     }
     const layoutWarnings = [...l.warnings];
-    if (dropped) layoutWarnings.push(`${dropped} objet(s) hors diapositive (annotations du gabarit) ignoré(s)`);
-    if (hidden) layoutWarnings.push(`${hidden} objet(s) masqué(s) (hidden="1") non reproduit(s)`);
+    if (dropped) layoutWarnings.push(tr(`${dropped} objet(s) hors diapositive (annotations du gabarit) ignoré(s)`, `${dropped} off-slide object(s) (template annotations) ignored`));
+    if (hidden) layoutWarnings.push(tr(`${hidden} objet(s) masqué(s) (hidden="1") non reproduit(s)`, `${hidden} hidden object(s) (hidden="1") not reproduced`));
 
     // pptx-masters falls back to black Calibri when the slide number style is inherited from the master.
     let slideNumber = md.slideNumber ?? null;
@@ -263,7 +264,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
 
   const masters = inv.masters.map((m) => ({
     id: masterId(m.part),
-    name: `Masque ${m.index + 1}`,
+    name: tr(`Masque ${m.index + 1}`, `Master ${m.index + 1}`),
     part: m.part,
     layoutIds: layouts.filter((l) => l.masterId === masterId(m.part)).map((l) => l.id),
     primary: m.part === primary,
@@ -285,7 +286,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
     fidelity: {
       method: 'reconstructed',
       description:
-        "Dispositions reconstruites : chaque disposition du gabarit est recréée comme disposition PowerPoint native (defineSlideMaster de pptxgenjs-plus) avec ses objets statiques, son arrière-plan et des espaces réservés natifs. Les masques d'origine ne sont pas copiés : l'héritage masque → disposition du fichier source n'est pas conservé tel quel.",
+        tr("Dispositions reconstruites : chaque disposition du gabarit est recréée comme disposition PowerPoint native (defineSlideMaster de pptxgenjs-plus) avec ses objets statiques, son arrière-plan et des espaces réservés natifs. Les masques d'origine ne sont pas copiés : l'héritage masque → disposition du fichier source n'est pas conservé tel quel.", "Reconstructed layouts: every template layout is recreated as a native PowerPoint layout (pptxgenjs-plus defineSlideMaster) with its static objects, background and native placeholders. The original masters are not copied: the source file's master → layout inheritance is not kept as is."),
     },
     unsupported: inv.features,
     warnings: [...r.warnings, ...warnings],

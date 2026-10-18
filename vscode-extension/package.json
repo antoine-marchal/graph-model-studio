@@ -1,7 +1,7 @@
 {
   "name": "graph-model-studio",
   "displayName": "Graph Model Studio",
-  "description": "GMC graph modeling with live diagrams, plus a Notion-like WYSIWYG Markdown editor: rich diffs, tables, math, frontmatter, embedded GMC diagrams, recursive code/Markdown embeds, paste-as-Markdown, HTML/PDF/PNG/DOCX export, plus Slides Studio: PowerPoint as code (.deck / *.slides.md) with a PowerPoint-like visual editor, corporate templates, GitLab review and native .pptx export.",
+  "description": "%s001.gmc.graph.modeling.with.live%",
   "version": "4.0.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
@@ -91,7 +91,7 @@
       },
       {
         "viewType": "corporateSlides.deck",
-        "displayName": "Deck — éditeur visuel",
+        "displayName": "%s003.deck.visual.editor%",
         "selector": [
           {
             "filenamePattern": "*.deck"
@@ -101,7 +101,7 @@
       },
       {
         "viewType": "corporateSlides.editor",
-        "displayName": "Corporate Slides — éditeur visuel",
+        "displayName": "%s004.corporate.slides.visual.editor%",
         "selector": [
           {
             "filenamePattern": "*.slides.md"
@@ -122,29 +122,29 @@
     "commands": [
       {
         "command": "betterMarkdown.toggleEditor",
-        "title": "Toggle Rich/Source Editor",
+        "title": "%s005.toggle.rich.source.editor%",
         "category": "Markdown Studio",
         "icon": "$(notebook-render-output)"
       },
       {
         "command": "betterMarkdown.find",
-        "title": "Find in Document",
+        "title": "%s006.find.in.document%",
         "category": "Markdown Studio"
       },
       {
         "command": "betterMarkdown.openDiff",
-        "title": "Open Rich Diff",
+        "title": "%s007.open.rich.diff%",
         "category": "Markdown Studio",
         "icon": "$(diff)"
       },
       {
         "command": "betterMarkdown.factoryReset",
-        "title": "Factory Reset Settings",
+        "title": "%s008.factory.reset.settings%",
         "category": "Markdown Studio"
       },
       {
         "command": "gmc.openPreview",
-        "title": "GMC: Open Graph Preview to the Side",
+        "title": "%s009.gmc.open.graph.preview.to%",
         "icon": {
           "light": "./media/preview-graph-light.svg",
           "dark": "./media/preview-graph-dark.svg"
@@ -152,131 +152,131 @@
       },
       {
         "command": "gmc.exportPng",
-        "title": "GMC: Export Diagram as PNG",
+        "title": "%s010.gmc.export.diagram.as.png%",
         "icon": "$(export)"
       },
       {
         "command": "gmc.exportMarkdownDiagram",
-        "title": "GMC: Export Markdown Diagram as PNG"
+        "title": "%s011.gmc.export.markdown.diagram.as%"
       },
       {
         "command": "gmc.exportAllMarkdownDiagrams",
-        "title": "GMC: Export All Markdown Diagrams as PNG"
+        "title": "%s012.gmc.export.all.markdown.diagrams%"
       },
       {
         "command": "markdown-embed.update",
-        "title": "Update Code Embeds"
+        "title": "%s013.update.code.embeds%"
       },
       {
         "command": "markdown-embed.updateSingle",
-        "title": "Update Single Code Embed"
+        "title": "%s014.update.single.code.embed%"
       },
       {
         "command": "markdown-embed.goToSource",
-        "title": "Go to Embed Source File"
+        "title": "%s015.go.to.embed.source.file%"
       },
       {
         "command": "markdown-embed.lock",
-        "title": "Lock Code Embed"
+        "title": "%s016.lock.code.embed%"
       },
       {
         "command": "markdown-embed.unlock",
-        "title": "Unlock Code Embed"
+        "title": "%s017.unlock.code.embed%"
       },
       {
         "command": "markdown-embed.updateWorkspace",
-        "title": "Update All Embeds in Workspace"
+        "title": "%s018.update.all.embeds.in.workspace%"
       },
       {
         "command": "markdown-embed.insertEmbedTag",
-        "title": "Copy Embed Tag"
+        "title": "%s019.copy.embed.tag%"
       },
       {
         "command": "pasteAsMarkdown.copyAsHtml",
-        "title": "Copy as HTML",
-        "category": "Paste as Markdown",
+        "title": "%s020.copy.as.html%",
+        "category": "%s021.paste.as.markdown%",
         "icon": "$(clippy)"
       },
       {
         "command": "markdownToolkit.formatTable",
-        "title": "Format Markdown Table",
+        "title": "%s022.format.markdown.table%",
         "category": "Markdown Toolkit"
       },
       {
         "command": "markdownToolkit.export",
-        "title": "Export Preview...",
+        "title": "%s024.export.preview%",
         "category": "Markdown Toolkit",
         "icon": "$(export)"
       },
       {
         "command": "markdownToolkit.exportHtml",
-        "title": "Export Preview as HTML",
+        "title": "%s025.export.preview.as.html%",
         "category": "Markdown Toolkit"
       },
       {
         "command": "markdownToolkit.exportPdf",
-        "title": "Export Preview as PDF",
+        "title": "%s026.export.preview.as.pdf%",
         "category": "Markdown Toolkit"
       },
       {
         "command": "markdownToolkit.exportPng",
-        "title": "Export Preview as PNG",
+        "title": "%s027.export.preview.as.png%",
         "category": "Markdown Toolkit"
       },
       {
         "command": "markdownToolkit.exportDocx",
-        "title": "Export as DOCX with Pandoc",
+        "title": "%s028.export.as.docx.with.pandoc%",
         "category": "Markdown Toolkit"
       },
       {
         "command": "betterMarkdown.toggleZen",
-        "title": "Toggle Zen Mode",
+        "title": "%s029.toggle.zen.mode%",
         "category": "Markdown Studio",
         "icon": "$(screen-full)"
       },
       {
         "command": "betterMarkdown.insertEmbed",
-        "title": "Insert File Embed…",
+        "title": "%s030.insert.file.embed%",
         "category": "Markdown Studio"
       },
       {
         "command": "betterMarkdown.insertLink",
-        "title": "Insert File Link…",
+        "title": "%s031.insert.file.link%",
         "category": "Markdown Studio"
       },
       {
         "command": "betterMarkdown.insertToc",
-        "title": "Insert Table of Contents",
+        "title": "%s032.insert.table.of.contents%",
         "category": "Markdown Studio"
       },
       {
         "command": "betterMarkdown.updateEmbeds",
-        "title": "Update Embeds & TOC",
+        "title": "%s033.update.embeds.toc%",
         "category": "Markdown Studio"
       },
       {
         "command": "corporateSlides.importTemplate",
-        "title": "Importer un gabarit PowerPoint",
+        "title": "%s034.import.a.powerpoint.template%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.importPresentation",
-        "title": "Importer une présentation PowerPoint (.pptx → .deck)",
+        "title": "%s036.import.a.powerpoint.presentation.pptx%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.showMasters",
-        "title": "Afficher les masques corporate",
+        "title": "%s037.show.corporate.masters%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.newPresentation",
-        "title": "Nouvelle présentation",
+        "title": "%s038.new.presentation%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.openVisualEditor",
-        "title": "Ouvrir l'éditeur visuel",
+        "title": "%s039.open.visual.editor%",
         "category": "Corporate Slides",
         "icon": {
           "light": "./media/preview-slides-light.svg",
@@ -285,22 +285,22 @@
       },
       {
         "command": "corporateSlides.exportPptx",
-        "title": "Exporter en PowerPoint (.pptx)",
+        "title": "%s040.export.to.powerpoint.pptx%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.validate",
-        "title": "Valider la présentation",
+        "title": "%s041.validate.presentation%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.renderReference",
-        "title": "Rendu de référence (PowerPoint/LibreOffice)",
+        "title": "%s042.reference.rendering.powerpoint.libreoffice%",
         "category": "Corporate Slides"
       },
       {
         "command": "corporateSlides.toggleEditor",
-        "title": "Basculer éditeur visuel / source",
+        "title": "%s043.toggle.visual.source.editor%",
         "category": "Corporate Slides",
         "icon": {
           "light": "./media/preview-slides-light.svg",
@@ -476,7 +476,7 @@
             "type": "boolean",
             "default": false,
             "order": 2,
-            "markdownDescription": "Save the file automatically shortly after every change made in the rich editor (independent of `#files.autoSave#`)."
+            "markdownDescription": "%s044.save.the.file.automatically.shortly%"
           },
           "markdownStudio.bullet": {
             "type": "string",
@@ -492,7 +492,7 @@
             ],
             "default": "-",
             "order": 10,
-            "markdownDescription": "Bullet character for unordered lists when serializing back to markdown."
+            "markdownDescription": "%s048.bullet.character.for.unordered.lists%"
           },
           "markdownStudio.emphasis": {
             "type": "string",
@@ -506,7 +506,7 @@
             ],
             "default": "_",
             "order": 11,
-            "markdownDescription": "Emphasis (italic) marker."
+            "markdownDescription": "%s051.emphasis.italic.marker%"
           },
           "markdownStudio.strong": {
             "type": "string",
@@ -520,7 +520,7 @@
             ],
             "default": "**",
             "order": 12,
-            "markdownDescription": "Strong (bold) marker."
+            "markdownDescription": "%s054.strong.bold.marker%"
           },
           "markdownStudio.rule": {
             "type": "string",
@@ -536,7 +536,7 @@
             ],
             "default": "-",
             "order": 13,
-            "markdownDescription": "Horizontal-rule character. Rendered as three of whichever you pick."
+            "markdownDescription": "%s058.horizontal.rule.character.rendered.as%"
           },
           "markdownStudio.listItemIndent": {
             "type": "string",
@@ -546,25 +546,25 @@
               "mixed"
             ],
             "enumDescriptions": [
-              "1 space",
-              "tab",
-              "mixed"
+              "%s059.1.space%",
+              "%s060.tab%",
+              "%s061.mixed%"
             ],
             "default": "one",
             "order": 14,
-            "markdownDescription": "Continuation indent for list items."
+            "markdownDescription": "%s062.continuation.indent.for.list.items%"
           },
           "markdownStudio.bubbleMenuShortcut": {
             "type": "string",
             "default": "Mod+/",
             "order": 20,
-            "markdownDescription": "Keybinding that opens the selection bubble menu. If the cursor is inside a word with no active selection, the shortcut expands the selection to the surrounding word first. Format: modifier+key chain separated by `+` (e.g. `Mod+/`, `Ctrl+Shift+B`). `Mod` resolves to `Meta` on macOS, `Ctrl` elsewhere. Empty string disables the shortcut."
+            "markdownDescription": "%s063.keybinding.that.opens.the.selection%"
           },
           "markdownStudio.defaultCodeBlockLang": {
             "type": "string",
             "default": "",
             "order": 30,
-            "markdownDescription": "Language label applied to unlabelled code blocks. Empty leaves them bare (\\`\\`\\`); `text` / `plaintext` adds a default label."
+            "markdownDescription": "%s064.language.label.applied.to.unlabelled%"
           },
           "markdownStudio.diffMode": {
             "type": "string",
@@ -573,12 +573,12 @@
               "rendered"
             ],
             "enumDescriptions": [
-              "Source (line diff)",
-              "Rendered (HTML diff)"
+              "%s065.source.line.diff%",
+              "%s066.rendered.html.diff%"
             ],
             "default": "rendered",
             "order": 40,
-            "markdownDescription": "Default view for the rich diff panel."
+            "markdownDescription": "%s067.default.view.for.the.rich%"
           },
           "markdownStudio.diffLayout": {
             "type": "string",
@@ -587,48 +587,48 @@
               "side-by-side"
             ],
             "enumDescriptions": [
-              "Unified",
-              "Side-by-side"
+              "%s068.unified%",
+              "%s069.side.by.side%"
             ],
             "default": "side-by-side",
             "order": 41,
-            "markdownDescription": "Layout for the source (line-level) diff toggle."
+            "markdownDescription": "%s070.layout.for.the.source.line%"
           },
           "markdownStudio.compactLists": {
             "type": "boolean",
             "default": true,
             "order": 50,
-            "markdownDescription": "Remove blank lines between consecutive list items (tight lists)."
+            "markdownDescription": "%s071.remove.blank.lines.between.consecutive%"
           },
           "markdownStudio.unescapeSpecialChars": {
             "type": "boolean",
             "default": true,
             "order": 51,
-            "markdownDescription": "Strip redundant `\\~`, `\\*`, `\\_`, `\\[` escapes that remark-stringify adds defensively."
+            "markdownDescription": "%s072.strip.redundant.escapes.that.remark%"
           },
           "markdownStudio.renumberOrderedLists": {
             "type": "boolean",
             "default": true,
             "order": 52,
-            "markdownDescription": "Renumber ordered list items to `1.`, `2.`, `3.`, …"
+            "markdownDescription": "%s073.renumber.ordered.list.items.to%"
           },
           "markdownStudio.shellscriptToBash": {
             "type": "boolean",
             "default": true,
             "order": 53,
-            "markdownDescription": "Rewrite code fences labelled `shellscript` → `bash`."
+            "markdownDescription": "%s074.rewrite.code.fences.labelled.shellscript%"
           },
           "markdownStudio.fixTableHeaders": {
             "type": "boolean",
             "default": true,
             "order": 54,
-            "markdownDescription": "Rebuild table headers when rehype-remark emits an empty header row."
+            "markdownDescription": "%s075.rebuild.table.headers.when.rehype%"
           },
           "markdownStudio.dedupImageAltText": {
             "type": "boolean",
             "default": true,
             "order": 55,
-            "markdownDescription": "Collapse `![alt](x)\\nalt` → `![alt](x)` (image followed by its alt)."
+            "markdownDescription": "%s076.collapse.alt.x.nalt.alt%"
           },
           "markdownStudio.theme": {
             "type": "string",
@@ -647,7 +647,7 @@
               "claude-dark"
             ],
             "enumDescriptions": [
-              "Default (follow VS Code)",
+              "%s077.default.follow.vs.code%",
               "GitHub Light",
               "GitHub Light High Contrast",
               "GitHub Light Protanopia & Deuteranopia",
@@ -662,13 +662,13 @@
             ],
             "default": "default",
             "order": 60,
-            "markdownDescription": "Color theme for the rich editor and rich diff. `default` follows your VS Code color theme. `github-*` use GitHub's own colors (from GitHub's Primer design system); `claude-*` match the Claude desktop app."
+            "markdownDescription": "%s089.color.theme.for.the.rich%"
           },
           "markdownStudio.customCss": {
             "type": "string",
             "default": "",
             "order": 61,
-            "markdownDescription": "Path to a CSS file applied on top of the theme (absolute, `~/...`, or relative to the first workspace folder). Reloads live on save. Empty disables it."
+            "markdownDescription": "%s090.path.to.a.css.file%"
           },
           "markdownStudio.contentWidth": {
             "type": "number",
@@ -676,7 +676,7 @@
             "minimum": 480,
             "maximum": 1600,
             "order": 62,
-            "markdownDescription": "Maximum width of the centered text column in the rich editor, in pixels. Use the maximum for a full-width page."
+            "markdownDescription": "%s091.maximum.width.of.the.centered%"
           },
           "markdownStudio.fontSize": {
             "type": "number",
@@ -684,7 +684,7 @@
             "minimum": 8,
             "maximum": 32,
             "order": 63,
-            "markdownDescription": "Body text size in the rich editor, in pixels. Headings scale with it."
+            "markdownDescription": "%s092.body.text.size.in.the%"
           },
           "markdownStudio.lineHeight": {
             "type": "number",
@@ -692,19 +692,19 @@
             "minimum": 1.3,
             "maximum": 2.2,
             "order": 64,
-            "markdownDescription": "Space between lines of text, as a multiple of the font size."
+            "markdownDescription": "%s093.space.between.lines.of.text%"
           },
           "markdownStudio.fontFamily": {
             "type": "string",
             "default": "",
             "order": 65,
-            "markdownDescription": "Font family for body text in the rich editor (e.g. `Inter`, `Georgia, serif`). Empty keeps the theme font. Code keeps the editor's monospace font."
+            "markdownDescription": "%s094.font.family.for.body.text%"
           },
           "markdownStudio.tocHeading": {
             "type": "boolean",
             "default": true,
             "order": 66,
-            "markdownDescription": "Add a heading above generated tables of contents (`<!-- embed:toc -->`). Override per block with `heading=\"false\"` or `heading=\"Custom title\"`."
+            "markdownDescription": "%s095.add.a.heading.above.generated%"
           },
           "markdownStudio.exportTheme": {
             "type": "string",
@@ -713,36 +713,36 @@
               "editor"
             ],
             "enumDescriptions": [
-              "Light theme on a transparent page (default).",
-              "The rich editor's current theme and background."
+              "%s096.light.theme.on.a.transparent%",
+              "%s097.the.rich.editor.s.current%"
             ],
             "default": "light",
             "order": 68,
-            "markdownDescription": "Colors of HTML / PDF / PNG exports made from the rich editor."
+            "markdownDescription": "%s098.colors.of.html.pdf.png%"
           },
           "markdownStudio.assetsFolder": {
             "type": "string",
             "default": "",
             "order": 69,
-            "markdownDescription": "Folder for assets — `.gmc` files created by a GMC block's **to file**, and images pasted or dropped into the rich editor: relative to the Markdown document (e.g. `diagrams`), `${workspaceFolder}/…`, or absolute. Empty: next to the document. Created if missing."
+            "markdownDescription": "%s099.folder.for.assets.gmc.files%"
           },
           "markdownStudio.tocHeadingText": {
             "type": "string",
             "default": "Table of content",
             "order": 67,
-            "markdownDescription": "Text of the heading added above generated tables of contents."
+            "markdownDescription": "%s100.text.of.the.heading.added%"
           },
           "markdownStudio.lineNumbers": {
             "type": "boolean",
             "default": false,
             "order": 66,
-            "markdownDescription": "Show the markdown source line number of each block in the margin of the rich editor."
+            "markdownDescription": "%s101.show.the.markdown.source.line%"
           },
           "markdownStudio.indentHeadings": {
             "type": "boolean",
             "default": false,
             "order": 66,
-            "markdownDescription": "Indent each heading and its content by its depth in the heading hierarchy in the rich editor. Display only — the markdown is unchanged."
+            "markdownDescription": "%s102.indent.each.heading.and.its%"
           },
           "markdownStudio.outlineStyle": {
             "type": "string",
@@ -754,11 +754,11 @@
             "default": "rail",
             "order": 67,
             "enumDescriptions": [
-              "Compact rail of heading marks at the left edge; hover to see names, click to jump",
-              "Resizable 'Contents' sidebar with a filter",
-              "No heading navigator"
+              "%s103.compact.rail.of.heading.marks%",
+              "%s104.resizable.contents.sidebar.with.a%",
+              "%s105.no.heading.navigator%"
             ],
-            "markdownDescription": "How the heading outline is shown in the rich editor."
+            "markdownDescription": "%s106.how.the.heading.outline.is%"
           },
           "markdownStudio.tableVerticalAlign": {
             "type": "string",
@@ -770,35 +770,35 @@
             "default": "top",
             "order": 68,
             "enumDescriptions": [
-              "Cell content at the top of the cell",
-              "Cell content vertically centered",
-              "Cell content at the bottom of the cell"
+              "%s107.cell.content.at.the.top%",
+              "%s108.cell.content.vertically.centered%",
+              "%s109.cell.content.at.the.bottom%"
             ],
-            "markdownDescription": "Vertical alignment of table cell content in the rich editor. (Horizontal alignment is per column and saved in the markdown — use the table toolbar.)"
+            "markdownDescription": "%s110.vertical.alignment.of.table.cell%"
           }
         }
       },
       {
-        "title": "Graph Model Studio: GMC Diagrams & Markdown Toolkit",
+        "title": "%s111.graph.model.studio.gmc.diagrams%",
         "properties": {
           "gmc.preview.autoOpen": {
             "type": "boolean",
             "default": false,
-            "description": "Automatically open the graph preview when a GMC file becomes active."
+            "description": "%s112.automatically.open.the.graph.preview%"
           },
           "gmc.export.width": {
             "type": "number",
             "default": 1600,
             "minimum": 320,
             "maximum": 8192,
-            "description": "PNG export width in pixels."
+            "description": "%s113.png.export.width.in.pixels%"
           },
           "gmc.export.height": {
             "type": "number",
             "default": 1000,
             "minimum": 240,
             "maximum": 8192,
-            "description": "PNG export height in pixels."
+            "description": "%s114.png.export.height.in.pixels%"
           },
           "gmc.export.theme": {
             "type": "string",
@@ -808,61 +808,61 @@
               "dark"
             ],
             "default": "auto",
-            "description": "Theme used for PNG export."
+            "description": "%s115.theme.used.for.png.export%"
           },
           "gmc.export.renderOnSave": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Re-render changed `.gmc` image embeds when a Markdown or source file is saved. Rendering needs the graph panel, which then opens beside the editor. When off, changed diagrams are flagged stale and re-render on **Update Code Embeds** / **Update All Embeds in Workspace** (or the rich editor refresh)."
+            "markdownDescription": "%s116.re.render.changed.gmc.image%"
           },
           "markdownEmbedder.autoUpdate": {
             "type": "boolean",
             "default": false,
-            "description": "Automatically update embeds in Markdown files when a referenced source file is saved."
+            "description": "%s117.automatically.update.embeds.in.markdown%"
           },
           "markdownEmbedder.collapseGeneratedContent": {
             "type": "boolean",
             "default": true,
-            "description": "Automatically collapse generated content between embed directives and their end markers."
+            "description": "%s118.automatically.collapse.generated.content.between%"
           },
           "pasteAsMarkdown.enabled": {
             "type": "boolean",
             "default": true,
-            "description": "Enable automatic conversion of rich text to Markdown when pasting."
+            "description": "%s119.enable.automatic.conversion.of.rich%"
           },
           "pasteAsMarkdown.copyAsHtmlOnCopy": {
             "type": "boolean",
             "default": false,
-            "markdownDescription": "Override `Cmd+C` / `Ctrl+C` in Markdown files to copy as rich HTML. The clipboard contains HTML and the original Markdown."
+            "markdownDescription": "%s120.override.cmd.c.ctrl.c%"
           },
           "markdownToolkit.export.browserPath": {
             "type": "string",
             "default": "",
-            "description": "Optional path to a Chromium, Chrome, or Edge executable used for PDF and PNG export."
+            "description": "%s121.optional.path.to.a.chromium%"
           },
           "markdownToolkit.export.pngWidth": {
             "type": "number",
             "default": 1440,
             "minimum": 640,
             "maximum": 4096,
-            "description": "Viewport width used for Markdown preview PNG export."
+            "description": "%s122.viewport.width.used.for.markdown%"
           },
           "markdownToolkit.export.pngHeight": {
             "type": "number",
             "default": 10000,
             "minimum": 480,
             "maximum": 30000,
-            "description": "Maximum captured page height used for Markdown preview PNG export."
+            "description": "%s123.maximum.captured.page.height.used%"
           },
           "markdownToolkit.pandoc.path": {
             "type": "string",
             "default": "",
-            "description": "Optional path to the Pandoc executable used for DOCX export."
+            "description": "%s124.optional.path.to.the.pandoc%"
           },
           "markdownToolkit.pandoc.referenceDoc": {
             "type": "string",
             "default": "",
-            "description": "Optional default reference DOCX template offered during Pandoc export."
+            "description": "%s125.optional.default.reference.docx.template%"
           }
         }
       },
@@ -872,17 +872,17 @@
           "corporateSlides.referenceThumbnails": {
             "type": "boolean",
             "default": true,
-            "description": "Générer les vignettes de référence avec PowerPoint lors de l'import (Windows, si installé)."
+            "description": "%s127.render.reference.thumbnails.with.powerpoint%"
           },
           "corporateSlides.exportFolder": {
             "type": "string",
             "default": "out",
-            "description": "Dossier d'export, relatif au fichier source."
+            "description": "%s128.export.folder.relative.to.the%"
           },
           "corporateSlides.mrTargetBranch": {
             "type": "string",
             "default": "",
-            "description": "Branche cible des merge requests pour la comparaison « base MR » (vide : branche par défaut d'origin)."
+            "description": "%s129.merge.request.target.branch.for%"
           }
         }
       }
@@ -955,7 +955,7 @@
     "viewsWelcome": [
       {
         "view": "corporateSlides.masters",
-        "contents": "Aucun gabarit importé.\n[Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)"
+        "contents": "%s130.no.template.imported.yet.import%"
       }
     ]
   },

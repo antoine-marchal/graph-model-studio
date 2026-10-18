@@ -3,10 +3,11 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { imageSize } from 'image-size';
-import { isDiagramSrc, MutationError, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument } from '@corporate-slides/core';
+import { isDiagramSrc, MutationError, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
 import { applyMutations, parseSource, presentationKind, type SourceKind } from '@corporate-slides/parser';
 import { findMasterDir, fsValidateOptions, projectRootOf, resolveImage } from '@corporate-slides/cli';
-import { loadMaster } from '@corporate-slides/master-extractor';
+import { convertClipboardDrawing, loadMaster } from '@corporate-slides/master-extractor';
+import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
@@ -72,7 +73,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
 
   invalidateMasters(): void {
     this.masters.clear();
-    for (const p of this.allPanels()) p.panel.webview.postMessage({ type: 'notice', level: 'info', message: 'Masque corporate mis à jour.' } satisfies HostMessage);
+    for (const p of this.allPanels()) p.panel.webview.postMessage({ type: 'notice', level: 'info', message: tr('Masque corporate mis à jour.', 'Corporate master updated.') } satisfies HostMessage);
   }
 
   /** Re-push every open deck that mentions the diagram (after its PNG was re-rendered). */
@@ -149,7 +150,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
 
   async resolveCustomTextEditor(document: vscode.TextDocument, panel: vscode.WebviewPanel): Promise<void> {
     const kind = presentationKind(document.uri.path);
-    if (!kind) throw new Error('Type de fichier non pris en charge');
+    if (!kind) throw new Error(tr('Type de fichier non pris en charge', 'Unsupported file type'));
     const local = localPath(document.uri);
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(local));
     const roots = [vscode.Uri.joinPath(this.context.extensionUri, 'dist'), vscode.Uri.file(dirname(local)), this.context.globalStorageUri];
@@ -288,14 +289,14 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         }
         case 'mutate': {
           if (readOnly) {
-            send({ type: 'rejected', txId: msg.tx.id, reason: 'Révision de merge request : lecture seule.', conflict: false });
+            send({ type: 'rejected', txId: msg.tx.id, reason: tr('Révision de merge request : lecture seule.', 'Merge request revision: read-only.'), conflict: false });
             return;
           }
           // Transactions are re-applied to the current text, so only an edit made elsewhere (text
           // editor, undo, git…) after the webview's base version is a conflict: rapid visual edits
           // sent before our own re-parse arrives stay valid.
           if (msg.tx.baseVersion < state.externalVersion) {
-            send({ type: 'rejected', txId: msg.tx.id, reason: 'Modification ignorée car la source a été modifiée entre-temps. L’aperçu a été rechargé.', conflict: true });
+            send({ type: 'rejected', txId: msg.tx.id, reason: tr('Modification ignorée car la source a été modifiée entre-temps. L’aperçu a été rechargé.', 'Edit ignored because the source changed in the meantime. The preview was reloaded.'), conflict: true });
             await this.pushDocument(state);
             return;
           }
@@ -322,6 +323,12 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'validate': {
           await this.pushDocument(state);
           await vscode.commands.executeCommand('workbench.actions.view.problems');
+          break;
+        }
+        case 'slideShown': {
+          // Both sides of a diff (file + git revision) are the same path under different schemes.
+          const same = (u: vscode.Uri) => u.path.toLowerCase() === document.uri.path.toLowerCase();
+          for (const p of this.allPanels()) if (p !== state && same(p.document.uri)) p.panel.webview.postMessage({ type: 'select', slideId: msg.slideId } satisfies HostMessage);
           break;
         }
         case 'openSource':
@@ -353,14 +360,37 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           await this.addImage(document, kind, msg.slideId, file, send);
           break;
         }
+        case 'pastePowerPoint': {
+          if (readOnly) break;
+          const m = await this.getMaster(document.uri);
+          const bytes = m ? await readPowerPointClipboard(join(this.context.globalStorageUri.fsPath, 'clipboard')) : null;
+          const conv = bytes && m ? await convertClipboardDrawing(bytes, m.master).catch((e) => (log.error('PowerPoint paste', e), null)) : null;
+          if (!conv?.elements.length) {
+            send({ type: 'pasteFallback' });
+            break;
+          }
+          // Pictures go to images/ next to the deck, like pasted images.
+          const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+          const names = new Map<string, string>();
+          for (const md of conv.media) {
+            const name = `ppt-${stamp}-${md.name}`;
+            await mkdir(join(dirname(document.uri.fsPath), 'images'), { recursive: true });
+            await writeFile(join(dirname(document.uri.fsPath), 'images', name), md.data);
+            names.set(`media/${md.name}`, `images/${name}`);
+          }
+          const elements = conv.elements.map((e) => (e.type === 'image' && names.has(e.src) ? { ...e, src: names.get(e.src)! } : e));
+          for (const w of conv.warnings) log.warn(w);
+          send({ type: 'pasteElements', elements, warnings: conv.warnings });
+          break;
+        }
         case 'readClipboard':
           send({ type: 'clipboard', text: await vscode.env.clipboard.readText() });
           break;
         case 'renderReference': {
-          send({ type: 'reference', slideIndex: msg.slideIndex, url: null, message: 'Rendu PowerPoint en cours…' });
+          send({ type: 'reference', slideIndex: msg.slideIndex, url: null, message: tr('Rendu PowerPoint en cours…', 'PowerPoint rendering…') });
           const png = await this.commands.renderReference(document.uri, msg.slideIndex);
           // Inline data URI: the render lives outside the webview's resource roots fixed at open time.
-          send({ type: 'reference', slideIndex: msg.slideIndex, url: png ? `data:image/png;base64,${readFileSync(png.fsPath).toString('base64')}` : null, message: png ? undefined : 'Aucun moteur de rendu local (PowerPoint ou LibreOffice) disponible.' });
+          send({ type: 'reference', slideIndex: msg.slideIndex, url: png ? `data:image/png;base64,${readFileSync(png.fsPath).toString('base64')}` : null, message: png ? undefined : tr('Aucun moteur de rendu local (PowerPoint ou LibreOffice) disponible.', 'No local renderer (PowerPoint or LibreOffice) available.') });
           break;
         }
         case 'newFromLayout':
@@ -388,7 +418,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           const file = this.diagramPath(document, msg.src);
           const name = basename(file);
           const gms = gmsEditorBundle(this.context.extension);
-          if (!existsSync(file)) throw new Error(`Diagramme introuvable : ${msg.src}`);
+          if (!existsSync(file)) throw new Error(tr(`Diagramme introuvable : ${msg.src}`, `Diagram not found: ${msg.src}`));
           const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
           send({
             type: 'gmcEditor',
@@ -423,7 +453,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'editGmc':
         case 'refreshGmc': {
           const file = this.diagramPath(document, msg.src);
-          if (!existsSync(file)) throw new Error(`Diagramme introuvable : ${msg.src}`);
+          if (!existsSync(file)) throw new Error(tr(`Diagramme introuvable : ${msg.src}`, `Diagram not found: ${msg.src}`));
           if (msg.type === 'editGmc') await openGmc(file);
           else await renderGmc(file).then(() => this.refreshImages(file));
           break;
@@ -449,7 +479,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     const masterDir = findMasterDir(local);
     const root = masterDir ? projectRootOf(masterDir) : (vscode.workspace.getWorkspaceFolder(vscode.Uri.file(local))?.uri.fsPath ?? dirname(local));
     const p = resolve(dirname(local), src);
-    if (!isDiagramSrc(src) || !p.startsWith(resolve(root) + sep)) throw new Error(`Chemin de diagramme refusé : ${src}`);
+    if (!isDiagramSrc(src) || !p.startsWith(resolve(root) + sep)) throw new Error(tr(`Chemin de diagramme refusé : ${src}`, `Diagram path refused: ${src}`));
     return p;
   }
 
@@ -458,13 +488,13 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     const file = this.diagramPath(document, msg.path);
     const title = basename(file, '.gmc').replace(/[-_]+/g, ' ');
     if (msg.create) await createGmc(file, msg.template ?? 'context', title.charAt(0).toUpperCase() + title.slice(1));
-    else if (!existsSync(file)) throw new Error(`Diagramme introuvable : ${msg.path}`);
+    else if (!existsSync(file)) throw new Error(tr(`Diagramme introuvable : ${msg.path}`, `Diagram not found: ${msg.path}`));
 
     const m = await this.getMaster(document.uri);
-    if (!m) throw new Error('Aucun masque corporate importé.');
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
     const { doc } = this.parse(document, kind, m.master);
     const slide = doc.slides.find((s) => s.id === msg.slideId);
-    if (!slide) throw new Error('Diapositive introuvable.');
+    if (!slide) throw new Error(tr('Diapositive introuvable.', 'Slide not found.'));
     const rendered = await renderGmc(file).then(() => true, (e) => (send({ type: 'notice', level: 'warning', message: (e as Error).message }), false));
     // Fit the rendered aspect ratio into the safe area (16:10 default when the render failed).
     const sa = m.master.constraints.safeArea;
@@ -495,19 +525,19 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     try {
       after = applyMutations(before, kind, mutations, m ? { dimensions: m.master.dimensions } : {});
     } catch (e) {
-      return e instanceof MutationError ? e.message : `Modification impossible : ${(e as Error).message}`;
+      return e instanceof MutationError ? e.message : tr(`Modification impossible : ${(e as Error).message}`, `Edit failed: ${(e as Error).message}`);
     }
     const key = document.uri.toString();
     this.applying.add(key);
     try {
-      return (await replaceMinimal(document, before, after)) ? null : 'VS Code a refusé la modification du fichier source.';
+      return (await replaceMinimal(document, before, after)) ? null : tr('VS Code a refusé la modification du fichier source.', 'VS Code refused to change the source file.');
     } finally {
       this.applying.delete(key);
     }
   }
 
   private async insertImage(document: vscode.TextDocument, kind: SourceKind, slideId: string, send: (m: HostMessage) => void) {
-    const picked = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'svg'] }, title: 'Insérer une image' });
+    const picked = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'svg'] }, title: tr('Insérer une image', 'Insert a picture') });
     if (!picked?.[0]) return;
     const srcDir = dirname(document.uri.fsPath);
     let file = picked[0].fsPath;

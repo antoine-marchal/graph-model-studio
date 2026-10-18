@@ -5,6 +5,7 @@ import type { CorporateMaster, HostMessage, LayoutDef } from '@corporate-slides/
 import { loadMaster, MASTER_DIR } from '@corporate-slides/master-extractor';
 import { WebviewMessage } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
+import { tr } from '@corporate-slides/core';
 
 export function workspaceMasterDir(): string | null {
   for (const f of vscode.workspace.workspaceFolders ?? []) {
@@ -45,20 +46,20 @@ export class MasterTreeProvider implements vscode.TreeDataProvider<Node> {
         const t = new vscode.TreeItem(n.layout.name, n.layout.placeholders.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
         t.description = [n.layout.id, ...n.layout.aliases].join(' · ');
         t.iconPath = new vscode.ThemeIcon('layout');
-        t.tooltip = `${n.layout.sourcePart}\nEspaces réservés : ${n.layout.placeholders.map((p) => p.key).join(', ') || 'aucun'}`;
-        t.command = { command: 'corporateSlides.showMasters', title: 'Afficher', arguments: [n.layout.id] };
+        t.tooltip = tr(`${n.layout.sourcePart}\nEspaces réservés : ${n.layout.placeholders.map((p) => p.key).join(', ') || 'aucun'}`, `${n.layout.sourcePart}\nPlaceholders: ${n.layout.placeholders.map((p) => p.key).join(', ') || 'none'}`);
+        t.command = { command: 'corporateSlides.showMasters', title: tr('Afficher', 'Show'), arguments: [n.layout.id] };
         return t;
       }
       case 'placeholder':
         return Object.assign(new vscode.TreeItem(n.text), { description: n.detail, iconPath: new vscode.ThemeIcon('symbol-field') });
       case 'theme':
-        return Object.assign(new vscode.TreeItem('Thème', vscode.TreeItemCollapsibleState.Collapsed), { iconPath: new vscode.ThemeIcon('symbol-color') });
+        return Object.assign(new vscode.TreeItem(tr('Thème', 'Theme'), vscode.TreeItemCollapsibleState.Collapsed), { iconPath: new vscode.ThemeIcon('symbol-color') });
       case 'color':
         return Object.assign(new vscode.TreeItem(n.token), { description: `#${n.hex}`, iconPath: new vscode.ThemeIcon('circle-filled') });
       case 'font':
         return Object.assign(new vscode.TreeItem(n.role), { description: n.face, iconPath: new vscode.ThemeIcon('text-size') });
       case 'warnings':
-        return Object.assign(new vscode.TreeItem(`Avertissements d'extraction (${n.items.length})`, vscode.TreeItemCollapsibleState.Collapsed), { iconPath: new vscode.ThemeIcon('warning') });
+        return Object.assign(new vscode.TreeItem(tr(`Avertissements d'extraction (${n.items.length})`, `Extraction warnings (${n.items.length})`), vscode.TreeItemCollapsibleState.Collapsed), { iconPath: new vscode.ThemeIcon('warning') });
       case 'warning':
         return Object.assign(new vscode.TreeItem(n.text), { tooltip: n.text });
     }
@@ -105,12 +106,12 @@ export class MasterBrowserPanel {
   static async show(ctx: vscode.ExtensionContext, onNewFromLayout: (layout: string) => void, focusLayout?: string): Promise<void> {
     const dir = workspaceMasterDir();
     if (!dir) {
-      const pick = await vscode.window.showInformationMessage('Aucun masque corporate importé dans ce workspace.', 'Importer un gabarit');
+      const pick = await vscode.window.showInformationMessage(tr('Aucun masque corporate importé dans ce workspace.', 'No corporate master imported in this workspace.'), tr('Importer un gabarit', 'Import a template'));
       if (pick) await vscode.commands.executeCommand('corporateSlides.importTemplate');
       return;
     }
     if (!MasterBrowserPanel.current) {
-      const panel = vscode.window.createWebviewPanel('corporateSlides.masters', 'Masques corporate', vscode.ViewColumn.Active, {
+      const panel = vscode.window.createWebviewPanel('corporateSlides.masters', tr('Masques corporate', 'Corporate masters'), vscode.ViewColumn.Active, {
         enableScripts: true,
         retainContextWhenHidden: true,
         localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, 'dist'), vscode.Uri.file(dir)],

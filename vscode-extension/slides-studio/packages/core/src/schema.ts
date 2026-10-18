@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tr } from './i18n.js';
 
 /* ------------------------------------------------------------------ */
 /* Primitive tokens                                                    */
@@ -10,7 +11,7 @@ import { z } from 'zod';
  */
 export const ColorValue = z
   .string()
-  .regex(/^(none|theme\.[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)?|#?[0-9a-fA-F]{6})$/, 'couleur invalide (attendu theme.<slot>[.<variante>], #RRGGBB ou none)');
+  .regex(/^(none|theme\.[a-zA-Z0-9]+(\.[a-zA-Z0-9]+)?|#?[0-9a-fA-F]{6})$/, tr('couleur invalide (attendu theme.<slot>[.<variante>], #RRGGBB ou none)', 'invalid color (expected theme.<slot>[.<variant>], #RRGGBB or none)'));
 export type ColorValue = z.infer<typeof ColorValue>;
 
 /** Font face: `theme.heading`, `theme.body` or a literal family name. */
@@ -18,7 +19,7 @@ export const FontValue = z.string().min(1).max(80);
 
 export const Id = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, 'identifiant invalide (lettres, chiffres, _ et -, 64 max)');
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, tr('identifiant invalide (lettres, chiffres, _ et -, 64 max)', 'invalid identifier (letters, digits, _ and -, 64 max)'));
 
 export const HAlign = z.enum(['left', 'center', 'right', 'justify']);
 export const ColAlign = z.enum(['left', 'center', 'right']);
@@ -37,7 +38,7 @@ export const ShapeKind = z.enum([
   'rect', 'roundRect', 'snip1Rect', 'ellipse', 'triangle', 'rtTriangle', 'diamond', 'parallelogram', 'trapezoid',
   'pentagon', 'hexagon', 'octagon', 'star5', 'plus', 'donut', 'can', 'cube',
   'rightArrow', 'leftArrow', 'upArrow', 'downArrow', 'leftRightArrow', 'chevron', 'homePlate',
-  'flowChartTerminator', 'flowChartDocument', 'wedgeRectCallout', 'line',
+  'flowChartTerminator', 'flowChartDocument', 'wedgeRectCallout', 'circularArrow', 'line',
 ]);
 export type ShapeKind = z.infer<typeof ShapeKind>;
 
@@ -51,6 +52,8 @@ export const TextRun = z.object({
   italic: z.boolean().optional(),
   underline: z.boolean().optional(),
   color: ColorValue.optional(),
+  /** Font size of the run in points (overrides the element / placeholder size). */
+  size: z.number().min(4).max(400).optional(),
 });
 export type TextRun = z.infer<typeof TextRun>;
 
@@ -142,6 +145,8 @@ export const ShapeElement = z.object({
   paragraphs: z.array(Paragraph).optional(),
   flipH: z.boolean().optional(),
   flipV: z.boolean().optional(),
+  /** Preset adjustments with OOXML names and units (`adj`, `adj1`…), edited with the yellow handles. */
+  adjust: z.record(z.string().regex(/^adj\d?$/), z.number().finite()).optional(),
 });
 export const ImageElement = z.object({
   ...ElementBase,
@@ -150,8 +155,14 @@ export const ImageElement = z.object({
   src: z
     .string()
     .min(1)
-    .refine((s) => !/^[a-z][a-z0-9+.-]*:/i.test(s) || /^[a-z]:[\\/]/i.test(s), 'URL distante interdite : chemins locaux uniquement'),
+    .refine((s) => !/^[a-z][a-z0-9+.-]*:/i.test(s) || /^[a-z]:[\\/]/i.test(s), tr('URL distante interdite : chemins locaux uniquement', 'Remote URL not allowed: local paths only')),
   alt: z.string().optional(),
+  /**
+   * How the picture fills its box: `stretch` (to the box), `contain` (whole picture, original
+   * ratio) or `cover` (fills the box, original ratio, cropped). Default: `contain` in a placeholder,
+   * `stretch` elsewhere.
+   */
+  fit: z.enum(['stretch', 'contain', 'cover']).optional(),
 });
 /** Per-cell overrides of a table: background, border (all four sides) and text. */
 export const CellStyle = z
@@ -163,6 +174,12 @@ export const CellStyle = z
     dash: z.enum(['solid', 'dash', 'dot']).optional(),
     color: ColorValue.optional(),
     bold: z.boolean().optional(),
+    italic: z.boolean().optional(),
+    underline: z.boolean().optional(),
+    /** Font size in points. */
+    size: z.number().min(4).max(400).optional(),
+    align: HAlign.optional(),
+    valign: VAlign.optional(),
   })
   .strict();
 export type CellStyle = z.infer<typeof CellStyle>;
@@ -183,6 +200,8 @@ export const TableElement = z.object({
   rowHeights: z.array(z.number().positive()).optional(),
   /** Cell overrides, parallel to `rows` (null / missing = table default). */
   cellStyles: z.array(z.array(CellStyle.nullable())).optional(),
+  /** Formatted text of cells (bold, color, size… on part of the text), parallel to `rows`; the plain text stays in `rows`. */
+  cellRuns: z.array(z.array(z.array(TextRun).nullable())).optional(),
 });
 
 /**
@@ -238,7 +257,7 @@ export const ConstraintOverrides = z
 export type ConstraintOverrides = z.infer<typeof ConstraintOverrides>;
 
 export const PresentationMetadata = z.object({
-  title: z.string().default('Présentation'),
+  title: z.string().default(tr('Présentation', 'Presentation')),
   author: z.string().optional(),
   subject: z.string().optional(),
   /** Text substituted into the corporate footer zone. */

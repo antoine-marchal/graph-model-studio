@@ -4,10 +4,12 @@ import remarkGfm from 'remark-gfm';
 import { Document, isMap, isSeq, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 import type { Root, RootContent, PhrasingContent, Table } from 'mdast';
 import {
+  applyToDocument,
   formatInline,
   isPlainRepresentable,
   MutationError,
   normalizePatch,
+  paragraphsToContent,
   paragraphsToMarkdown,
   reorderIds,
   SlideDocument,
@@ -16,6 +18,7 @@ import {
   type Paragraph,
   type SlideNode,
   type TextRun,
+  tr,
 } from '@corporate-slides/core';
 import { dslToElement, elementToDsl, patchElementNode } from './dsl.js';
 import { formatZodError, type ParseOptions, type ParseResult } from './types.js';
@@ -369,7 +372,7 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
 
   // Frontmatter `elements`: overrides for derived ids, full definitions otherwise.
   const fmEls = s.fm?.data.elements;
-  if (fmEls !== undefined && !Array.isArray(fmEls)) errors.push(`Diapositive « ${s.id} » : \`elements\` doit être une liste`);
+  if (fmEls !== undefined && !Array.isArray(fmEls)) errors.push(tr(`Diapositive « ${s.id} » : \`elements\` doit être une liste`, `Slide “${s.id}”: \`elements\` must be a list`));
   for (const [k, raw] of (Array.isArray(fmEls) ? fmEls : []).entries()) {
     if (!raw || typeof raw !== 'object') continue;
     const r = raw as Record<string, unknown>;
@@ -380,11 +383,11 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       const style = target.style || override.style ? { ...(target.style ?? {}), ...((override.style as object) ?? {}) } : undefined;
       const merged = SlideElement.safeParse({ ...target, ...override, ...(style ? { style } : {}) });
       if (merged.success) Object.assign(target, merged.data);
-      else errors.push(`Diapositive « ${s.id} », surcharge « ${id} » : ${formatZodError(merged.error)}`);
+      else errors.push(tr(`Diapositive « ${s.id} », surcharge « ${id} » : ${formatZodError(merged.error)}`, `Slide “${s.id}”, override “${id}”: ${formatZodError(merged.error)}`));
     } else {
       const parsed = SlideElement.safeParse(dslToElement(r));
       if (parsed.success) elements.push({ ...parsed.data, source: src(fmItemRange(text, s.fm!, k) ?? s.fm!, 'markdown-frontmatter') });
-      else errors.push(`Diapositive « ${s.id} », élément ${k + 1} : ${formatZodError(parsed.error)}`);
+      else errors.push(tr(`Diapositive « ${s.id} », élément ${k + 1} : ${formatZodError(parsed.error)}`, `Slide “${s.id}”, element ${k + 1}: ${formatZodError(parsed.error)}`));
     }
   }
   return { elements, notes: notes ?? (typeof s.fm?.data.notes === 'string' ? s.fm.data.notes : undefined), errors };
@@ -404,7 +407,7 @@ export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResul
     return lo + 1;
   };
   const fm = model.docFm?.data ?? {};
-  for (const k of Object.keys(fm)) if (!DOC_FM_KEYS.has(k)) errors.push(`Clé d'en-tête inconnue : « ${k} »`);
+  for (const k of Object.keys(fm)) if (!DOC_FM_KEYS.has(k)) errors.push(tr(`Clé d'en-tête inconnue : « ${k} »`, `Unknown header key: “${k}”`));
   const slides: SlideNode[] = model.slides.map((s) => {
     const d = deriveSlide(text, s, lineOf);
     errors.push(...d.errors);
@@ -420,7 +423,7 @@ export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResul
   });
   const candidate = {
     version: '1',
-    metadata: { title: String(fm.title ?? 'Présentation'), author: fm.author, subject: fm.subject, footer: fm.footer, date: fm.date },
+    metadata: { title: String(fm.title ?? tr('Présentation', 'Presentation')), author: fm.author, subject: fm.subject, footer: fm.footer, date: fm.date },
     masterRef: String(fm.master ?? 'corporate'),
     themeRef: String(fm.theme ?? 'default'),
     dimensions: opts.dimensions ?? { width: 13.3333, height: 7.5 },
@@ -443,7 +446,7 @@ const splice = (text: string, r: Range, insert: string) => text.slice(0, r.start
 function editSlideFm(text: string, index: number, fn: (d: Document) => void): string {
   const model = buildMdModel(text);
   const s = model.slides[index];
-  if (!s) throw new MutationError(`Diapositive ${index + 1} introuvable`);
+  if (!s) throw new MutationError(tr(`Diapositive ${index + 1} introuvable`, `Slide ${index + 1} not found`));
   if (s.fm) {
     const d = parseDocument(text.slice(s.fm.start, s.fm.end));
     fn(d);
@@ -492,7 +495,7 @@ function dropEmptyElements(d: Document) {
 
 const slideIndex = (model: MdModel, slideId: string) => {
   const i = model.slides.findIndex((s) => s.id === slideId);
-  if (i < 0) throw new MutationError(`Diapositive « ${slideId} » introuvable`);
+  if (i < 0) throw new MutationError(tr(`Diapositive « ${slideId} » introuvable`, `Slide “${slideId}” not found`));
   return i;
 };
 
@@ -541,7 +544,7 @@ function rewriteBlock(text: string, block: MdBlock, paragraphs: Paragraph[]): st
       return splice(text, { start: first.start, end: last.end }, [body, ...kept].filter(Boolean).join('\n\n'));
     }
     default:
-      throw new MutationError('Ce bloc ne contient pas de texte');
+      throw new MutationError(tr('Ce bloc ne contient pas de texte', 'This block holds no text'));
   }
 }
 
@@ -568,7 +571,22 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       let out = text;
       if (block) {
         if (paragraphs && !isPlainRepresentable(paragraphs)) {
-          throw new MutationError('Couleur ou soulignement de caractères non représentable en Markdown : utilisez « Convertir en DSL complet » ou un style d’élément.');
+          // Run colors, sizes and underlines have no Markdown syntax: the element leaves the Markdown
+          // body and becomes a full definition in the slide frontmatter (same id, nothing lost).
+          const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
+          if (!cur) throw new MutationError(`${tr('Élément introuvable', 'Element not found')} : ${m.elementId}`);
+          const { source: _s, ...el } = cur as SlideElement & { source?: unknown };
+          const next = applyToDocument({ ...current, slides: [{ ...current.slides[si]!, elements: [el as SlideElement] }] }, [{ ...m, slideId: current.slides[si]!.id }]).slides[0]!.elements[0]!;
+          let out2 = text;
+          for (const r of [...block.ranges].sort((a, b) => b.start - a.start)) {
+            const after = /^[ \t]*\r?\n?[ \t]*\r?\n?/.exec(out2.slice(r.end))![0];
+            out2 = splice(out2, { start: r.start, end: r.end + after.length }, '');
+          }
+          return editSlideFm(out2, si, (d) => {
+            const seq = fmElementsSeq(d);
+            seq.items = seq.items.filter((n) => !(isMap(n) && String(n.get('id')) === m.elementId));
+            seq.add(d.createNode(elementToDsl(next)));
+          });
         }
         if (paragraphs) out = rewriteBlock(out, block, paragraphs);
         else if (src !== undefined && block.kind === 'image') {
@@ -583,10 +601,10 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
         return out;
       }
       const el = current.slides[si]?.elements.find((e) => e.id === m.elementId);
-      if (!el) throw new MutationError(`Élément « ${m.elementId} » introuvable`);
+      if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
       return editSlideFm(out, si, (d) => {
         const node = fmEntry(d, m.elementId, false);
-        if (!node) throw new MutationError(`Élément « ${m.elementId} » introuvable dans l'en-tête`);
+        if (!node) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable dans l'en-tête`, `Element “${m.elementId}” not found in the header`));
         const { src: _s, rows: _r, ...p } = patch;
         patchElementNode(d, node, p, { allowText: true });
         if (src !== undefined) node.set('src', src);
@@ -596,7 +614,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     }
     case 'addElement': {
       const si = slideIndex(model, m.slideId);
-      if (current.slides[si]?.elements.some((e) => e.id === m.element.id)) throw new MutationError(`Identifiant « ${m.element.id} » déjà utilisé`);
+      if (current.slides[si]?.elements.some((e) => e.id === m.element.id)) throw new MutationError(tr(`Identifiant « ${m.element.id} » déjà utilisé`, `Identifier “${m.element.id}” already used`));
       return editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(elementToDsl(m.element))));
     }
     case 'deleteElement': {
@@ -629,7 +647,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       });
     }
     case 'addSlide': {
-      if (model.slides.some((s) => s.id === m.slideId)) throw new MutationError(`Identifiant « ${m.slideId} » déjà utilisé`);
+      if (model.slides.some((s) => s.id === m.slideId)) throw new MutationError(tr(`Identifiant « ${m.slideId} » déjà utilisé`, `Identifier “${m.slideId}” already used`));
       const after = m.afterSlideId ? model.slides[slideIndex(model, m.afterSlideId)] : model.slides[model.slides.length - 1];
       const at = after ? after.end : text.length;
       const chunk = `---\nid: ${m.slideId}\nlayout: ${m.layout}\n---\n\n${m.title !== undefined ? `# ${formatInline([{ text: m.title }])}\n\n` : ''}`;
@@ -642,7 +660,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     }
     case 'duplicateSlide': {
       const si = slideIndex(model, m.slideId);
-      if (model.slides.some((s) => s.id === m.newSlideId)) throw new MutationError(`Identifiant « ${m.newSlideId} » déjà utilisé`);
+      if (model.slides.some((s) => s.id === m.newSlideId)) throw new MutationError(tr(`Identifiant « ${m.newSlideId} » déjà utilisé`, `Identifier “${m.newSlideId}” already used`));
       const s = model.slides[si]!;
       const chunk = chunkOf(text, s);
       const before = text.slice(0, s.end);
@@ -707,19 +725,39 @@ export function documentToDeck(doc: SlideDocument): string {
     if (s.notes) head.notes = s.notes;
     const title = s.elements.find((e) => e.id === 'title' && e.type === 'text' && e.placeholder === 'title' && e.paragraphs.length === 1 && isPlainRepresentable(e.paragraphs) && !e.paragraphs[0]!.list);
     const rest: Record<string, unknown>[] = [];
+    const slots: string[] = [];
     for (const e of s.elements) {
       const { source: _s, ...el } = e as SlideElement & { source?: unknown };
       if (e === title) {
         // The heading carries the text; geometry and style stay as a frontmatter override.
         const { id: _i, type: _t, paragraphs: _p, placeholder: _ph, ...over } = el as Record<string, unknown>;
         if (Object.keys(over).length) rest.push({ id: 'title', ...over });
-      } else rest.push(elementToDsl(el as SlideElement));
+        continue;
+      }
+      const dsl = elementToDsl(el as SlideElement);
+      const body = slotBody(e);
+      if (body !== null) {
+        // Text lives in a `::: id` block; the frontmatter entry keeps placeholder, geometry and style.
+        delete dsl.content;
+        slots.push(`::: ${e.id}\n${body}\n:::\n`);
+      }
+      rest.push(dsl);
     }
     if (rest.length) head.elements = rest;
     out += `\n---\n${yaml(head)}---\n\n`;
     if (title?.type === 'text') out += `# ${formatInline(title.paragraphs[0]!.runs)}\n`;
+    for (const sl of slots) out += `\n${sl}`;
   }
   return out;
+}
+
+/** Markdown for a `::: id` block holding a placeholder's text, or null when it would not read back identically. */
+function slotBody(e: SlideElement): string | null {
+  if (e.type !== 'text' || !e.placeholder || e.id === 'notes' || !/^[A-Za-z][\w-]*$/.test(e.id) || !e.paragraphs.length || !isPlainRepresentable(e.paragraphs)) return null;
+  const body = paragraphsToMarkdown(e.paragraphs);
+  if (!body.trim() || body.split('\n').some((l) => SLOT_OPEN_RE.test(l) || SLOT_CLOSE_RE.test(l))) return null;
+  const back = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
+  return paragraphsToContent(back) === paragraphsToContent(e.paragraphs) ? body : null;
 }
 
 function blockify(node: unknown): void {

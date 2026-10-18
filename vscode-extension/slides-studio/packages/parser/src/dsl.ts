@@ -11,6 +11,7 @@ import {
   type Mutation,
   type Paragraph,
   type SlideNode,
+  tr
 } from '@corporate-slides/core';
 import type { ParseResult, ParseOptions } from './types.js';
 import { formatZodError } from './types.js';
@@ -19,7 +20,7 @@ import { formatZodError } from './types.js';
 /* DSL ⇄ canonical element conversion                                 */
 /* ------------------------------------------------------------------ */
 
-const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'content', 'paragraphs', 'src', 'alt', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'style'];
+const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'content', 'paragraphs', 'src', 'alt', 'fit', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'cellRuns', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'adjust', 'style'];
 
 /** Canonical element → plain DSL object (deterministic key order, `content` sugar when lossless). */
 export function elementToDsl(el: SlideElement): Record<string, unknown> {
@@ -86,7 +87,7 @@ function blockifyStrings(node: Node | null | undefined): void {
 export function parseDsl(text: string, opts: ParseOptions = {}): ParseResult {
   const lc = new LineCounter();
   const ydoc = parseDocument(text, { lineCounter: lc, keepSourceTokens: false });
-  const errors = ydoc.errors.map((e) => `Ligne ${e.linePos?.[0]?.line ?? '?'} : ${e.message.split('\n')[0]}`);
+  const errors = ydoc.errors.map((e) => tr(`Ligne ${e.linePos?.[0]?.line ?? '?'} : ${e.message.split('\n')[0]}`, `Line ${e.linePos?.[0]?.line ?? '?'}: ${e.message.split('\n')[0]}`));
   const line = (offset: number | undefined) => (offset === undefined ? 0 : lc.linePos(offset).line);
   const root = ydoc.contents;
   const pres = (isMap(root) ? (root.get('presentation') as YAMLMap | undefined) : undefined)?.toJSON?.() ?? {};
@@ -96,7 +97,7 @@ export function parseDsl(text: string, opts: ParseOptions = {}): ParseResult {
   if (isSeq(slidesNode)) {
     slidesNode.items.forEach((item, i) => {
       if (!isMap(item)) {
-        errors.push(`Diapositive ${i + 1} : objet attendu`);
+        errors.push(tr(`Diapositive ${i + 1} : objet attendu`, `Slide ${i + 1}: object expected`));
         return;
       }
       const raw = item.toJSON() as Record<string, unknown>;
@@ -107,7 +108,7 @@ export function parseDsl(text: string, opts: ParseOptions = {}): ParseResult {
           if (!isMap(en)) return;
           const r = SlideElement.safeParse(dslToElement(en.toJSON() as Record<string, unknown>));
           if (!r.success) {
-            errors.push(`Diapositive ${i + 1}, élément ${j + 1} (ligne ${line(en.range?.[0])}) : ${formatZodError(r.error)}`);
+            errors.push(tr(`Diapositive ${i + 1}, élément ${j + 1} (ligne ${line(en.range?.[0])}) : ${formatZodError(r.error)}`, `Slide ${i + 1}, element ${j + 1} (line ${line(en.range?.[0])}): ${formatZodError(r.error)}`));
             return;
           }
           elements.push({ ...r.data, source: { kind: 'dsl', startLine: line(en.range?.[0]), endLine: line(en.range?.[1]) } });
@@ -122,11 +123,11 @@ export function parseDsl(text: string, opts: ParseOptions = {}): ParseResult {
         source: { kind: 'dsl', startLine: line(item.range?.[0]), endLine: line(item.range?.[1]) },
       });
     });
-  } else if (slidesNode !== undefined) errors.push('`slides` doit être une liste');
+  } else if (slidesNode !== undefined) errors.push(tr('`slides` doit être une liste', '`slides` must be a list'));
 
   const candidate = {
     version: '1',
-    metadata: { title: pres.title ?? 'Présentation', author: pres.author, subject: pres.subject, footer: pres.footer, date: pres.date },
+    metadata: { title: pres.title ?? tr('Présentation', 'Presentation'), author: pres.author, subject: pres.subject, footer: pres.footer, date: pres.date },
     masterRef: String(pres.master ?? 'corporate'),
     themeRef: String(pres.theme ?? 'default'),
     dimensions: opts.dimensions ?? { width: 13.3333, height: 7.5 },
@@ -158,15 +159,15 @@ function findSlide(d: Document, slideId: string, docModel: SlideDocument): { nod
   const seq = slidesSeq(d);
   const index = docModel.slides.findIndex((s) => s.id === slideId);
   const node = seq.items[index];
-  if (index < 0 || !isMap(node)) throw new MutationError(`Diapositive « ${slideId} » introuvable`);
+  if (index < 0 || !isMap(node)) throw new MutationError(tr(`Diapositive « ${slideId} » introuvable`, `Slide “${slideId}” not found`));
   return { node, index };
 }
 
 function findElement(slide: YAMLMap, elementId: string): { seq: YAMLSeq; node: YAMLMap; index: number } {
   const seq = slide.get('elements');
-  if (!isSeq(seq)) throw new MutationError(`Élément « ${elementId} » introuvable`);
+  if (!isSeq(seq)) throw new MutationError(tr(`Élément « ${elementId} » introuvable`, `Element “${elementId}” not found`));
   const index = seq.items.findIndex((n) => isMap(n) && String(n.get('id')) === elementId);
-  if (index < 0) throw new MutationError(`Élément « ${elementId} » introuvable`);
+  if (index < 0) throw new MutationError(tr(`Élément « ${elementId} » introuvable`, `Element “${elementId}” not found`));
   return { seq, node: seq.items[index] as YAMLMap, index };
 }
 
@@ -206,7 +207,7 @@ export function patchElementNode(d: Document, node: YAMLMap, patch: ReturnType<t
     if ((sm as YAMLMap).items.length === 0) node.delete('style');
   }
   if (paragraphs) {
-    if (!opts.allowText) throw new MutationError('Texte non modifiable ici');
+    if (!opts.allowText) throw new MutationError(tr('Texte non modifiable ici', 'Text cannot be edited here'));
     if (isPlainRepresentable(paragraphs)) {
       node.delete('paragraphs');
       node.set('content', textNode(d, paragraphsToContent(paragraphs)));
@@ -219,7 +220,7 @@ export function patchElementNode(d: Document, node: YAMLMap, patch: ReturnType<t
 
 export function applyDslMutations(text: string, model: SlideDocument, mutations: Mutation[]): string {
   const d = parseDocument(text);
-  if (d.errors.length) throw new MutationError('Le fichier source contient des erreurs YAML : corrigez-les avant toute édition visuelle');
+  if (d.errors.length) throw new MutationError(tr('Le fichier source contient des erreurs YAML : corrigez-les avant toute édition visuelle', 'The source file has YAML errors: fix them before any visual edit'));
   let current = model;
   for (const m of mutations) {
     switch (m.kind) {

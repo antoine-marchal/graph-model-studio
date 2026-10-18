@@ -1,6 +1,7 @@
 import { memo, type CSSProperties, type ReactNode } from 'react';
 import {
   isDiagramSrc,
+  imageFit,
   CSS_PX_PER_INCH,
   numberLabel,
   paragraphLook,
@@ -14,8 +15,10 @@ import {
   type StaticObject,
   type CellStyle,
   type TableElement,
-  tr
+  type TextRun,
+  tr,
 } from '@corporate-slides/core';
+import { adjOf, calloutTip, circularArrowGeom, clamp } from './adjust.js';
 
 /** px per inch in the unscaled slide space; zoom is applied with a CSS transform. */
 export const PPI = CSS_PX_PER_INCH;
@@ -54,6 +57,11 @@ export function tableCellStyle(el: TableElement, ri: number, ci: number, master:
     const color = tokenHex(cs.color, master);
     if (color) out.color = `#${color}`;
     if (cs.bold !== undefined) out.fontWeight = cs.bold ? 700 : 400;
+    if (cs.italic) out.fontStyle = 'italic';
+    if (cs.underline) out.textDecoration = 'underline';
+    if (cs.size) out.fontSize = ptPx(cs.size);
+    if (cs.align) out.textAlign = cs.align;
+    if (cs.valign) out.verticalAlign = cs.valign;
     if (cs.line || cs.lineWidth !== undefined || cs.dash) out.border = border(cs.line ?? s?.line, cs.lineWidth ?? s?.lineWidth, cs.dash ?? s?.dash, tokenHex(cs.line, master) ?? gridColor);
   }
   return out;
@@ -74,6 +82,8 @@ export interface SlideViewProps {
   slideNumber?: number;
   /** Show dashed outlines of empty layout placeholders. */
   showPlaceholders?: boolean;
+  /** Draw hidden elements ghosted (editor only; never in thumbnails or exports). */
+  showHidden?: boolean;
   /** Element currently edited inline: rendered by `renderEditor` instead. */
   editingId?: string | null;
   renderEditor?: (r: ResolvedElement) => ReactNode;
@@ -126,6 +136,7 @@ export function ParagraphsView({ r, paragraphs, master }: { r: ResolvedElement; 
                   fontWeight: run.bold ? 700 : undefined,
                   fontStyle: run.italic || r.style.italic ? 'italic' : undefined,
                   textDecoration: run.underline || r.style.underline ? 'underline' : undefined,
+                  fontSize: run.size ? ptPx(run.size) : undefined,
                   color: run.color ? hex(run.color.startsWith('theme.') ? (resolveRunColor(run.color, master) ?? look.color) : run.color.replace('#', '')) : undefined,
                 }}
               >
@@ -163,6 +174,22 @@ export function textBoxStyle(r: ResolvedElement): CSSProperties {
   };
 }
 
+/** Formatted runs of a table cell, when they still match its plain text (else the text wins). */
+export function cellRunsOf(el: TableElement, ri: number, ci: number): TextRun[] | null {
+  const runs = el.cellRuns?.[ri]?.[ci];
+  return runs && runs.map((r) => r.text).join('') === (el.rows[ri]?.[ci] ?? '') ? runs : null;
+}
+
+/** One formatted run (table cells; paragraphs use ParagraphsView). */
+export function RunSpan({ run, master }: { run: TextRun; master: CorporateMaster }) {
+  const color = run.color ? tokenHex(run.color, master) : null;
+  return (
+    <span style={{ fontWeight: run.bold ? 700 : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined, color: color ? `#${color}` : undefined, fontSize: run.size ? ptPx(run.size) : undefined }}>
+      {run.text}
+    </span>
+  );
+}
+
 /* ------------------------------------------------------------------ */
 /* Shapes                                                              */
 /* ------------------------------------------------------------------ */
@@ -179,70 +206,106 @@ function polygon(n: number, w: number, h: number, inner?: number): string {
   return `M ${pts.join(' L ')} Z`;
 }
 
-/** SVG path of a preset geometry in a w×h box (px). `radius` is the corner size in px. */
-export function shapePath(kind: string, w: number, h: number, radius = Math.min(w, h) * 0.15): string {
+/**
+ * SVG path of a preset geometry in a w×h box (px). `radius` is the corner size in px; `adjust`
+ * holds the OOXML adjustment values (see adjust.ts), PowerPoint's defaults when absent.
+ */
+export function shapePath(kind: string, w: number, h: number, radius = Math.min(w, h) * 0.15, adjust?: Record<string, number>): string {
   const m = Math.min(w, h);
-  const head = Math.min(w * 0.5, h * 0.5);
+  const a = adjOf(kind, adjust);
+  const f = (k: string, max = 100000) => clamp(a[k] ?? 0, 0, max) / 100000;
   switch (kind) {
-    case 'triangle':
-      return `M ${w / 2} 0 L ${w} ${h} L 0 ${h} Z`;
+    case 'triangle': {
+      const x = w * f('adj');
+      return `M ${x} 0 L ${w} ${h} L 0 ${h} Z`;
+    }
     case 'rtTriangle':
       return `M 0 0 L 0 ${h} L ${w} ${h} Z`;
     case 'diamond':
       return `M ${w / 2} 0 L ${w} ${h / 2} L ${w / 2} ${h} L 0 ${h / 2} Z`;
-    case 'parallelogram':
-      return `M ${m * 0.25} 0 L ${w} 0 L ${w - m * 0.25} ${h} L 0 ${h} Z`;
-    case 'trapezoid':
-      return `M ${m * 0.25} 0 L ${w - m * 0.25} 0 L ${w} ${h} L 0 ${h} Z`;
+    case 'parallelogram': {
+      const o = Math.min(w, m * f('adj', 100000 * (w / m)));
+      return `M ${o} 0 L ${w} 0 L ${w - o} ${h} L 0 ${h} Z`;
+    }
+    case 'trapezoid': {
+      const o = Math.min(w / 2, m * f('adj', 100000 * (w / m)));
+      return `M ${o} 0 L ${w - o} 0 L ${w} ${h} L 0 ${h} Z`;
+    }
     case 'pentagon':
       return polygon(5, w, h);
     case 'star5':
       return polygon(5, w, h, 0.38);
     case 'hexagon': {
-      const a = m * 0.25;
-      return `M ${a} 0 L ${w - a} 0 L ${w} ${h / 2} L ${w - a} ${h} L ${a} ${h} L 0 ${h / 2} Z`;
+      const o = Math.min(w / 2, m * f('adj'));
+      return `M ${o} 0 L ${w - o} 0 L ${w} ${h / 2} L ${w - o} ${h} L ${o} ${h} L 0 ${h / 2} Z`;
     }
     case 'octagon': {
-      const a = m * 0.29;
-      return `M ${a} 0 L ${w - a} 0 L ${w} ${a} L ${w} ${h - a} L ${w - a} ${h} L ${a} ${h} L 0 ${h - a} L 0 ${a} Z`;
+      const o = m * f('adj', 50000);
+      return `M ${o} 0 L ${w - o} 0 L ${w} ${o} L ${w} ${h - o} L ${w - o} ${h} L ${o} ${h} L 0 ${h - o} L 0 ${o} Z`;
     }
     case 'plus': {
-      const a = m * 0.25;
-      return `M ${a} 0 L ${w - a} 0 L ${w - a} ${a} L ${w} ${a} L ${w} ${h - a} L ${w - a} ${h - a} L ${w - a} ${h} L ${a} ${h} L ${a} ${h - a} L 0 ${h - a} L 0 ${a} L ${a} ${a} Z`;
+      const o = m * f('adj', 50000);
+      return `M ${o} 0 L ${w - o} 0 L ${w - o} ${o} L ${w} ${o} L ${w} ${h - o} L ${w - o} ${h - o} L ${w - o} ${h} L ${o} ${h} L ${o} ${h - o} L 0 ${h - o} L 0 ${o} L ${o} ${o} Z`;
     }
     case 'donut': {
-      const d = m * 0.25;
+      const d = m * f('adj', 50000);
       const ell = (rx: number, ry: number) => `M ${w / 2 - rx} ${h / 2} a ${rx} ${ry} 0 1 0 ${2 * rx} 0 a ${rx} ${ry} 0 1 0 ${-2 * rx} 0 Z`;
       return `${ell(w / 2, h / 2)} ${ell(Math.max(0, w / 2 - d), Math.max(0, h / 2 - d))}`;
     }
     case 'can': {
-      const ry = m * 0.125;
+      const ry = (m * f('adj', 50000)) / 2;
       return `M 0 ${ry} A ${w / 2} ${ry} 0 0 1 ${w} ${ry} L ${w} ${h - ry} A ${w / 2} ${ry} 0 0 1 0 ${h - ry} Z`;
     }
     case 'cube': {
-      const d = m * 0.25;
+      const d = m * f('adj');
       return `M 0 ${d} L ${d} 0 L ${w} 0 L ${w} ${h - d} L ${w - d} ${h} L 0 ${h} Z`;
     }
-    case 'rightArrow':
-      return `M 0 ${h * 0.25} L ${w - head} ${h * 0.25} L ${w - head} 0 L ${w} ${h / 2} L ${w - head} ${h} L ${w - head} ${h * 0.75} L 0 ${h * 0.75} Z`;
-    case 'leftArrow':
-      return `M ${w} ${h * 0.25} L ${head} ${h * 0.25} L ${head} 0 L 0 ${h / 2} L ${head} ${h} L ${head} ${h * 0.75} L ${w} ${h * 0.75} Z`;
-    case 'upArrow':
-      return `M ${w * 0.25} ${h} L ${w * 0.25} ${head} L 0 ${head} L ${w / 2} 0 L ${w} ${head} L ${w * 0.75} ${head} L ${w * 0.75} ${h} Z`;
-    case 'downArrow':
-      return `M ${w * 0.25} 0 L ${w * 0.25} ${h - head} L 0 ${h - head} L ${w / 2} ${h} L ${w} ${h - head} L ${w * 0.75} ${h - head} L ${w * 0.75} 0 Z`;
-    case 'leftRightArrow': {
-      const hd = Math.min(w * 0.25, h * 0.5);
-      return `M 0 ${h / 2} L ${hd} 0 L ${hd} ${h * 0.25} L ${w - hd} ${h * 0.25} L ${w - hd} 0 L ${w} ${h / 2} L ${w - hd} ${h} L ${w - hd} ${h * 0.75} L ${hd} ${h * 0.75} L ${hd} ${h} Z`;
+    case 'rightArrow': {
+      const y0 = (h - h * f('adj1')) / 2, hd = Math.min(w, m * f('adj2', 100000 * (w / m)));
+      return `M 0 ${y0} L ${w - hd} ${y0} L ${w - hd} 0 L ${w} ${h / 2} L ${w - hd} ${h} L ${w - hd} ${h - y0} L 0 ${h - y0} Z`;
     }
-    case 'chevron':
-      return `M 0 0 L ${w - head} 0 L ${w} ${h / 2} L ${w - head} ${h} L 0 ${h} L ${head} ${h / 2} Z`;
-    case 'homePlate':
-      return `M 0 0 L ${w - head} 0 L ${w} ${h / 2} L ${w - head} ${h} L 0 ${h} Z`;
+    case 'leftArrow': {
+      const y0 = (h - h * f('adj1')) / 2, hd = Math.min(w, m * f('adj2', 100000 * (w / m)));
+      return `M ${w} ${y0} L ${hd} ${y0} L ${hd} 0 L 0 ${h / 2} L ${hd} ${h} L ${hd} ${h - y0} L ${w} ${h - y0} Z`;
+    }
+    case 'upArrow': {
+      const x0 = (w - w * f('adj1')) / 2, hd = Math.min(h, m * f('adj2', 100000 * (h / m)));
+      return `M ${x0} ${h} L ${x0} ${hd} L 0 ${hd} L ${w / 2} 0 L ${w} ${hd} L ${w - x0} ${hd} L ${w - x0} ${h} Z`;
+    }
+    case 'downArrow': {
+      const x0 = (w - w * f('adj1')) / 2, hd = Math.min(h, m * f('adj2', 100000 * (h / m)));
+      return `M ${x0} 0 L ${x0} ${h - hd} L 0 ${h - hd} L ${w / 2} ${h} L ${w} ${h - hd} L ${w - x0} ${h - hd} L ${w - x0} 0 Z`;
+    }
+    case 'leftRightArrow': {
+      const y0 = (h - h * f('adj1')) / 2, hd = Math.min(w / 2, m * f('adj2', 100000 * (w / m)));
+      return `M 0 ${h / 2} L ${hd} 0 L ${hd} ${y0} L ${w - hd} ${y0} L ${w - hd} 0 L ${w} ${h / 2} L ${w - hd} ${h} L ${w - hd} ${h - y0} L ${hd} ${h - y0} L ${hd} ${h} Z`;
+    }
+    case 'chevron': {
+      const o = Math.min(w, m * f('adj', 100000 * (w / m)));
+      return `M 0 0 L ${w - o} 0 L ${w} ${h / 2} L ${w - o} ${h} L 0 ${h} L ${o} ${h / 2} Z`;
+    }
+    case 'homePlate': {
+      const o = Math.min(w, m * f('adj', 100000 * (w / m)));
+      return `M 0 0 L ${w - o} 0 L ${w} ${h / 2} L ${w - o} ${h} L 0 ${h} Z`;
+    }
     case 'flowChartDocument':
       return `M 0 0 L ${w} 0 L ${w} ${h * 0.83} C ${w * 0.72} ${h * 0.66} ${w * 0.5} ${h * 1.06} 0 ${h * 0.9} Z`;
-    case 'wedgeRectCallout':
-      return `M 0 0 L ${w} 0 L ${w} ${h} L ${w * 0.4167} ${h} L ${w * 0.2917} ${h * 1.125} L ${w * 0.1667} ${h} L 0 ${h} Z`;
+    case 'wedgeRectCallout': {
+      const { tx, ty, side } = calloutTip(w, h, a);
+      // Tail base: a quarter of the side, on the half facing the tip (as PowerPoint draws it).
+      if (side === 'bottom' || side === 'top') {
+        const b0 = tx < w / 2 ? w * (2 / 12) : w * (7 / 12), b1 = b0 + w * (3 / 12);
+        return side === 'bottom'
+          ? `M 0 0 L ${w} 0 L ${w} ${h} L ${b1} ${h} L ${tx} ${ty} L ${b0} ${h} L 0 ${h} Z`
+          : `M 0 0 L ${b0} 0 L ${tx} ${ty} L ${b1} 0 L ${w} 0 L ${w} ${h} L 0 ${h} Z`;
+      }
+      const b0 = ty < h / 2 ? h * (2 / 12) : h * (7 / 12), b1 = b0 + h * (3 / 12);
+      return side === 'right'
+        ? `M 0 0 L ${w} 0 L ${w} ${b0} L ${tx} ${ty} L ${w} ${b1} L ${w} ${h} L 0 ${h} Z`
+        : `M 0 0 L ${w} 0 L ${w} ${h} L 0 ${h} L 0 ${b1} L ${tx} ${ty} L 0 ${b0} Z`;
+    }
+    case 'circularArrow':
+      return circularArrowGeom(w, h, a).d;
     case 'snip1Rect': {
       const r = Math.min(radius, m / 2);
       return `M 0 0 L ${w - r} 0 L ${w} ${r} L ${w} ${h} L 0 ${h} Z`;
@@ -327,25 +390,25 @@ function ShapeSvg({ r }: { r: ResolvedElement }) {
   else if (el.shape === 'flowChartTerminator') shape = <rect x={0} y={0} width={w} height={h} rx={Math.min(w, h) / 2} ry={Math.min(w, h) / 2} {...common} />;
   else if (el.shape === 'ellipse') shape = <ellipse cx={w / 2} cy={h / 2} rx={w / 2} ry={h / 2} {...common} />;
   else if (el.shape === 'can') {
-    const ry = Math.min(w, h) * 0.125;
+    const ry = (Math.min(w, h) * clamp(adjOf('can', el.adjust).adj!, 0, 50000)) / 200000;
     shape = (
       <>
-        <path d={shapePath('can', w, h)} {...common} />
+        <path d={shapePath('can', w, h, undefined, el.adjust)} {...common} />
         <ellipse cx={w / 2} cy={ry} rx={w / 2} ry={ry} {...common} />
         <ellipse cx={w / 2} cy={ry} rx={w / 2} ry={ry} fill="#fff" fillOpacity={0.25} />
       </>
     );
   } else if (el.shape === 'cube') {
-    const d = Math.min(w, h) * 0.25;
+    const d = (Math.min(w, h) * clamp(adjOf('cube', el.adjust).adj!, 0, 100000)) / 100000;
     shape = (
       <>
-        <path d={shapePath('cube', w, h)} {...common} />
+        <path d={shapePath('cube', w, h, undefined, el.adjust)} {...common} />
         <path d={`M 0 ${d} L ${d} 0 L ${w} 0 L ${w - d} ${d} Z`} fill="#fff" fillOpacity={0.3} />
         <path d={`M ${w - d} ${d} L ${w} 0 L ${w} ${h - d} L ${w - d} ${h} Z`} fill="#000" fillOpacity={0.2} />
         <path d={`M 0 ${d} L ${w - d} ${d} L ${w} 0 M ${w - d} ${d} L ${w - d} ${h}`} fill="none" stroke={stroke} strokeWidth={sw} />
       </>
     );
-  } else shape = <path d={shapePath(el.shape, w, h, radius)} fillRule="evenodd" {...common} />;
+  } else shape = <path d={shapePath(el.shape, w, h, radius, el.adjust)} fillRule="evenodd" {...common} />;
   const flip = [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ').trim();
   return (
     <svg width={Math.max(w, 1)} height={Math.max(h, 1)} style={{ position: 'absolute', inset: 0, overflow: 'visible', transform: flip || undefined }}>
@@ -472,7 +535,7 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
     case 'image': {
       const url = assets.image(el.src);
       return url ? (
-        <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', boxSizing: 'border-box', ...textChrome(r), background: undefined }} />
+        <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: ({ stretch: 'fill', contain: 'contain', cover: 'cover' } as const)[imageFit(el)], boxSizing: 'border-box', ...textChrome(r), background: undefined }} />
       ) : (
         <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'repeating-linear-gradient(45deg,#8881 0 8px,#8882 8px 16px)', color: '#666', fontSize: 14, fontFamily: 'system-ui' }}>
           {isDiagramSrc(el.src) ? tr(`Diagramme non rendu : ${el.src}`, `Diagram not rendered: ${el.src}`) : tr(`Image introuvable : ${el.src}`, `Picture not found: ${el.src}`)}
@@ -496,7 +559,7 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
               <tr key={ri} style={el.rowHeights ? { height: `${rowF[ri]! * 100}%` } : undefined}>
                 {Array.from({ length: cols }, (_, ci) => (
                   <td key={ci} data-cell={`${ri}:${ci}`} style={tableCellStyle(el, ri, ci, master)}>
-                    {row[ci] ?? ''}
+                    {cellRunsOf(el, ri, ci)?.map((run, k) => <RunSpan key={k} run={run} master={master} />) ?? row[ci] ?? ''}
                   </td>
                 ))}
               </tr>
@@ -568,11 +631,12 @@ export const SlideView = memo(function SlideView(props: SlideViewProps) {
             </div>
           ))}
       {rs.elements.map((r) =>
-        r.element.hidden ? null : (
+        r.element.hidden && !props.showHidden ? null : (
           <div
             key={r.element.id}
             data-element-id={r.element.id}
-            style={elementBoxStyle(r)}
+            data-hidden={r.element.hidden || undefined}
+            style={r.element.hidden ? { ...elementBoxStyle(r), opacity: 0.35, outline: '1.5px dashed #8a8f98', outlineOffset: 2 } : elementBoxStyle(r)}
             onPointerDown={props.onElementPointerDown ? (e) => props.onElementPointerDown!(e, r) : undefined}
             onDoubleClick={props.onElementDoubleClick ? (e) => props.onElementDoubleClick!(e, r) : undefined}
           >

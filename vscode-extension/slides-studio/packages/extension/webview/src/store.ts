@@ -77,7 +77,9 @@ export interface EditorState {
   /** Format painter armed with this style: applied to the next element selected. */
   painter: ElementStyle | null;
   /** Right-click menu at a viewport position, on the selection or on the slide itself. */
-  contextMenu: { x: number; y: number; target: 'element' | 'slide' } | null;
+  contextMenu: { x: number; y: number; target: 'element' | 'slide' | 'text' } | null;
+  /** View › Hidden objects: hidden elements drawn ghosted and selectable. */
+  showHidden: boolean;
 
   setDocument(p: { version: number; fileName: string; sourceKind: 'markdown' | 'dsl'; doc: SlideDocument; master: CorporateMaster | null; assetUrls: Record<string, string>; diagnostics: Diagnostic[]; parseErrors: string[]; readOnly: boolean; review: EditorState['review'] }): void;
   mutate(mutations: Mutation[]): void;
@@ -94,7 +96,7 @@ export interface EditorState {
   notify(level: Notice['level'], message: string): void;
   dismiss(id: number): void;
   setReference(r: EditorState['reference']): void;
-  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter' | 'contextMenu'>>): void;
+  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter' | 'contextMenu' | 'showHidden'>>): void;
 }
 
 let txCounter = 0;
@@ -139,6 +141,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   gmcEdit: null,
   painter: null,
   contextMenu: null,
+  showHidden: false,
 
   set(p) {
     set(p);

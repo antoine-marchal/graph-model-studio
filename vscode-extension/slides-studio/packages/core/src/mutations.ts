@@ -1,6 +1,7 @@
 import { z } from 'zod';
-import { AnchorPoint, CellStyle, ColAlign, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
+import { AnchorPoint, CellStyle, ColAlign, TextRun, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
 import { round4 } from './units.js';
+import { tr } from './i18n.js';
 
 /**
  * Typed mutations emitted by the visual editor. They are validated by the extension host,
@@ -22,6 +23,7 @@ export const ElementPatch = z
     locked: z.boolean().optional(),
     hidden: z.boolean().optional(),
     src: z.string().optional(),
+    fit: z.enum(['stretch', 'contain', 'cover']).optional(),
     rows: z.array(z.array(z.string())).optional(),
     header: z.boolean().optional(),
     colAlign: z.array(ColAlign.nullable()).optional(),
@@ -29,7 +31,10 @@ export const ElementPatch = z
     rowHeights: z.array(z.number().positive()).optional(),
     /** `null` removes every cell override. */
     cellStyles: z.array(z.array(CellStyle.nullable())).nullable().optional(),
+    cellRuns: z.array(z.array(z.array(TextRun).nullable())).nullable().optional(),
     shape: ShapeKind.optional(),
+    /** `null` restores the preset's default geometry. */
+    adjust: z.record(z.string().regex(/^adj\d?$/), z.number().finite()).nullable().optional(),
     from: Id.optional(),
     to: Id.optional(),
     route: z.enum(['straight', 'elbow', 'curved']).optional(),
@@ -79,7 +84,7 @@ export function normalizePatch(patch: ElementPatch): ElementPatch {
 
 export function getSlide(doc: SlideDocument, slideId: string): SlideNode {
   const s = doc.slides.find((x) => x.id === slideId);
-  if (!s) throw new MutationError(`Diapositive « ${slideId} » introuvable`);
+  if (!s) throw new MutationError(tr(`Diapositive « ${slideId} » introuvable`, `Slide “${slideId}” not found`));
   return s;
 }
 
@@ -90,7 +95,7 @@ export function reorderIds(slide: SlideNode, elementId: string, direction: 'fron
     .sort((a, b) => a.z - b.z || a.i - b.i)
     .map((e) => e.id);
   const idx = order.indexOf(elementId);
-  if (idx < 0) throw new MutationError(`Élément « ${elementId} » introuvable`);
+  if (idx < 0) throw new MutationError(tr(`Élément « ${elementId} » introuvable`, `Element “${elementId}” not found`));
   order.splice(idx, 1);
   const to = direction === 'front' ? order.length : direction === 'back' ? 0 : direction === 'forward' ? Math.min(order.length, idx + 1) : Math.max(0, idx - 1);
   order.splice(to, 0, elementId);
@@ -105,7 +110,7 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
       case 'updateElement': {
         const slide = getSlide(next, m.slideId);
         const el = slide.elements.find((e) => e.id === m.elementId);
-        if (!el) throw new MutationError(`Élément « ${m.elementId} » introuvable`);
+        if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
         const { style, placeholder, ...rest } = normalizePatch(m.patch);
         for (const [k, v] of Object.entries(rest)) {
           if (v === null) delete (el as Record<string, unknown>)[k];
@@ -123,7 +128,7 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
       }
       case 'addElement': {
         const slide = getSlide(next, m.slideId);
-        if (slide.elements.some((e) => e.id === m.element.id)) throw new MutationError(`Identifiant « ${m.element.id} » déjà utilisé`);
+        if (slide.elements.some((e) => e.id === m.element.id)) throw new MutationError(tr(`Identifiant « ${m.element.id} » déjà utilisé`, `Identifier “${m.element.id}” already used`));
         slide.elements.push(structuredClone(m.element));
         break;
       }
@@ -139,7 +144,7 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         break;
       }
       case 'addSlide': {
-        if (next.slides.some((s) => s.id === m.slideId)) throw new MutationError(`Identifiant « ${m.slideId} » déjà utilisé`);
+        if (next.slides.some((s) => s.id === m.slideId)) throw new MutationError(tr(`Identifiant « ${m.slideId} » déjà utilisé`, `Identifier “${m.slideId}” already used`));
         const idx = m.afterSlideId ? next.slides.findIndex((s) => s.id === m.afterSlideId) + 1 : next.slides.length;
         const elements: SlideNode['elements'] = m.title !== undefined ? [{ id: 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs: [{ text: m.title }] }] }] : [];
         next.slides.splice(idx, 0, { id: m.slideId, layout: m.layout, elements });
@@ -151,7 +156,7 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         break;
       case 'duplicateSlide': {
         const src = getSlide(next, m.slideId);
-        if (next.slides.some((s) => s.id === m.newSlideId)) throw new MutationError(`Identifiant « ${m.newSlideId} » déjà utilisé`);
+        if (next.slides.some((s) => s.id === m.newSlideId)) throw new MutationError(tr(`Identifiant « ${m.newSlideId} » déjà utilisé`, `Identifier “${m.newSlideId}” already used`));
         const copy = structuredClone(src);
         copy.id = m.newSlideId;
         next.slides.splice(next.slides.indexOf(src) + 1, 0, copy);

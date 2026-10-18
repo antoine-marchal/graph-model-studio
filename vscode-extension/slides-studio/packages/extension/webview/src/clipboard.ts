@@ -185,7 +185,38 @@ function pasteImage(blob: Blob) {
   reader.readAsDataURL(blob);
 }
 
-/** Paste from a DataTransfer (Ctrl+V) — richest first: our elements, table, image, text. */
+/** Clipboard HTML written by PowerPoint (shapes, text boxes, tables copied from a slide). */
+const fromPowerPoint = (html: string) => /PowerPoint\.Slide|schemas-microsoft-com:office:powerpoint/i.test(html);
+
+/** What the clipboard held when a PowerPoint paste was handed to the host (used if it falls back). */
+let pendingPowerPoint: { html: string; text: string; image: Blob | null } | null = null;
+
+/** Host answer to `pastePowerPoint`: native elements, keeping their slide position. */
+export function pastePowerPointElements(elements: SlideElement[], warnings: string[]) {
+  pendingPowerPoint = null;
+  pasteElements(elements, '');
+  if (warnings.length) useEditor.getState().notify('warning', `${tr('Collage PowerPoint', 'PowerPoint paste')} : ${warnings[0]}${warnings.length > 1 ? ` (+${warnings.length - 1})` : ''}`);
+}
+
+/** Host could not read PowerPoint's drawing: paste the HTML / picture / text instead. */
+export function pastePowerPointFallback() {
+  const p = pendingPowerPoint;
+  pendingPowerPoint = null;
+  if (!p) return;
+  const grid = htmlTableGrid(p.html);
+  if (grid) return pasteTable(grid.rows, grid.styles);
+  if (p.image) return pasteImage(p.image);
+  pasteText(p.text);
+}
+
+function handOverToHost(html: string, text: string, image: Blob | null) {
+  const slide = currentSlide(useEditor.getState());
+  if (!slide) return;
+  pendingPowerPoint = { html, text, image };
+  post({ type: 'pastePowerPoint', slideId: slide.id });
+}
+
+/** Paste from a DataTransfer (Ctrl+V) — richest first: our elements, PowerPoint objects, table, image, text. */
 function pasteData(data: DataTransfer) {
   const own = data.getData(MIME);
   if (own) {
@@ -194,6 +225,8 @@ function pasteData(data: DataTransfer) {
   }
   const text = data.getData('text/plain');
   if (last && text && text === last.text) return pasteElements(last.elements, last.slideId, last);
+  const html = data.getData('text/html');
+  if (fromPowerPoint(html)) return handOverToHost(html, text, [...data.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile() ?? null);
   // Spreadsheets copy HTML + TSV + a picture of the range: the table comes first.
   const grid = htmlTableGrid(data.getData('text/html'));
   if (grid) return pasteTable(grid.rows, grid.styles);
@@ -210,7 +243,12 @@ export async function pasteFromRibbon() {
     const items = await navigator.clipboard.read();
     for (const item of items) {
       if (item.types.includes('text/html')) {
-        const grid = htmlTableGrid(await (await item.getType('text/html')).text());
+        const html = await (await item.getType('text/html')).text();
+        if (fromPowerPoint(html)) {
+          const img = item.types.find((t) => t.startsWith('image/'));
+          return handOverToHost(html, item.types.includes('text/plain') ? await (await item.getType('text/plain')).text() : '', img ? await item.getType(img) : null);
+        }
+        const grid = htmlTableGrid(html);
         if (grid) return pasteTable(grid.rows, grid.styles);
       }
       if (item.types.includes('text/plain')) {

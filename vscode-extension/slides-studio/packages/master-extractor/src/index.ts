@@ -8,7 +8,7 @@ import { generateThemeJson } from 'pptx-masters/src/generator/code.js';
 import { createColorResolver } from 'pptx-masters/src/parser/colors.js';
 import { parseClrMap } from 'pptx-masters/src/parser/theme.js';
 import { extractTextProps } from 'pptx-masters/src/parser/text.js';
-import { CorporateMaster, type AssetDef } from '@corporate-slides/core';
+import { CorporateMaster, type AssetDef, tr } from '@corporate-slides/core';
 import { loadPackageSafely } from './safety.js';
 import { inventoryPackage, picturesIn, type PictureInfo } from './ooxml.js';
 import { buildCorporateMaster, type MasterTextStyles } from './normalize.js';
@@ -65,15 +65,15 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
   const assetsDir = join(outDir, 'assets');
   const notes: string[] = [];
 
-  log(`Vérification du paquet ${basename(templatePath)}…`);
+  log(tr(`Vérification du paquet ${basename(templatePath)}…`, `Checking package ${basename(templatePath)}…`));
   const zip = await loadPackageSafely(templatePath);
   const bytes = await readFile(templatePath);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
 
-  log('Inventaire OOXML…');
+  log(tr('Inventaire OOXML…', 'OOXML inventory…'));
   const inv = await inventoryPackage(zip);
 
-  log('Extraction des masques (pptx-masters)…');
+  log(tr('Extraction des masques (pptx-masters)…', 'Extracting masters (pptx-masters)…'));
   const r = await extract(templatePath);
   r.palette = generateThemeJson(r.themeColors, r.themeFonts, r.dimensions, r.masterData).palette;
 
@@ -91,7 +91,7 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
     textStyles.set(m.part, { title: lst(tx['p:titleStyle']), body: lst(tx['p:bodyStyle']), sldNum: sldNumLevels?.[1] ?? null });
   }
 
-  log('Copie des ressources…');
+  log(tr('Copie des ressources…', 'Copying resources…'));
   await rm(assetsDir, { recursive: true, force: true });
   await mkdir(assetsDir, { recursive: true });
   const assets: AssetDef[] = [];
@@ -111,7 +111,7 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
       if (opts.metafilePreviews !== false) {
         const png = join(assetsDir, `${id}.preview.png`);
         if (await convertMetafileToPng(target, png)) asset.preview = `assets/${id}.preview.png`;
-        else notes.push(`Aperçu PNG de ${name} indisponible (conversion EMF/WMF possible uniquement sous Windows) : cadre de substitution dans l'éditeur.`);
+        else notes.push(tr(`Aperçu PNG de ${name} indisponible (conversion EMF/WMF possible uniquement sous Windows) : cadre de substitution dans l'éditeur.`, `PNG preview of ${name} unavailable (EMF/WMF conversion only works on Windows): placeholder frame in the editor.`));
       }
     } else {
       try {
@@ -147,12 +147,12 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
   );
 
   if (opts.thumbnails) {
-    log('Vignettes de référence (PowerPoint)…');
+    log(tr('Vignettes de référence (PowerPoint)…', 'Reference thumbnails (PowerPoint)…'));
     const thumbsDir = join(outDir, 'thumbnails');
     await rm(thumbsDir, { recursive: true, force: true });
     try {
       const files = await renderLayoutThumbnails(templatePath, thumbsDir);
-      if (!files.length) notes.push('Vignettes de référence non générées : PowerPoint indisponible (le navigateur de masques utilise le rendu interne).');
+      if (!files.length) notes.push(tr('Vignettes de référence non générées : PowerPoint indisponible (le navigateur de masques utilise le rendu interne).', 'Reference thumbnails not generated: PowerPoint unavailable (the master browser uses the internal rendering).'));
       for (const l of master.layouts) {
         const li = inv.layouts.find((x) => x.part === l.sourcePart);
         const mi = inv.masters.find((x) => x.part === li?.masterPart);
@@ -160,7 +160,7 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
         if (f && files.includes(f)) l.thumbnail = `thumbnails/${f}`;
       }
     } catch (e) {
-      notes.push(`Vignettes de référence en échec : ${(e as Error).message.split('\n')[0]}`);
+      notes.push(tr(`Vignettes de référence en échec : ${(e as Error).message.split('\n')[0]}`, `Reference thumbnails failed: ${(e as Error).message.split('\n')[0]}`));
     }
   }
 
@@ -179,7 +179,7 @@ export async function importTemplate(templatePath: string, workspaceRoot: string
     await write('slide-masters.md', slideMastersDoc(master)),
   ];
   if (!existsSync(join(outDir, 'style-guide.md'))) files.push(await write('style-guide.md', STYLE_GUIDE_TEMPLATE(master)));
-  log(`Import terminé : ${master.layouts.length} dispositions → ${relative(workspaceRoot, outDir)}`);
+  log(tr(`Import terminé : ${master.layouts.length} dispositions → ${relative(workspaceRoot, outDir)}`, `Import done: ${master.layouts.length} layouts → ${relative(workspaceRoot, outDir)}`));
   return { master, outDir, files, notes };
 }
 

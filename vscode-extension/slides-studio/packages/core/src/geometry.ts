@@ -219,6 +219,9 @@ export function resolveSlide(slide: SlideNode, master: CorporateMaster): Resolve
   return { slide, layout, elements };
 }
 
+/** Effective fit of a picture: placeholder pictures keep their ratio unless told otherwise. */
+export const imageFit = (el: { fit?: 'stretch' | 'contain' | 'cover'; placeholder?: string }): 'stretch' | 'contain' | 'cover' => el.fit ?? (el.placeholder ? 'contain' : 'stretch');
+
 export const intersects = (a: Box, b: Box): boolean =>
   a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 

@@ -1,10 +1,10 @@
-import type { ReactNode } from 'react';
-import { isDiagramSrc, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
+import { useEffect, useState, type ReactNode } from 'react';
+import { isDiagramSrc, paletteTokens, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
-import { AddSlideMenu } from './Panels';
-import { connectMutation, deleteMutations, keepFocus, ParagraphTools, ShapeGallery, stepFontSize } from './Format';
+import { AddSlideMenu, Menu, PaletteMenu } from './Panels';
+import { alignMutations, connectMutation, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
 import { copyFromRibbon, copyStyle, pasteFromRibbon } from './clipboard';
 import { useAnchors, useDiff } from './Review';
 
@@ -124,18 +124,6 @@ function ConnectButton({ disabled }: { disabled?: boolean }) {
   );
 }
 
-/** Bold/italic/underline: on the selected text while editing, else on the whole elements. */
-function useCharFormat(textEls: SlideElement[], style: (p: Partial<ElementStyle>) => void) {
-  const editingId = useEditor((s) => s.editingId);
-  const every = (k: keyof ElementStyle) => textEls.length > 0 && textEls.every((e) => !!e.style?.[k]);
-  const toggle = (k: 'bold' | 'italic' | 'underline') => {
-    // execCommand is deprecated but remains the only native way to format a contentEditable selection.
-    if (editingId) document.execCommand(k);
-    else style({ [k]: every(k) ? null : true } as never);
-  };
-  return { all: (k: keyof ElementStyle) => !editingId && every(k), toggle, editing: !!editingId };
-}
-
 /* ------------------------------------------------------------------ */
 /* Title bar (quick access toolbar)                                    */
 /* ------------------------------------------------------------------ */
@@ -180,23 +168,13 @@ function HomeTab() {
   const doc = useEditor((s) => s.doc);
   const selected = useEditor((s) => s.selected);
   const readOnly = useEditor((s) => s.readOnly);
-  const { mutate } = useEditor.getState();
-  const { addText } = useActions();
-  const els = slide?.elements.filter((e) => selected.includes(e.id)) ?? [];
-  const textEls = els.filter((e) => e.type === 'text' || (e.type === 'shape' && e.shape !== 'line') || e.type === 'table');
-  const style = (patch: Partial<ElementStyle>) => slide && mutate(textEls.map((e) => ({ kind: 'updateElement' as const, slideId: slide.id, elementId: e.id, patch: { style: patch } })));
-  const { all, toggle, editing } = useCharFormat(textEls, style);
-  const order = (direction: 'front' | 'back') => slide && mutate(els.map((e) => ({ kind: 'reorderElement' as const, slideId: slide.id, elementId: e.id, direction })));
-  const noText = readOnly || (!textEls.length && !editing);
-  const master = useEditor((s) => s.master);
   const painter = useEditor((s) => s.painter);
-  const sizes = slide && master ? new Map(resolveSlide(slide, master).elements.map((r) => [r.element.id, r.style.fontSize])) : new Map<string, number>();
-  const size = textEls.length && textEls.every((e) => sizes.get(e.id) === sizes.get(textEls[0]!.id)) ? sizes.get(textEls[0]!.id) : undefined;
-  const resize = (dir: 1 | -1) => slide && mutate(textEls.map((e) => ({ kind: 'updateElement' as const, slideId: slide.id, elementId: e.id, patch: { style: { fontSize: stepFontSize(sizes.get(e.id) ?? 18, dir) } } })));
+  const { mutate } = useEditor.getState();
+  const els = slide?.elements.filter((e) => selected.includes(e.id)) ?? [];
   return (
     <>
-      <Group label="Presse-papiers">
-        <Big icon="paste" label={tr("Coller", "Paste")} testId="paste" disabled={!slide || readOnly} title={tr("Coller (Ctrl+V) : éléments, texte, image ou tableau Excel", "Paste (Ctrl+V): elements, text, picture or Excel table")} onClick={() => void pasteFromRibbon()} />
+      <Group label={tr('Presse-papiers', 'Clipboard')}>
+        <Big icon="paste" label={tr("Coller", "Paste")} testId="paste" disabled={!slide || readOnly} title={tr("Coller (Ctrl+V) : éléments, objets PowerPoint, texte, image ou tableau Excel", "Paste (Ctrl+V): elements, PowerPoint objects, text, picture or Excel table")} onClick={() => void pasteFromRibbon()} />
         <Col>
           <Small icon="cut" label={tr("Couper", "Cut")} testId="cut" disabled={!els.length || readOnly} title={tr("Couper (Ctrl+X)", "Cut (Ctrl+X)")} onClick={() => copyFromRibbon(true)} />
           <Small icon="copy" label={tr("Copier", "Copy")} testId="copy" disabled={!els.length} title={tr("Copier (Ctrl+C)", "Copy (Ctrl+C)")} onClick={() => copyFromRibbon(false)} />
@@ -214,41 +192,207 @@ function HomeTab() {
       <Group label={tr("Diapositives", "Slides")}>
         <AddSlideMenu trigger={(open) => <Big icon="plus" label={tr("Nouvelle diapositive", "New slide")} caret testId="add-slide" disabled={readOnly} onClick={open} />} />
         <Col>
-          <Small icon="copy" label={tr("Dupliquer", "Duplicate")} disabled={!slide || readOnly} onClick={() => slide && doc && mutate([{ kind: 'duplicateSlide', slideId: slide.id, newSlideId: uniqueId(slide.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
+          <Small icon="duplicate" label={tr("Dupliquer", "Duplicate")} disabled={!slide || readOnly} onClick={() => slide && doc && mutate([{ kind: 'duplicateSlide', slideId: slide.id, newSlideId: uniqueId(slide.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
           <Small icon="trash" label={tr("Supprimer", "Delete")} disabled={!slide || readOnly || (doc?.slides.length ?? 0) <= 1} onClick={() => slide && mutate([{ kind: 'deleteSlide', slideId: slide.id }])} />
         </Col>
       </Group>
-      <Group label={tr("Dessin", "Drawing")}>
-        <Big icon="text" label={tr("Zone de texte", "Text box")} testId="add-text" disabled={!slide || readOnly} onClick={addText} />
-        <ShapesMenu big disabled={!slide || readOnly} />
-        <ConnectButton disabled={!slide || readOnly} />
-      </Group>
       <Group label={tr("Police", "Font")}>
-        <Col>
-          <Row>
-            <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={all('bold')} disabled={noText} testId="bold" onClick={() => toggle('bold')} />
-            <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={all('italic')} disabled={noText} testId="italic" onClick={() => toggle('italic')} />
-            <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={all('underline')} disabled={noText} testId="underline" onClick={() => toggle('underline')} />
-            <span className="rb-count" data-testid="font-size">{size !== undefined ? `${size} pt` : '—'}</span>
-            <Small iconOnly icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} disabled={readOnly || !textEls.length} testId="font-grow" onClick={() => resize(1)} />
-            <Small iconOnly icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} disabled={readOnly || !textEls.length} testId="font-shrink" onClick={() => resize(-1)} />
-          </Row>
-          <Row>
-            {(['left', 'center', 'right', 'justify'] as const).map((a) => (
-              <Small key={a} iconOnly icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: tr('Aligner à gauche', 'Align left'), center: tr('Centrer', 'Center'), right: tr('Aligner à droite', 'Align right'), justify: tr('Justifier', 'Justify') }[a]} active={textEls.length > 0 && textEls.every((e) => e.style?.align === a)} disabled={noText} onClick={() => style({ align: a })} />
-            ))}
-          </Row>
-        </Col>
+        <FontTools />
       </Group>
       <Group label={tr("Paragraphe", "Paragraph")}>
         <ParagraphTools disabled={readOnly} />
+        <AlignTools />
       </Group>
       <Group label={tr("Organiser", "Arrange")}>
-        <Col>
-          <Small icon="front" label={tr("Premier plan", "Bring to front")} disabled={readOnly || !els.length} onClick={() => order('front')} />
-          <Small icon="back" label={tr("Arrière-plan", "Send to back")} disabled={readOnly || !els.length} onClick={() => order('back')} />
-        </Col>
+        <ArrangeTools />
       </Group>
+    </>
+  );
+}
+
+/** Text-capable elements of the selection (and the one being edited). */
+function useTextTargets() {
+  const slide = useEditor(currentSlide);
+  const selected = useEditor((s) => s.selected);
+  const editingId = useEditor((s) => s.editingId);
+  const ids = editingId ? [editingId] : selected;
+  const els = slide?.elements.filter((e) => ids.includes(e.id) && (e.type === 'text' || (e.type === 'shape' && e.shape !== 'line') || e.type === 'table')) ?? [];
+  const style = (patch: Partial<Record<keyof ElementStyle, unknown>>) => slide && els.length && useEditor.getState().mutate(els.map((e) => ({ kind: 'updateElement' as const, slideId: slide.id, elementId: e.id, patch: { style: patch } })));
+  return { slide, els, style, editing: !!editingId };
+}
+
+/** Re-render when the text selection moves (font size / marks shown for the selection). */
+function useSelectionTick() {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const on = () => setTick((t) => t + 1);
+    document.addEventListener('selectionchange', on);
+    return () => document.removeEventListener('selectionchange', on);
+  }, []);
+}
+
+/**
+ * Font group. While editing, size / color / clear apply to the selected characters (runs); with
+ * a caret only, or on selected elements, they set the element style.
+ */
+function FontTools() {
+  useSelectionTick();
+  const master = useEditor((s) => s.master);
+  const readOnly = useEditor((s) => s.readOnly);
+  const { slide, els, style, editing } = useTextTargets();
+  const ed = editing ? inlineEditor.current : null;
+  const runs = !!ed?.hasSelection();
+  const resolved = slide && master ? new Map(resolveSlide(slide, master).elements.map((r) => [r.element.id, r.style])) : new Map();
+  const first = els[0] ? resolved.get(els[0].id) : undefined;
+  const size = (ed?.formatCells && !ed.hasSelection() ? ed.cellStyle?.()?.size : undefined) ?? (runs || editing ? ed?.selectionSize() : null) ?? (els.length && els.every((e) => resolved.get(e.id)?.fontSize === first?.fontSize) ? first?.fontSize : undefined);
+  const off = readOnly || !els.length;
+  // In a table: selected characters → runs; otherwise the selected cells (never the whole table).
+  const cells = !runs && ed?.formatCells ? ed : null;
+  const cellLook = cells?.cellStyle?.() ?? null;
+  const setSize = (v: number) => (runs ? ed!.format({ size: v }) : cells ? cells.formatCells!({ size: v }) : style({ fontSize: v }));
+  const setColor = (v: string | null) => (runs ? ed!.format({ color: v }) : cells ? cells.formatCells!({ color: v }) : style({ color: v }));
+  const toggle = (k: 'bold' | 'italic' | 'underline') => {
+    if (cells) return cells.formatCells!({ [k]: cellLook?.[k] ? null : true });
+    // execCommand is deprecated but remains the only native way to format a contentEditable selection.
+    if (editing) document.execCommand(k);
+    else style({ [k]: els.every((e) => !!e.style?.[k]) ? null : true });
+  };
+  const on = (k: 'bold' | 'italic' | 'underline') => {
+    if (cells) return !!cellLook?.[k];
+    if (editing) {
+      try {
+        return document.queryCommandState(k);
+      } catch {
+        return false;
+      }
+    }
+    return els.length > 0 && els.every((e) => !!e.style?.[k]);
+  };
+  const fonts = master ? [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])] : [];
+  const face = els[0]?.style?.fontFace;
+  const faceLabel = face === 'theme.heading' ? master?.theme.fonts.heading : face === 'theme.body' ? master?.theme.fonts.body : face ?? first?.fontFace ?? '—';
+  const color = els[0]?.style?.color;
+  const colorHex = master && color ? (color.startsWith('theme.') ? paletteTokens(master).find((t) => t.token === color)?.hex : color.replace('#', '')) : undefined;
+  return (
+    <div className="rb-col">
+      <div className="rb-row">
+        <Menu testId="font-face-menu" trigger={(open) => (
+          <button type="button" className="rb-small rb-field rb-face" disabled={off} onMouseDown={keepFocus} onClick={open} title={tr('Police', 'Font')} data-testid="font-face">
+            <span>{faceLabel}</span> <Icon name="chevronDown" size={10} />
+          </button>
+        )}>
+          {(close) => (
+            <>
+              <button type="button" role="menuitem" className="menu-item" onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: null }))}>{tr('Police de la disposition', 'Layout font')}</button>
+              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.heading }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: 'theme.heading' }))}>{tr('Titres', 'Headings')} — {master.theme.fonts.heading}</button>}
+              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.body }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: 'theme.body' }))}>{tr('Corps', 'Body')} — {master.theme.fonts.body}</button>}
+              {fonts.map((f) => <button key={f} type="button" role="menuitem" className="menu-item" style={{ fontFamily: f }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: f }))}>{f}</button>)}
+            </>
+          )}
+        </Menu>
+        <Menu testId="font-size-menu" trigger={(open) => (
+          <button type="button" className="rb-small rb-field rb-size" disabled={off} onMouseDown={keepFocus} onClick={open} title={tr('Taille de police', 'Font size')} data-testid="font-size">
+            <span>{size !== undefined && size !== null ? `${size} pt` : '—'}</span> <Icon name="chevronDown" size={10} />
+          </button>
+        )}>
+          {(close) => FONT_SIZES.map((v) => (
+            <button key={v} type="button" role="menuitem" className={`menu-item${v === size ? ' is-current' : ''}`} onMouseDown={keepFocus} onClick={() => (close(), setSize(v))}>{v} pt</button>
+          ))}
+        </Menu>
+        <Small iconOnly icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} disabled={off} testId="font-grow" onClick={() => setSize(stepFontSize(size ?? 18, 1))} />
+        <Small iconOnly icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} disabled={off} testId="font-shrink" onClick={() => setSize(stepFontSize(size ?? 18, -1))} />
+      </div>
+      <div className="rb-row">
+        <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={on('bold')} disabled={off} testId="bold" onClick={() => toggle('bold')} />
+        <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={on('italic')} disabled={off} testId="italic" onClick={() => toggle('italic')} />
+        <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={on('underline')} disabled={off} testId="underline" onClick={() => toggle('underline')} />
+        <PaletteMenu
+          testId="color-text-menu"
+          value={runs ? undefined : cells ? (cellLook?.color ?? undefined) : color}
+          onChange={setColor}
+          trigger={(open) => (
+            <button type="button" className="rb-small icon-only rb-swatch" disabled={off} onMouseDown={keepFocus} onClick={open} title={runs ? tr('Couleur du texte sélectionné', 'Color of the selected text') : tr('Couleur du texte', 'Text color')} aria-label={tr('Couleur du texte', 'Text color')} data-testid="color-text">
+              <Icon name="text" />
+              <span className="rb-swatch-bar" style={{ background: colorHex ? `#${colorHex}` : 'var(--fg)' }} />
+            </button>
+          )}
+        />
+        <Small iconOnly icon="clearFormat" label={tr("Effacer la mise en forme", "Clear formatting")} disabled={off} testId="clear-format" onClick={() => (runs ? ed!.format('clear') : ed?.formatCells ? ed.formatCells('clear') : style({ bold: null, italic: null, underline: null, color: null, fontSize: null, fontFace: null }))} />
+      </div>
+    </div>
+  );
+}
+
+/** Horizontal and vertical text alignment of the text elements. */
+function AlignTools() {
+  const readOnly = useEditor((s) => s.readOnly);
+  const master = useEditor((s) => s.master);
+  useSelectionTick();
+  const { slide, els, style: elStyle, editing } = useTextTargets();
+  const ed = editing ? inlineEditor.current : null;
+  const resolved = slide && master ? new Map(resolveSlide(slide, master).elements.map((r) => [r.element.id, r.style])) : new Map();
+  const look = ed?.formatCells ? ed.cellStyle?.() : undefined;
+  const style = (p: { align?: string; valign?: string }) => (ed?.formatCells ? ed.formatCells(p) : elStyle(p));
+  const all = (k: 'align' | 'valign', v: string) => (look !== undefined ? (look?.[k] ?? (k === 'valign' ? 'middle' : 'left')) === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.[k] === v));
+  const off = readOnly || !els.length;
+  return (
+    <div className="rb-col">
+      <div className="rb-row">
+        {(['left', 'center', 'right', 'justify'] as const).map((a) => (
+          <Small key={a} iconOnly icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: tr('Aligner à gauche', 'Align left'), center: tr('Centrer', 'Center'), right: tr('Aligner à droite', 'Align right'), justify: tr('Justifier', 'Justify') }[a]} active={all('align', a)} disabled={off} testId={`text-align-${a}`} onClick={() => style({ align: a })} />
+        ))}
+      </div>
+      <div className="rb-row">
+        {(['top', 'middle', 'bottom'] as const).map((a) => (
+          <Small key={a} iconOnly icon={a === 'top' ? 'vTop' : a === 'middle' ? 'vMiddle' : 'vBottom'} label={{ top: tr('Texte en haut', 'Text at top'), middle: tr('Texte au milieu', 'Text in the middle'), bottom: tr('Texte en bas', 'Text at bottom') }[a]} active={all('valign', a)} disabled={off} testId={`text-valign-${a}`} onClick={() => style({ valign: a })} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Stacking order and alignment of the selection (single element: against the slide). */
+function ArrangeTools() {
+  const slide = useEditor(currentSlide);
+  const master = useEditor((s) => s.master);
+  const selected = useEditor((s) => s.selected);
+  const readOnly = useEditor((s) => s.readOnly);
+  const { mutate } = useEditor.getState();
+  const rs = slide && master ? resolveSlide(slide, master).elements.filter((r) => selected.includes(r.element.id)) : [];
+  const off = readOnly || !rs.length || !slide || !master;
+  const order = (direction: 'front' | 'forward' | 'backward' | 'back') => slide && mutate(rs.map((r) => ({ kind: 'reorderElement' as const, slideId: slide.id, elementId: r.element.id, direction })));
+  const align = (mode: AlignMode) => slide && master && mutate(alignMutations(slide.id, rs, mode, { w: master.dimensions.width, h: master.dimensions.height }));
+  const item = (icon: IconName, label: string, run: () => void, close: () => void, testId?: string) => (
+    <button key={label} type="button" role="menuitem" className="menu-item" data-testid={testId} onMouseDown={keepFocus} onClick={() => (close(), run())}>
+      <Icon name={icon} /> {label}
+    </button>
+  );
+  return (
+    <>
+      <Menu testId="order-menu" trigger={(open) => <Big icon="layers" label={tr('Ordre', 'Order')} caret disabled={off} testId="order" onClick={open} />}>
+        {(close) => (
+          <>
+            {item('front', tr('Mettre au premier plan', 'Bring to front'), () => order('front'), close, 'order-front')}
+            {item('forward', tr('Avancer', 'Bring forward'), () => order('forward'), close)}
+            {item('backward', tr('Reculer', 'Send backward'), () => order('backward'), close)}
+            {item('back', tr('Mettre à l’arrière-plan', 'Send to back'), () => order('back'), close, 'order-back')}
+          </>
+        )}
+      </Menu>
+      <Menu testId="align-menu" trigger={(open) => <Big icon="alignCenter" label={rs.length > 1 ? tr('Aligner', 'Align') : tr('Aligner sur la diapositive', 'Align to slide')} caret disabled={off} testId="align" onClick={open} />}>
+        {(close) => (
+          <>
+            {item('alignLeft', tr('Aligner à gauche', 'Align left'), () => align('left'), close, 'align-left')}
+            {item('alignCenter', tr('Centrer horizontalement', 'Center horizontally'), () => align('hcenter'), close)}
+            {item('alignRight', tr('Aligner à droite', 'Align right'), () => align('right'), close)}
+            {item('vTop', tr('Aligner en haut', 'Align top'), () => align('top'), close)}
+            {item('vMiddle', tr('Centrer verticalement', 'Center vertically'), () => align('vcenter'), close)}
+            {item('vBottom', tr('Aligner en bas', 'Align bottom'), () => align('bottom'), close)}
+            {rs.length >= 3 && item('alignJustify', tr('Répartir horizontalement', 'Distribute horizontally'), () => align('hdistribute'), close)}
+            {rs.length >= 3 && item('alignJustify', tr('Répartir verticalement', 'Distribute vertically'), () => align('vdistribute'), close)}
+          </>
+        )}
+      </Menu>
     </>
   );
 }
@@ -260,9 +404,6 @@ function InsertTab() {
   const off = !slide || readOnly;
   return (
     <>
-      <Group label={tr("Diapositives", "Slides")}>
-        <AddSlideMenu trigger={(open) => <Big icon="plus" label={tr("Nouvelle diapositive", "New slide")} caret testId="add-slide" disabled={readOnly} onClick={open} />} />
-      </Group>
       <Group label={tr("Éléments", "Elements")}>
         <Big icon="text" label={tr("Zone de texte", "Text box")} testId="add-text" disabled={off} onClick={addText} />
         <ShapesMenu big disabled={off} />
@@ -353,6 +494,8 @@ function ViewTab() {
   const showGrid = useEditor((s) => s.showGrid);
   const snap = useEditor((s) => s.snap);
   const notesOpen = useEditor((s) => s.notesOpen);
+  const showHidden = useEditor((s) => s.showHidden);
+  const hiddenCount = useEditor((s) => currentSlide(s)?.elements.filter((e) => e.hidden).length ?? 0);
   const zoom = useEditor((s) => s.zoom);
   const doc = useEditor((s) => s.doc);
   const { toggleGrid, toggleSnap, set, setZoom } = useEditor.getState();
@@ -364,6 +507,14 @@ function ViewTab() {
         <Col>
           <Small icon="grid" label={tr("Grille", "Grid")} active={showGrid} onClick={toggleGrid} />
           <Small icon="magnet" label={tr("Magnétisme", "Snap")} active={snap} title={tr("Magnétisme (Alt pour ignorer)", "Snap (Alt to ignore)")} onClick={toggleSnap} />
+          <Small
+            icon={showHidden ? 'eye' : 'eyeOff'}
+            label={`${tr('Objets masqués', 'Hidden objects')}${hiddenCount ? ` (${hiddenCount})` : ''}`}
+            active={showHidden}
+            testId="toggle-hidden"
+            title={tr('Afficher en transparence les éléments masqués de la diapositive pour les sélectionner et les réafficher', 'Show the slide’s hidden elements ghosted, to select and unhide them')}
+            onClick={() => set({ showHidden: !showHidden })}
+          />
         </Col>
       </Group>
       <Group label="Zoom">
@@ -381,56 +532,26 @@ function ViewTab() {
   );
 }
 
+/** Contextual "Diagram" tab: actions of a Graph Model Studio diagram (its properties stay in the inspector). */
 function FormatTab() {
   const slide = useEditor(currentSlide);
   const selected = useEditor((s) => s.selected);
-  const readOnly = useEditor((s) => s.readOnly);
-  const { mutate, select } = useEditor.getState();
   const els = slide?.elements.filter((e) => selected.includes(e.id)) ?? [];
   const one = els.length === 1 ? els[0]! : null;
   const diagram = one?.type === 'image' && isDiagramSrc(one.src) ? one : null;
-  if (!slide || !els.length) return null;
-  const order = (direction: 'front' | 'forward' | 'backward' | 'back') => mutate(els.map((e) => ({ kind: 'reorderElement' as const, slideId: slide.id, elementId: e.id, direction })));
+  if (!diagram) return null;
   return (
-    <>
-      {diagram && (
-        <Group label="Graph Model Studio">
-          <Big icon="diagram" label={tr("Modifier le diagramme", "Edit diagram")} testId="edit-gmc" title={tr("Éditeur interactif Graph Model Studio (double-clic sur le diagramme)", "Interactive Graph Model Studio editor (double-click the diagram)")} onClick={() => useEditor.getState().set({ gmcEdit: diagram.src })} />
-          <Col>
-            <Small icon="refresh" label={tr("Actualiser le rendu", "Refresh rendering")} onClick={() => post({ type: 'refreshGmc', src: diagram.src })} />
-            <Small icon="external" label={tr("Ouvrir à côté", "Open to the side")} onClick={() => post({ type: 'editGmc', src: diagram.src })} />
-            <span className="rb-note"><code>{diagram.src}</code></span>
-          </Col>
-        </Group>
-      )}
-      <Group label={tr("Organiser", "Arrange")}>
-        <Col>
-          <Small icon="front" label={tr("Premier plan", "Bring to front")} disabled={readOnly} onClick={() => order('front')} />
-          <Small icon="forward" label={tr("Avancer", "Bring forward")} disabled={readOnly} onClick={() => order('forward')} />
-        </Col>
-        <Col>
-          <Small icon="backward" label={tr("Reculer", "Send backward")} disabled={readOnly} onClick={() => order('backward')} />
-          <Small icon="back" label={tr("Arrière-plan", "Send to back")} disabled={readOnly} onClick={() => order('back')} />
-        </Col>
-      </Group>
-      {one && (
-        <Group label={tr("Élément", "Element")}>
-          <Col>
-            <Small icon={one.locked ? 'lock' : 'unlock'} label={one.locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock')} active={one.locked} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { locked: !one.locked } }])} />
-            <Small icon={one.hidden ? 'eyeOff' : 'eye'} label={one.hidden ? tr('Afficher', 'Show') : tr('Masquer', 'Hide')} active={one.hidden} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { hidden: !one.hidden } }])} />
-          </Col>
-          <Col>
-            <Small icon="code" label={tr("Voir dans la source", "Show in source")} onClick={() => post({ type: 'reveal', slideId: slide.id, elementId: one.id })} />
-            <Small icon="trash" label={tr("Supprimer", "Delete")} disabled={readOnly} onClick={() => (mutate(deleteMutations(slide, [one.id])), select(slide.id, []))} />
-          </Col>
-        </Group>
-      )}
-    </>
+    <Group label="Graph Model Studio">
+      <Big icon="diagram" label={tr("Modifier le diagramme", "Edit diagram")} testId="edit-gmc" title={tr("Éditeur interactif Graph Model Studio (double-clic sur le diagramme)", "Interactive Graph Model Studio editor (double-click the diagram)")} onClick={() => useEditor.getState().set({ gmcEdit: diagram.src })} />
+      <Col>
+        <Small icon="refresh" label={tr("Actualiser le rendu", "Refresh rendering")} onClick={() => post({ type: 'refreshGmc', src: diagram.src })} />
+        <Small icon="external" label={tr("Ouvrir à côté", "Open to the side")} onClick={() => post({ type: 'editGmc', src: diagram.src })} />
+        <span className="rb-note"><code>{diagram.src}</code></span>
+      </Col>
+    </Group>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Ribbon                                                              */
 /* ------------------------------------------------------------------ */
 
 export function Ribbon() {
@@ -442,8 +563,8 @@ export function Ribbon() {
   const anchors = useAnchors();
   const { set } = useEditor.getState();
   const els = slide?.elements.filter((e) => selected.includes(e.id)) ?? [];
-  const contextual = els.length > 0;
   const isDiagram = els.length === 1 && els[0]!.type === 'image' && isDiagramSrc(els[0]!.src);
+  const contextual = isDiagram;
   const active: RibbonTab = tab === 'format' && !contextual ? 'home' : tab;
   const open = anchors.filter((a) => !a.thread.resolved).length;
 
@@ -475,7 +596,7 @@ export function Ribbon() {
         ))}
         {contextual && (
           <button type="button" role="tab" aria-selected={active === 'format'} className={`tab tab-contextual${active === 'format' ? ' is-active' : ''}`} data-testid="tab-format" onClick={() => set({ tab: 'format' })} onDoubleClick={() => set({ ribbonCollapsed: !collapsed })}>
-            {isDiagram ? tr('Diagramme', 'Diagram') : 'Format'}
+            {tr('Diagramme', 'Diagram')}
           </button>
         )}
         <span className="grow" />

@@ -133,10 +133,13 @@ describe('Markdown parsing', () => {
     expect(text.replace(/# Principes.*\n/, '')).toBe(MD.replace(/# Integration.*\n/, ''));
   });
 
-  it('refuses (never drops) run formatting Markdown cannot represent', () => {
-    expect(() =>
-      applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs: [{ text: 'x', color: 'theme.accent1' }] }] } }]),
-    ).toThrow(/DSL/);
+  it('moves an element to the frontmatter when its runs need colors or sizes (never drops them)', () => {
+    const runs = [{ text: 'x', color: 'theme.accent1' as const }, { text: 'y', size: 40 }];
+    const text = applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs }] } }]);
+    expect(text).not.toContain('{#main-title}');
+    const el = parseSource(text, 'markdown').doc.slides.find((s) => s.id === 'slide-2')!.elements.find((e) => e.id === 'main-title')!;
+    expect(el.type === 'text' && el.paragraphs[0]!.runs).toEqual(runs);
+    expect(el.placeholder).toBe('title');
   });
 
   it('stores geometry and style edits as frontmatter overrides', () => {

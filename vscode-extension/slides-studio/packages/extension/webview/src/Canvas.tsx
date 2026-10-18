@@ -20,12 +20,13 @@ import {
   type TextRun,
   tr,
 } from '@corporate-slides/core';
-import { PPI, SlideView, textBoxStyle, type AssetResolver } from '@corporate-slides/renderer';
+import { PPI, SlideView, textBoxStyle, tokenHex, type AssetResolver } from '@corporate-slides/renderer';
 import { currentSlide, useEditor } from './store';
 import { useAnchors, useDiff } from './Review';
 import { Icon } from './icons';
-import { connectMutation, deleteMutations, duplicateMutations, inlineEditor } from './Format';
+import { connectMutation, deleteMutations, duplicateMutations, inlineEditor, type RunFormat } from './Format';
 import { TableEditor } from './TableEditor';
+import { AdjustHandles } from './Adjust';
 import { post } from './host';
 
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
@@ -83,6 +84,7 @@ export function Canvas() {
   const editingId = useEditor((s) => s.editingId);
   const zoomSetting = useEditor((s) => s.zoom);
   const showGrid = useEditor((s) => s.showGrid);
+  const showHidden = useEditor((s) => s.showHidden);
   const snap = useEditor((s) => s.snap);
   const readOnly = useEditor((s) => s.readOnly);
   const showDiff = useEditor((s) => s.showDiff);
@@ -103,6 +105,8 @@ export function Canvas() {
   /** Element created by double-clicking a placeholder: removed again if left empty. */
   const fresh = useRef<string | null>(null);
   const connectFrom = useEditor((s) => s.connectFrom);
+  /** Rubber-band selection rectangle, in slide inches. */
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   /** Element under a dragged connector end: its outline and snap points are shown. */
   const [endTarget, setEndTarget] = useState<string | null>(null);
 
@@ -317,6 +321,45 @@ export function Canvas() {
     else cancelPreview();
   };
 
+  /**
+   * Rubber-band selection: elements entirely inside the rectangle are selected (added to the
+   * selection with Ctrl / Shift). A Ctrl+click without drag toggles the element under the pointer.
+   */
+  const startMarquee = (e: React.PointerEvent, additive: boolean) => {
+    if (!slide || !resolved) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const frame = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const at = (cx: number, cy: number) => ({ x: (cx - frame.left) / zoom / PPI, y: (cy - frame.top) / zoom / PPI });
+    const p0 = at(e.clientX, e.clientY);
+    const sx = e.clientX, sy = e.clientY;
+    const base = additive ? useEditor.getState().selected : [];
+    const hitId = (e.target as HTMLElement).closest<HTMLElement>('[data-element-id]')?.dataset.elementId;
+    let moved = false;
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 4) return;
+      moved = true;
+      const p = at(ev.clientX, ev.clientY);
+      const r = { x0: Math.min(p0.x, p.x), y0: Math.min(p0.y, p.y), x1: Math.max(p0.x, p.x), y1: Math.max(p0.y, p.y) };
+      setMarquee(r);
+      const inside = resolved.elements.filter((x) => !x.element.hidden && x.box.x >= r.x0 && x.box.y >= r.y0 && x.box.x + x.box.w <= r.x1 && x.box.y + x.box.h <= r.y1).map((x) => x.element.id);
+      select(slide.id, [...new Set([...base, ...inside])]);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      document.body.classList.remove('is-marquee');
+      setMarquee(null);
+      if (!moved && hitId && additive) {
+        const cur = useEditor.getState().selected;
+        select(slide.id, cur.includes(hitId) ? cur.filter((x) => x !== hitId) : [...cur, hitId]);
+      }
+    };
+    document.body.classList.add('is-marquee');
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+
   /* ------------------------------ keyboard ------------------------------ */
 
   useEffect(() => {
@@ -481,6 +524,7 @@ export function Canvas() {
                   />
                 );
               })}
+            {single && <AdjustHandles r={r} zoom={zoom} />}
             {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>{tr('verrouillé', 'locked')}</span>}
             {fit?.overflows && (
               <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title={tr("Estimation : le texte risque de déborder dans PowerPoint", "Estimate: the text may overflow in PowerPoint")}>
@@ -490,6 +534,9 @@ export function Canvas() {
           </div>
         );
       })}
+      {marquee && (
+        <div className="marquee" data-testid="marquee" style={{ left: marquee.x0 * PPI, top: marquee.y0 * PPI, width: (marquee.x1 - marquee.x0) * PPI, height: (marquee.y1 - marquee.y0) * PPI, borderWidth: stroke }} />
+      )}
       {endTarget && byId.get(endTarget) && (() => {
         const b = byId.get(endTarget)!.box;
         const dots = [[0, 0], [0.5, 0], [1, 0], [1, 0.5], [1, 1], [0.5, 1], [0, 1], [0, 0.5]] as const;
@@ -565,8 +612,14 @@ export function Canvas() {
           style={{ width: W * PPI * zoom, height: H * PPI * zoom }}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerDownCapture={(e) => {
+            // Ctrl + drag draws a selection rectangle anywhere, even starting on an element.
+            if ((e.ctrlKey || e.metaKey) && e.button === 0 && !editingId && connectFrom === null) startMarquee(e, true);
+          }}
           onPointerDown={(e) => {
-            if (!(e.target as HTMLElement).closest('[data-element-id]')) select(slide.id, []);
+            if ((e.target as HTMLElement).closest('[data-element-id], [data-handle], .connector-end')) return;
+            if (!e.shiftKey) select(slide.id, []);
+            if (e.button === 0 && connectFrom === null) startMarquee(e, e.shiftKey);
           }}
           onDoubleClick={(e) => {
             if (readOnly || connectFrom !== null || (e.target as HTMLElement).closest('[data-element-id]')) return;
@@ -592,6 +645,7 @@ export function Canvas() {
               metadata={doc.metadata}
               slideNumber={slideIndex + 1}
               showPlaceholders
+              showHidden={showHidden}
               editingId={editingId}
               renderEditor={(r) => r.element.type === 'table' ? <TableEditor r={r} onDone={(patch) => {
                 setEditing(null);
@@ -627,7 +681,7 @@ export function Canvas() {
 
 /* ------------------------------ inline text editing ------------------------------ */
 
-type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string };
+type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string; size?: number };
 
 /** Paragraph DOM of the editor → canonical paragraphs (runs keep bold/italic/underline/color). */
 function readParagraphs(root: HTMLElement): Paragraph[] {
@@ -659,6 +713,7 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         if (m.italic) run.italic = true;
         if (m.underline) run.underline = true;
         if (m.color) run.color = m.color as TextRun['color'];
+        if (m.size) run.size = m.size;
         cur.runs.push(run);
         return;
       }
@@ -674,6 +729,7 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         italic: m.italic || n.tagName === 'I' || n.tagName === 'EM' || st.fontStyle === 'italic',
         underline: m.underline || n.tagName === 'U' || st.textDecoration.includes('underline'),
         color: n.dataset.color ?? m.color,
+        size: n.dataset.size ? Number(n.dataset.size) : m.size,
       };
       // Chrome splits paragraphs with nested <div>s when Enter is pressed inside a block.
       const nested = n !== block && (n.tagName === 'DIV' || n.tagName === 'P');
@@ -693,12 +749,66 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
   return out.length ? out : [{ runs: [] }];
 }
 
-function RunView({ run }: { run: TextRun }) {
+export function RunView({ run, hex }: { run: TextRun; hex: (token: string) => string | null }) {
   let node: ReactNode = run.text;
   if (run.underline) node = <u>{node}</u>;
   if (run.italic) node = <i>{node}</i>;
   if (run.bold) node = <b>{node}</b>;
-  return run.color ? <span data-color={run.color}>{node}</span> : <>{node}</>;
+  if (run.size) node = <span data-size={run.size} style={{ fontSize: (run.size / 72) * PPI }}>{node}</span>;
+  return run.color ? <span data-color={run.color} style={{ color: hex(run.color) ? `#${hex(run.color)}` : undefined }}>{node}</span> : <>{node}</>;
+}
+
+
+/**
+ * Apply size / color to the selected text (wrapping each selected piece of each line in a span), or
+ * strip every mark. Bold / italic / underline go through the native commands, which toggle.
+ */
+export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: string) => string | null): boolean {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount || sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.commonAncestorContainer)) return false;
+  if (f !== 'clear' && (f.bold !== undefined || f.italic !== undefined || f.underline !== undefined)) {
+    document.execCommand(f.bold !== undefined ? 'bold' : f.italic !== undefined ? 'italic' : 'underline');
+    return true;
+  }
+  // Text boxes have one block per paragraph; a table cell is a single line.
+  const lines = root.querySelector(':scope > [data-line]') ? [...root.children].filter((l) => range.intersectsNode(l)) : [root];
+  const made: Node[] = [];
+  for (const line of lines) {
+    const r = document.createRange();
+    r.selectNodeContents(line);
+    if (line.contains(range.startContainer)) r.setStart(range.startContainer, range.startOffset);
+    if (line.contains(range.endContainer)) r.setEnd(range.endContainer, range.endOffset);
+    if (r.collapsed) continue;
+    const frag = r.extractContents();
+    let node: Node;
+    if (f === 'clear') node = document.createTextNode(frag.textContent ?? '');
+    else {
+      const key = f.size !== undefined ? 'size' : 'color';
+      const value = key === 'size' ? f.size : f.color;
+      // The new value replaces the same mark inside the selection; null only removes it.
+      frag.querySelectorAll<HTMLElement>(`[data-${key}]`).forEach((el) => el.replaceWith(...el.childNodes));
+      const span = document.createElement('span');
+      if (value !== null && value !== undefined) {
+        span.dataset[key] = String(value);
+        if (key === 'size') span.style.fontSize = `${(Number(value) / 72) * PPI}px`;
+        else if (hex(String(value))) span.style.color = `#${hex(String(value))}`;
+      }
+      span.append(frag);
+      node = span;
+    }
+    r.insertNode(node);
+    made.push(node);
+  }
+  if (made.length) {
+    const nr = document.createRange();
+    nr.setStartBefore(made[0]!);
+    nr.setEndAfter(made[made.length - 1]!);
+    sel.removeAllRanges();
+    sel.addRange(nr);
+  }
+  return true;
 }
 
 function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph[] | null) => void }) {
@@ -711,6 +821,19 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
   /** Paragraph index to put the caret in after a re-render (paragraph tools). */
   const caretAt = useRef<number | null>(null);
   const remounting = useRef(false);
+  /** Selection kept while the text context menu has focus. */
+  const savedRange = useRef<Range | null>(null);
+  const master = useEditor((s) => s.master);
+  const hex = (token: string) => (master ? tokenHex(token, master) : token.startsWith('#') ? token.slice(1) : null);
+  const restoreRange = () => {
+    const el = ref.current;
+    if (!el || !savedRange.current) return;
+    el.focus();
+    const s = window.getSelection();
+    s?.removeAllRanges();
+    s?.addRange(savedRange.current);
+    savedRange.current = null;
+  };
 
   const commit = () => {
     const el = ref.current ?? lastEl.current;
@@ -754,6 +877,27 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
         };
         const a = indexOf(sel?.anchorNode), f = indexOf(sel?.focusNode);
         return { paragraphs, from: Math.min(a, f), to: Math.max(a, f) };
+      },
+      format(f) {
+        const el = ref.current;
+        if (!el) return false;
+        restoreRange();
+        return formatSelection(el, f, hex);
+      },
+      saveRange() {
+        const s = window.getSelection();
+        savedRange.current = s?.rangeCount && ref.current?.contains(s.getRangeAt(0).commonAncestorContainer) ? s.getRangeAt(0).cloneRange() : null;
+      },
+      restoreRange,
+      hasSelection() {
+        const s = window.getSelection();
+        return !!s && !s.isCollapsed && !!ref.current?.contains(s.anchorNode);
+      },
+      selectionSize() {
+        const s = window.getSelection();
+        const n = s?.anchorNode;
+        const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
+        return el && ref.current?.contains(el) ? Math.round((parseFloat(getComputedStyle(el).fontSize) * 72 / PPI) * 2) / 2 : null;
       },
       replace(next) {
         const sel = window.getSelection();
@@ -826,14 +970,23 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
       spellCheck
       data-testid="inline-editor"
       style={{ ...textBoxStyle(r), outline: 'none', cursor: 'text', whiteSpace: 'pre-wrap' }}
-      onBlur={() => !remounting.current && commit()}
+      onBlur={() => !remounting.current && useEditor.getState().contextMenu?.target !== 'text' && commit()}
+      onContextMenu={(e) => {
+        // A text selection gets its own menu (font, size, color…); a bare caret keeps the native one.
+        const s = window.getSelection();
+        if (!s || s.isCollapsed) return;
+        e.preventDefault();
+        e.stopPropagation();
+        inlineEditor.current?.saveRange();
+        useEditor.getState().set({ contextMenu: { x: e.clientX, y: e.clientY, target: 'text' } });
+      }}
       onKeyDown={onKeyDown}
       onPointerDown={(e) => e.stopPropagation()}
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {paras.map((p, i) => (
         <div key={i} data-line="" data-list={p.list} data-level={p.level} data-heading={p.heading} data-marker={marker(p)} style={lineStyle(p)}>
-          {p.runs.length ? p.runs.map((run, k) => <RunView key={k} run={run} />) : <br />}
+          {p.runs.length ? p.runs.map((run, k) => <RunView key={k} run={run} hex={hex} />) : <br />}
         </div>
       ))}
     </div>

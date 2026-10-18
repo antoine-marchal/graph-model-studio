@@ -3,6 +3,7 @@ import {
   round4,
   uniqueId,
   type ArrowHead,
+  type CellStyle,
   type ConnectorSide,
   type ElementPatch,
   type Mutation,
@@ -54,6 +55,7 @@ export const SHAPE_GROUPS: { label: string; shapes: { shape: ShapeKind; label: s
       { shape: 'upArrow', label: tr('Flèche haut', 'Up arrow') },
       { shape: 'downArrow', label: tr('Flèche bas', 'Down arrow') },
       { shape: 'leftRightArrow', label: tr('Double flèche', 'Double arrow') },
+      { shape: 'circularArrow', label: tr('Flèche circulaire (boucle)', 'Circular arrow (loop)') },
       { shape: 'chevron', label: tr('Chevron (étape)', 'Chevron (step)') },
       { shape: 'homePlate', label: tr('Pentagone flèche (jalon)', 'Pentagon arrow (milestone)') },
     ],
@@ -197,10 +199,24 @@ export const inlineEditor: {
     /** Current paragraphs and the indexes of the paragraphs touched by the caret/selection. */
     read(): { paragraphs: Paragraph[]; from: number; to: number };
     replace(paragraphs: Paragraph[]): void;
+    /** Apply run marks to the selected text (restoring the selection kept by `saveRange`). */
+    format(f: RunFormat): boolean;
+    saveRange(): void;
+    restoreRange(): void;
+    hasSelection(): boolean;
+    /** Font size (pt) at the caret / selection start. */
+    selectionSize(): number | null;
+    /** Table editing: apply a cell look to the selected cells (no characters selected). */
+    formatCells?(patch: Partial<Record<keyof CellStyle, unknown>> | 'clear'): void;
+    /** Table editing: look of the active cell, for the ribbon states. */
+    cellStyle?(): CellStyle | null;
   } | null;
 } = { current: null };
 
-const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
+/** Text-run marks the ribbon and the text context menu apply to the selection of the inline editor. */
+export type RunFormat = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string | null; size?: number | null } | 'clear';
+
+export const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
 
 /** Next / previous size on the Office font-size scale. */
 export const stepFontSize = (pt: number, dir: 1 | -1): number =>
@@ -460,9 +476,21 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
         </Section>
       )}
 
+      {(el.type === 'text' || (el.type === 'shape' && !isLine)) && (
+        <Section title={tr('Remplissage', 'Fill')}>
+          <ColorPicker label={el.type === 'text' ? tr('Fond', 'Background') : tr('Couleur', 'Color')} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />
+          {el.type === 'shape' && (
+            <label className="field">
+              <span>{tr('Transparence', 'Transparency')} · {r.style.transparency} %</span>
+              <Slider value={r.style.transparency} min={0} max={100} step={5} label={tr("Transparence", "Transparency")} onPreview={(v) => preview({ transparency: v })} onCommit={(v) => style('transparency', v || null)} />
+            </label>
+          )}
+        </Section>
+      )}
+
       {(
         <Section title={isLine ? tr('Trait', 'Line') : tr('Contour', 'Outline')}>
-          <ColorPicker label={isLine ? tr('Couleur du trait', 'Line color') : tr('Couleur du contour', 'Outline color')} value={el.style?.line} onChange={(v) => style('line', v)} allowNone={!isLine} testId="color-line" />
+          <ColorPicker label={tr('Couleur', 'Color')} value={el.style?.line} onChange={(v) => style('line', v)} allowNone={!isLine} testId="color-line" />
           <div className="row">
             <NumField label={tr('Ép.', 'W.')} unit="pt" step={0.25} value={el.type === 'table' ? (el.style?.lineWidth ?? 0.5) : r.style.lineWidth} onCommit={(v) => style('lineWidth', Math.max(0, v))} testId="field-line-width" />
             <div className="seg" role="radiogroup" aria-label={tr('Type de trait', 'Dash type')}>
@@ -488,12 +516,6 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
                 </select>
               </label>
             </div>
-          )}
-          {!isLine && (
-            <label className="field">
-              <span>{tr('Transparence du remplissage', 'Fill transparency')}</span>
-              <Slider value={r.style.transparency} min={0} max={100} step={5} label={tr("Transparence", "Transparency")} onPreview={(v) => preview({ transparency: v })} onCommit={(v) => style('transparency', v || null)} />
-            </label>
           )}
         </Section>
       )}

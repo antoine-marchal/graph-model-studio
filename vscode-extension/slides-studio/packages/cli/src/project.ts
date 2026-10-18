@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { imageSize } from 'image-size';
-import { renderedImageSrc, validateDocument, type CorporateMaster, type Diagnostic, type SlideDocument } from '@corporate-slides/core';
+import { renderedImageSrc, validateDocument, type CorporateMaster, type Diagnostic, type SlideDocument, tr } from '@corporate-slides/core';
 import { loadMaster, MASTER_DIR } from '@corporate-slides/master-extractor';
 import { parseSource, sourceKindOf, type SourceKind } from '@corporate-slides/parser';
 
@@ -37,7 +37,7 @@ export interface LoadedProject {
 
 export async function loadMasterFor(sourcePath: string): Promise<{ masterDir: string; master: CorporateMaster }> {
   const masterDir = findMasterDir(sourcePath);
-  if (!masterDir) throw new Error(`Aucun masque corporate trouvé (${MASTER_DIR}). Lancez d'abord « slides master import <gabarit> ».`);
+  if (!masterDir) throw new Error(tr(`Aucun masque corporate trouvé (${MASTER_DIR}). Lancez d'abord « slides master import <gabarit> ».`, `No corporate master found (${MASTER_DIR}). Run “slides master import <template>” first.`));
   return { masterDir, master: await loadMaster(join(masterDir, 'corporate-master.json')) };
 }
 
@@ -47,7 +47,7 @@ export function parseWithMaster(text: string, kind: SourceKind, master: Corporat
 
 export async function loadProject(sourcePath: string): Promise<LoadedProject> {
   const kind = sourceKindOf(sourcePath);
-  if (!kind) throw new Error(`Extension non reconnue : ${sourcePath} (attendu .deck, .slides.md, .slides.yaml ou .slides.json)`);
+  if (!kind) throw new Error(tr(`Extension non reconnue : ${sourcePath} (attendu .deck, .slides.md, .slides.yaml ou .slides.json)`, `Unrecognized extension: ${sourcePath} (expected .deck, .slides.md, .slides.yaml or .slides.json)`));
   const { masterDir, master } = await loadMasterFor(sourcePath);
   const { doc, errors } = parseWithMaster(await readFile(sourcePath, 'utf8'), kind, master);
   return { sourcePath, kind, masterDir, master, doc, parseErrors: errors };

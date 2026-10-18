@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CorporateMaster, Diagnostic, HostMessage, SlideDocument } from '@corporate-slides/core';
+import type { CorporateMaster, Diagnostic, HostMessage, SlideDocument, SlideElement } from '@corporate-slides/core';
 import { onHostMessage, post } from './host';
 import { useEditor } from './store';
 import { Canvas } from './Canvas';
@@ -9,7 +9,7 @@ import { Ribbon } from './Ribbon';
 import { GmcDialog } from './GmcDialog';
 import { GmcEditor } from './GmcEditor';
 import { anchorOf } from './Review';
-import { installClipboard, pasteHostText } from './clipboard';
+import { installClipboard, pasteHostText, pastePowerPointElements, pastePowerPointFallback } from './clipboard';
 import { Icon } from './icons';
 import { ContextMenu } from './ContextMenu';
 import { tr } from '@corporate-slides/core';
@@ -50,6 +50,12 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
         case 'clipboard':
           pasteHostText(m.text);
           break;
+        case 'pasteElements':
+          pastePowerPointElements(m.elements as SlideElement[], m.warnings);
+          break;
+        case 'pasteFallback':
+          pastePowerPointFallback();
+          break;
         case 'notice':
           st.notify(m.level, m.message);
           break;
@@ -77,8 +83,10 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
       }
     });
     post({ type: 'ready' });
+    // Keep the other side of a diff view on the same slide.
+    const offSync = useEditor.subscribe((s, prev) => s.slideId && s.slideId !== prev.slideId && post({ type: 'slideShown', slideId: s.slideId }));
     const offClipboard = installClipboard();
-    return () => (off(), offClipboard());
+    return () => (off(), offClipboard(), offSync());
   }, []);
 
   if (mode === 'masters') return masters ? <MasterBrowser data={masters} /> : <div className="loading">{tr('Chargement des masques…', 'Loading masters…')}</div>;
@@ -101,6 +109,8 @@ function Editor() {
   const parseErrors = useEditor((s) => s.parseErrors);
   const doc = useEditor((s) => s.doc);
   const notesOpen = useEditor((s) => s.notesOpen);
+  const readOnly = useEditor((s) => s.readOnly);
+  const pane = useEditor((s) => s.pane);
   if (!ready) return <div className="loading">{tr('Chargement de la présentation…', 'Loading the presentation…')}</div>;
   if (!master) {
     return (
@@ -112,7 +122,7 @@ function Editor() {
     );
   }
   return (
-    <div className="app">
+    <div className={`app${readOnly && pane !== 'comments' ? ' no-inspector' : ''}`}>
       <Ribbon />
       {parseErrors.length > 0 && (
         <div className="banner banner-error" role="alert">
@@ -133,7 +143,7 @@ function Editor() {
           </div>
           {notesOpen && <NotesPane />}
         </main>
-        <Inspector />
+        {(!readOnly || pane === 'comments') && <Inspector />}
       </div>
       <StatusBar />
       <GmcDialog />

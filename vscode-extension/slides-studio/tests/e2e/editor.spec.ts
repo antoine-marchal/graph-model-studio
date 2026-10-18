@@ -123,9 +123,11 @@ test('adds a slide from a corporate layout picker', async ({ page }) => {
 test('adds a shape, nudges it with the keyboard and deletes it', async ({ page }) => {
   await open(page, 'examples/corporate-demo/deck.slides.md');
   await page.getByTestId('slide-thumb-agenda').locator('.slide-button').click();
+  await page.getByTestId('tab-insert').click();
   await page.getByTestId('add-shape').click();
   await page.getByTestId('shape-menu').getByRole('menuitem', { name: 'Ellipse' }).click();
   await synced(page);
+  await page.getByTestId('tab-home').click();
   expect(await source(page)).toMatch(/- id: shape-1\n {4}type: shape\n {4}shape: ellipse/);
   await page.keyboard.press('ArrowRight');
   await synced(page);
@@ -219,9 +221,11 @@ test('table: typing then clicking outside keeps the text; column borders resize'
 test('clipboard: copy / paste duplicates the selection; font size steps up', async ({ page }) => {
   await open(page, 'examples/corporate-demo/deck.slides.md');
   await page.getByTestId('slide-thumb-agenda').locator('.slide-button').click();
+  await page.getByTestId('tab-insert').click();
   await page.getByTestId('add-shape').click();
   await page.getByTestId('shape-menu').getByRole('menuitem', { name: 'Ellipse' }).click();
   await synced(page);
+  await page.getByTestId('tab-home').click();
   await page.getByTestId('copy').click();
   await page.getByTestId('paste').click();
   // The ribbon reads the clipboard asynchronously: wait for the pasted copy before the sync check.

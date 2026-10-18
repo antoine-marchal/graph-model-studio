@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { DiffBaseKind, ReviewData } from '@corporate-slides/core';
+import { tr } from '@corporate-slides/core';
 
 /** URI scheme of merge request revisions opened by the Project Integration (GitLab) companion. */
 export const MR_SCHEME = 'pi-mr';
@@ -32,9 +33,9 @@ export function localPath(uri: vscode.Uri): string {
 
 /** Relay a rendered-review action to the companion. The URI always comes from the host document. */
 export async function reviewRequest(document: vscode.TextDocument, request: { action: string; line?: number; text?: string; discussionId?: string; resolved?: boolean }): Promise<ReviewData> {
-  if (document.uri.scheme !== MR_SCHEME) throw new Error('Les commentaires de revue sont disponibles depuis la liste des modifications de la merge request.');
+  if (document.uri.scheme !== MR_SCHEME) throw new Error(tr('Les commentaires de revue sont disponibles depuis la liste des modifications de la merge request.', 'Review comments are available from the changes list of the merge request.'));
   const commands = await vscode.commands.getCommands(true);
-  if (!commands.includes(RENDERED_REVIEW)) throw new Error('Mettez à jour l’extension Project Integration pour commenter dans l’éditeur visuel.');
+  if (!commands.includes(RENDERED_REVIEW)) throw new Error(tr('Mettez à jour l’extension Project Integration pour commenter dans l’éditeur visuel.', 'Update the Project Integration extension to comment in the visual editor.'));
   return (await vscode.commands.executeCommand(RENDERED_REVIEW, { uri: document.uri.toString(), ...request })) as ReviewData;
 }
 
@@ -50,7 +51,7 @@ async function mrTarget(cwd: string): Promise<string> {
   const head = await git(cwd, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).catch(() => '');
   if (head.trim()) return head.trim();
   for (const b of ['origin/main', 'origin/master']) if (await git(cwd, ['rev-parse', '--verify', '--quiet', b]).then(() => true, () => false)) return b;
-  throw new Error('Branche cible de la merge request introuvable (réglage corporateSlides.mrTargetBranch).');
+  throw new Error(tr('Branche cible de la merge request introuvable (réglage corporateSlides.mrTargetBranch).', 'Merge request target branch not found (setting corporateSlides.mrTargetBranch).'));
 }
 
 export interface DiffBase {
@@ -68,14 +69,14 @@ export async function loadDiffBase(document: vscode.TextDocument, kind: DiffBase
   if (kind === 'none') return { text: null, label: '' };
   const m = mrRef(document.uri);
   if (m) {
-    if (m.side === 'old') return { text: null, label: '', error: 'Cette vue est la version de base de la merge request.' };
+    if (m.side === 'old') return { text: null, label: '', error: tr('Cette vue est la version de base de la merge request.', 'This view is the base version of the merge request.') };
     const old = vscode.workspace.textDocuments.find((d) => {
       const o = mrRef(d.uri);
       return o?.side === 'old' && o.iid === m.iid && o.project === m.project && o.newPath === m.newPath;
     });
-    return old ? { text: old.getText(), label: `base de !${m.iid}` } : { text: '', label: `base de !${m.iid}` };
+    return old ? { text: old.getText(), label: tr(`base de !${m.iid}`, `base of !${m.iid}`) } : { text: '', label: tr(`base de !${m.iid}`, `base of !${m.iid}`) };
   }
-  if (document.uri.scheme !== 'file') return { text: null, label: '', error: 'Comparaison indisponible pour ce document.' };
+  if (document.uri.scheme !== 'file') return { text: null, label: '', error: tr('Comparaison indisponible pour ce document.', 'Comparison unavailable for this document.') };
   const cwd = dirname(document.uri.fsPath);
   const file = `./${basename(document.uri.fsPath)}`;
   try {
