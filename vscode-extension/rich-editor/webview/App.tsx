@@ -5,6 +5,8 @@ import { ZenFocus } from "./extensions/ZenFocus";
 import { DiffMarks } from "./extensions/DiffMarks";
 import { OutlineRail } from "./components/OutlineRail";
 import { LineNumbers } from "./components/LineNumbers";
+import { ReviewBar, ReviewLayer, ReviewThreads } from "./components/ReviewThreads";
+import { useReview } from "./hooks/useReview";
 import { BlockHandle } from "./components/BlockHandle";
 import { TableFilterMenu } from "./components/TableFilterMenu";
 import { sliceToTsv, tsvToTableSlice } from "./extensions/TableFilter";
@@ -46,7 +48,7 @@ export function App() {
   useAppearance(settings);
 
   const editor = useEditor({
-    extensions: [...contentExtensions(), ZenFocus, SlashCommand, DiffMarks],
+    extensions: [...contentExtensions(), ZenFocus, SlashCommand, DiffMarks, ReviewThreads],
     editorProps: {
       attributes: { class: "tiptap-editor" },
       // Excel-like ranges: a copied cell selection goes out as TSV (its
@@ -87,6 +89,7 @@ export function App() {
     setFrontmatter,
     addFrontmatter,
   } = useEditorState({ editor, settingsRef, handleUpdateRef, applySettings });
+  const review = useReview(editor);
 
   useClipboardHandlers(editor, baseUri, docFolderPath, settingsRef, uploadImage);
   const { dragOver } = useDragDrop(editor, uploadImage, editorContainerRef);
@@ -182,7 +185,7 @@ export function App() {
   if (!editor) return null;
 
   return (
-    <div className="editor-layout">
+    <div className={"editor-layout" + (review.enabled ? " has-review" : "")}>
       <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef}>
         <SearchBar
           visible={searchVisible}
@@ -204,6 +207,7 @@ export function App() {
         />
         {status && <div className="status-bar">{status}</div>}
         <div className="editor-toolbar">
+          {review.enabled && <ReviewBar review={review} />}
           {readonly && <div className="readonly-badge">Read-only</div>}
           {!readonly && (
             <button
@@ -288,8 +292,12 @@ export function App() {
           readonly={readonly}
           onChange={setFrontmatter}
         />
-        {settings.lineNumbers && <LineNumbers editor={editor} />}
+        {(settings.lineNumbers || review.enabled) && <LineNumbers editor={editor}
+          markdown={review.enabled ? review.source : undefined}
+          review={review.enabled ? review : undefined}
+        />}
         <EditorContent editor={editor} />
+        {review.enabled && <ReviewLayer editor={editor} review={review} />}
         {!readonly && <EditorBubbleMenu editor={editor} />}
         {!readonly && !zen && (
           <BlockHandle

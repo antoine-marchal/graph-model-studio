@@ -3,6 +3,7 @@ import * as path from "path";
 import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
+import { sendReview } from "./review";
 
 const CONFIG_NAMESPACE = "markdownStudio";
 const CURSORS_KEY = "betterMarkdown.cursors";
@@ -23,10 +24,8 @@ const TOOLKIT_COMMANDS = new Set([
   "markdownToolkit.exportPdf",
   "markdownToolkit.exportPng",
   "markdownToolkit.exportDocx",
-  "slides.preview",
-  "slides.exportPdf",
-  "slides.exportPptx",
-  "slides.exportPptxEditable",
+  "corporateSlides.openVisualEditor",
+  "corporateSlides.exportPptx",
 ]);
 
 /**
@@ -62,10 +61,12 @@ async function writeSettings(next: Record<string, unknown>): Promise<void> {
   }
 }
 
-/** Folder for .gmc files extracted from `document` (markdownStudio.gmcFolder). */
-function gmcFolder(document: vscode.TextDocument): vscode.Uri {
+/** Folder for assets (new .gmc files, pasted/dropped images) of `document` (markdownStudio.assetsFolder). */
+function assetsFolder(document: vscode.TextDocument): vscode.Uri {
   const docDir = path.dirname(document.uri.fsPath);
-  const setting = vscode.workspace.getConfiguration(CONFIG_NAMESPACE, document.uri).get<string>("gmcFolder", "").trim();
+  const config = vscode.workspace.getConfiguration(CONFIG_NAMESPACE, document.uri);
+  // gmcFolder: former name of the setting.
+  const setting = (config.get<string>("assetsFolder", "") || config.get<string>("gmcFolder", "")).trim();
   if (!setting) return vscode.Uri.file(docDir);
   const root = vscode.workspace.getWorkspaceFolder(document.uri)?.uri.fsPath ?? docDir;
   const expanded = setting.replace(/\$\{workspaceFolder\}/g, root);
@@ -73,6 +74,16 @@ function gmcFolder(document: vscode.TextDocument): vscode.Uri {
 }
 
 export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
+  async revealReviewComment(uri: vscode.Uri, focus: { noteId: number; line: number }): Promise<boolean> {
+    if (uri.scheme !== "pi-mr" || !uri.path.toLowerCase().endsWith(".md")) return false;
+    let panels = [...(this.reviewPanels.get(uri.toString()) ?? [])].filter((panel) => panel.visible);
+    if (!panels.length) {
+      await vscode.commands.executeCommand("vscode.openWith", uri, "betterMarkdown.editor");
+      panels = [...(this.reviewPanels.get(uri.toString()) ?? [])].filter((panel) => panel.visible);
+    }
+    for (const panel of panels) void panel.webview.postMessage({ type: "revealReviewComment", focus });
+    return panels.length > 0;
+  }
   constructor(readonly context: vscode.ExtensionContext) {
     this.context.subscriptions.push(
       vscode.workspace.onDidChangeConfiguration((e) => {
@@ -96,6 +107,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
   private openWebviews = new Set<vscode.Webview>();
   /** Most recently focused rich editor webview per document URI. */
   private webviewByUri = new Map<string, vscode.Webview>();
+  private reviewPanels = new Map<string, Set<vscode.WebviewPanel>>();
   private snapshotSequence = 0;
   private readonly pendingSnapshots = new Map<string, (html: string | undefined) => void>();
 
@@ -316,6 +328,10 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         pane.peer?.webview.postMessage({ ...msg, type: "diffScrollTo" });
         return;
       }
+      if (msg.type === "review") {
+        await sendReview(document, webview, msg);
+        return;
+      }
       if (msg.type === "ready") {
         webview.postMessage({
           type: "init",
@@ -324,6 +340,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           docFolderPath,
           filePath: document.uri.fsPath,
           isReadonly,
+          reviewEnabled: document.uri.scheme === "pi-mr",
           settings: readSettings(),
           cursorPosition: this.loadCursor(document.uri.fsPath),
           gmcRuntimeUri: webview
@@ -336,6 +353,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         webview.postMessage({ type: "customCss", css: await readCustomCss() });
         pane.ready = true;
         sendDiff(pane);
+        if (document.uri.scheme === "pi-mr") void sendReview(document, webview, { action: "load" });
         // Fire the first-run setup prompt only after the webview has
         // signalled `ready` — posting earlier would land before the
         // message listener is attached and the message would be lost.
@@ -406,7 +424,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         // relative path for the embed directive.
         let file: string | undefined;
         try {
-          const folder = gmcFolder(document);
+          const folder = assetsFolder(document);
           await vscode.workspace.fs.createDirectory(folder);
           const target = await vscode.window.showSaveDialog({
             defaultUri: vscode.Uri.joinPath(folder, path.basename(String(msg.name || "diagram.gmc"))),
@@ -513,11 +531,13 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         try {
           const data = Buffer.from(msg.data as string, "base64");
           const requested = path.basename(msg.filename as string);
+          const folder = assetsFolder(document).fsPath;
+          await vscode.workspace.fs.createDirectory(vscode.Uri.file(folder));
           // Find unique filename
           let finalName = requested;
           let counter = 1;
           while (true) {
-            const dest = vscode.Uri.file(path.join(docFolderPath, finalName));
+            const dest = vscode.Uri.file(path.join(folder, finalName));
             try {
               await vscode.workspace.fs.stat(dest);
               const ext = path.extname(requested);
@@ -528,11 +548,12 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
               break; // doesn't exist, use this name
             }
           }
-          const destUri = vscode.Uri.file(path.join(docFolderPath, finalName));
+          const destUri = vscode.Uri.file(path.join(folder, finalName));
           await vscode.workspace.fs.writeFile(destUri, data);
+          const rel = path.relative(docFolderPath, destUri.fsPath).replace(/\\/g, "/");
           webview.postMessage({
             type: "imageUploaded",
-            src: `${baseUri}/${finalName}`,
+            src: `${baseUri}/${rel}`,
           });
         } catch (err: any) {
           webview.postMessage({ type: "imageUploaded", src: null });
@@ -565,6 +586,11 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
 
     // Track active webview for search command
     const uriKey = document.uri.toString();
+    if (document.uri.scheme === "pi-mr") {
+      const panels = this.reviewPanels.get(uriKey) ?? new Set<vscode.WebviewPanel>();
+      panels.add(webviewPanel);
+      this.reviewPanels.set(uriKey, panels);
+    }
     this.webviewByUri.set(uriKey, webview);
     if (webviewPanel.active) {
       this.activeWebview = webview;
@@ -598,6 +624,9 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
     );
 
     webviewPanel.onDidDispose(() => {
+      const reviewPanels = this.reviewPanels.get(uriKey);
+      reviewPanels?.delete(webviewPanel);
+      if (reviewPanels?.size === 0) this.reviewPanels.delete(uriKey);
       pane.disposed = true;
       if (pane.peer) pane.peer.peer = undefined;
       msgDisposable.dispose();

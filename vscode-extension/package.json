@@ -1,7 +1,7 @@
 {
   "name": "graph-model-studio",
-  "displayName": "Graph Model Studio + Markdown Studio",
-  "description": "GMC graph modeling with live diagrams, plus a Notion-like WYSIWYG Markdown editor: rich diffs, tables, math, frontmatter, embedded GMC diagrams, recursive code/Markdown embeds, paste-as-Markdown, HTML/PDF/PNG/DOCX export and slides.",
+  "displayName": "Graph Model Studio",
+  "description": "GMC graph modeling with live diagrams, plus a Notion-like WYSIWYG Markdown editor: rich diffs, tables, math, frontmatter, embedded GMC diagrams, recursive code/Markdown embeds, paste-as-Markdown, HTML/PDF/PNG/DOCX export, plus Slides Studio: PowerPoint as code (.deck / *.slides.md) with a PowerPoint-like visual editor, corporate templates, GitLab review and native .pptx export.",
   "version": "4.0.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
@@ -43,7 +43,12 @@
     "live preview",
     "knowledge base",
     "readme",
-    "wysiwyg editor"
+    "wysiwyg editor",
+    "powerpoint",
+    "pptx",
+    "slides",
+    "presentation",
+    "deck"
   ],
   "icon": "media/icon.png",
   "main": "./integrations/host.js",
@@ -64,13 +69,13 @@
     "onCommand:markdownToolkit.exportPng",
     "onCommand:markdownToolkit.exportDocx",
     "onCommand:markdownToolkit.export",
-    "onCommand:slides.preview",
-    "onCommand:slides.exportHtml",
-    "onCommand:slides.exportPdf",
-    "onCommand:slides.exportPptx",
-    "onCommand:slides.exportPptxEditable",
     "onCustomEditor:betterMarkdown.editor",
-    "onCommand:betterMarkdown.openDiff"
+    "onCommand:betterMarkdown.openDiff",
+    "workspaceContains:**/*.{deck,slides.md,slides.yaml,slides.yml,slides.json}",
+    "workspaceContains:.corporate-slides/master/corporate-master.json",
+    "onCustomEditor:corporateSlides.deck",
+    "onCustomEditor:corporateSlides.editor",
+    "onLanguage:deck"
   ],
   "contributes": {
     "customEditors": [
@@ -83,6 +88,35 @@
           }
         ],
         "priority": "default"
+      },
+      {
+        "viewType": "corporateSlides.deck",
+        "displayName": "Deck — éditeur visuel",
+        "selector": [
+          {
+            "filenamePattern": "*.deck"
+          }
+        ],
+        "priority": "default"
+      },
+      {
+        "viewType": "corporateSlides.editor",
+        "displayName": "Corporate Slides — éditeur visuel",
+        "selector": [
+          {
+            "filenamePattern": "*.slides.md"
+          },
+          {
+            "filenamePattern": "*.slides.yaml"
+          },
+          {
+            "filenamePattern": "*.slides.yml"
+          },
+          {
+            "filenamePattern": "*.slides.json"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "commands": [
@@ -107,34 +141,6 @@
         "command": "betterMarkdown.factoryReset",
         "title": "Factory Reset Settings",
         "category": "Markdown Studio"
-      },
-      {
-        "command": "slides.preview",
-        "title": "Slides: Preview",
-        "icon": {
-          "light": "./media/preview-slides-light.svg",
-          "dark": "./media/preview-slides-dark.svg"
-        }
-      },
-      {
-        "command": "slides.exportHtml",
-        "title": "Slides: Export Standalone HTML",
-        "icon": "$(export)"
-      },
-      {
-        "command": "slides.exportPdf",
-        "title": "Slides: Export PDF",
-        "icon": "$(export)"
-      },
-      {
-        "command": "slides.exportPptx",
-        "title": "Slides: Export PPTX",
-        "icon": "$(export)"
-      },
-      {
-        "command": "slides.exportPptxEditable",
-        "title": "Slides: Export Editable PPTX",
-        "icon": "$(export)"
       },
       {
         "command": "gmc.openPreview",
@@ -247,6 +253,59 @@
         "command": "betterMarkdown.updateEmbeds",
         "title": "Update Embeds & TOC",
         "category": "Markdown Studio"
+      },
+      {
+        "command": "corporateSlides.importTemplate",
+        "title": "Importer un gabarit PowerPoint",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.showMasters",
+        "title": "Afficher les masques corporate",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.newPresentation",
+        "title": "Nouvelle présentation",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.openVisualEditor",
+        "title": "Ouvrir l'éditeur visuel",
+        "category": "Corporate Slides",
+        "icon": {
+          "light": "./media/preview-slides-light.svg",
+          "dark": "./media/preview-slides-dark.svg"
+        }
+      },
+      {
+        "command": "corporateSlides.exportPptx",
+        "title": "Exporter en PowerPoint (.pptx)",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.validate",
+        "title": "Valider la présentation",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.convertToDsl",
+        "title": "Convertir en DSL complet (.slides.yaml)",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.renderReference",
+        "title": "Rendu de référence (PowerPoint/LibreOffice)",
+        "category": "Corporate Slides"
+      },
+      {
+        "command": "corporateSlides.toggleEditor",
+        "title": "Basculer éditeur visuel / source",
+        "category": "Corporate Slides",
+        "icon": {
+          "light": "./media/preview-slides-light.svg",
+          "dark": "./media/preview-slides-dark.svg"
+        }
       }
     ],
     "keybindings": [
@@ -300,11 +359,6 @@
           "when": "isInDiffEditor && resourceExtname == .md"
         },
         {
-          "command": "slides.preview",
-          "when": "resourceLangId == markdown",
-          "group": "navigation@9"
-        },
-        {
           "command": "gmc.openPreview",
           "when": "resourceLangId == gmc || resourceLangId == markdown",
           "group": "navigation@10"
@@ -318,6 +372,16 @@
           "command": "markdownToolkit.export",
           "when": "activeWebviewPanelId == 'markdown.preview' || activeCustomEditorId == 'vscode.markdown.preview.editor'",
           "group": "navigation@20"
+        },
+        {
+          "command": "corporateSlides.toggleEditor",
+          "when": "resourceExtname == .deck",
+          "group": "navigation"
+        },
+        {
+          "command": "corporateSlides.openVisualEditor",
+          "when": "resourceFilename =~ /[.]slides[.](md|ya?ml|json)$/ && activeEditor == workbench.editors.files.textFileEditor",
+          "group": "navigation"
         }
       ],
       "scm/resourceState/context": [
@@ -364,6 +428,16 @@
           "command": "pasteAsMarkdown.copyAsHtml",
           "when": "resourceLangId == markdown",
           "group": "9_cutcopypaste"
+        },
+        {
+          "command": "corporateSlides.importTemplate",
+          "when": "resourceExtname == .pptx || resourceExtname == .potx",
+          "group": "navigation"
+        },
+        {
+          "command": "corporateSlides.exportPptx",
+          "when": "resourceFilename =~ /([.]slides[.](md|ya?ml|json)|[.]deck)$/",
+          "group": "navigation"
         }
       ],
       "webview/context": [
@@ -646,11 +720,11 @@
             "order": 68,
             "markdownDescription": "Colors of HTML / PDF / PNG exports made from the rich editor."
           },
-          "markdownStudio.gmcFolder": {
+          "markdownStudio.assetsFolder": {
             "type": "string",
             "default": "",
             "order": 69,
-            "markdownDescription": "Folder where a GMC block's **to file** creates the `.gmc` file: relative to the Markdown document (e.g. `diagrams`), `${workspaceFolder}/…`, or absolute. Empty: next to the document. Created if missing."
+            "markdownDescription": "Folder for assets — `.gmc` files created by a GMC block's **to file**, and images pasted or dropped into the rich editor: relative to the Markdown document (e.g. `diagrams`), `${workspaceFolder}/…`, or absolute. Empty: next to the document. Created if missing."
           },
           "markdownStudio.tocHeadingText": {
             "type": "string",
@@ -663,6 +737,12 @@
             "default": false,
             "order": 66,
             "markdownDescription": "Show the markdown source line number of each block in the margin of the rich editor."
+          },
+          "markdownStudio.indentHeadings": {
+            "type": "boolean",
+            "default": false,
+            "order": 66,
+            "markdownDescription": "Indent each heading and its content by its depth in the heading hierarchy in the rich editor. Display only — the markdown is unchanged."
           },
           "markdownStudio.outlineStyle": {
             "type": "string",
@@ -705,16 +785,6 @@
             "type": "boolean",
             "default": false,
             "description": "Automatically open the graph preview when a GMC file becomes active."
-          },
-          "slides.executablePath": {
-            "type": "string",
-            "default": "C:\\workspace\\pptxascode\\presentation-md\\output\\presentation-md.exe",
-            "description": "Path to presentation-md.exe used for slide preview and standalone HTML export."
-          },
-          "slides.themePath": {
-            "type": "string",
-            "default": "C:\\workspace\\pptxascode\\presentation-md\\theme\\cea",
-            "description": "Path to Slidev theme folder or ZIP used for slide preview and standalone HTML export."
           },
           "gmc.export.width": {
             "type": "number",
@@ -795,6 +865,26 @@
             "description": "Optional default reference DOCX template offered during Pandoc export."
           }
         }
+      },
+      {
+        "title": "Corporate Slides Studio",
+        "properties": {
+          "corporateSlides.referenceThumbnails": {
+            "type": "boolean",
+            "default": true,
+            "description": "Générer les vignettes de référence avec PowerPoint lors de l'import (Windows, si installé)."
+          },
+          "corporateSlides.exportFolder": {
+            "type": "string",
+            "default": "out",
+            "description": "Dossier d'export, relatif au fichier source."
+          },
+          "corporateSlides.mrTargetBranch": {
+            "type": "string",
+            "default": "",
+            "description": "Branche cible des merge requests pour la comparaison « base MR » (vide : branche par défaut d'origin)."
+          }
+        }
       }
     ],
     "markdown.markdownItPlugins": true,
@@ -813,6 +903,17 @@
           ".graphmodel"
         ],
         "configuration": "./language-configuration.json"
+      },
+      {
+        "id": "deck",
+        "aliases": [
+          "Deck",
+          "deck"
+        ],
+        "extensions": [
+          ".deck"
+        ],
+        "configuration": "./language-configuration.deck.json"
       }
     ],
     "grammars": [
@@ -830,12 +931,31 @@
         "embeddedLanguages": {
           "meta.embedded.block.gmc": "gmc"
         }
+      },
+      {
+        "language": "deck",
+        "scopeName": "text.html.markdown.deck",
+        "path": "./syntaxes/deck.tmLanguage.json"
       }
     ],
     "snippets": [
       {
         "language": "markdown",
         "path": "./media/markdown-embed-snippets.json"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "corporateSlides.masters",
+          "name": "Masques corporate"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "corporateSlides.masters",
+        "contents": "Aucun gabarit importé.\n[Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)"
       }
     ]
   },
@@ -847,14 +967,16 @@
     "build:host": "node ./esbuild.mjs",
     "build:webview": "vite build --config vite.webview.config.ts",
     "build:markdown-preview": "vite build --config vite.markdown-preview.config.ts",
-    "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview && pnpm run build:rich-editor",
+    "build:source": "pnpm run sync && pnpm run clean && pnpm run check:source && pnpm run build:host && pnpm run build:webview && pnpm run build:markdown-preview && pnpm run build:rich-editor && pnpm run build:slides-studio",
     "build": "node ./build-combined.mjs",
     "package": "node ./package-vsix.mjs",
     "build:rich-editor": "node ./rich-editor/esbuild.mjs",
     "watch:rich-editor": "node ./rich-editor/esbuild.mjs --watch",
     "test:rich-editor": "tsx rich-editor/test/test-conversions.ts && tsx rich-editor/test/test-roundtrip.ts",
-    "test": "node --test tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/docx-export.test.cjs && pnpm run test:rich-editor",
-    "build:all": "pnpm run build:source && pnpm run build"
+    "test": "node --test tests/review-bridge.test.cjs tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/docx-export.test.cjs && pnpm run test:rich-editor",
+    "build:all": "pnpm run build:source && pnpm run build",
+    "build:slides-studio": "pnpm --dir slides-studio install --frozen-lockfile && pnpm --dir slides-studio run build",
+    "test:slides-studio": "pnpm --dir slides-studio test"
   },
   "devDependencies": {
     "@primer/primitives": "11.10.0",

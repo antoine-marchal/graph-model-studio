@@ -52,6 +52,11 @@ export function activate(context: vscode.ExtensionContext): void {
   warnAboutLegacyMarkdownStudio(context);
 
   const provider = new BetterMarkdownProvider(context);
+  context.subscriptions.push(
+    vscode.commands.registerCommand("betterMarkdown.revealReviewComment", (uri: vscode.Uri, focus: { noteId: number; line: number }) =>
+      provider.revealReviewComment(uri, focus),
+    ),
+  );
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
@@ -171,7 +176,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (
           input instanceof vscode.TabInputCustom &&
           input.viewType === CUSTOM_EDITOR_VIEW_TYPE &&
-          input.uri.scheme !== "file"
+          input.uri.scheme !== "file" && input.uri.scheme !== "pi-mr"
         ) {
           setTimeout(async () => {
             try { await vscode.window.tabGroups.close(tab); } catch {}

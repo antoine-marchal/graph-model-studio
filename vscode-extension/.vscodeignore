@@ -1,5 +1,4 @@
 node_modules/**
-integrations/slides/vendor/**
 .playwright-cli/**
 output/**
 src/**
@@ -21,6 +20,6 @@ dist/markdown-preview/*.css
 integrations/markdown-toolkit/source/**
 integrations/paste-as-markdown/extension.js
 graphify-out/**
-integrations/slides/source/**
+slides-studio/**
 rich-editor/**
 !rich-editor/LICENSE

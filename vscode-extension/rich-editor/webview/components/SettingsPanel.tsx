@@ -156,6 +156,12 @@ export function SettingsPanel({
               checked={settings.lineNumbers}
               onChange={(v) => set("lineNumbers", v)}
             />
+            <Toggle
+              label="Indent heading sections"
+              description="Indent each heading and its content by its depth in the heading hierarchy (display only)."
+              checked={settings.indentHeadings}
+              onChange={(v) => set("indentHeadings", v)}
+            />
             <div className="settings-hint">
               Zen mode: <code>Ctrl+.</code> (<code>⌘.</code>) or the Zen button; Esc leaves.
             </div>
@@ -201,19 +207,19 @@ export function SettingsPanel({
           </section>
 
           <section>
-            <h3>GMC diagrams</h3>
+            <h3>Assets</h3>
 
-            <Row label="Folder for new .gmc files">
+            <Row label="Folder for assets">
               <input
                 type="text"
                 className="settings-input"
-                value={settings.gmcFolder}
-                placeholder="(next to the document) e.g. diagrams"
-                onChange={(e) => set("gmcFolder", e.target.value)}
+                value={settings.assetsFolder}
+                placeholder="(next to the document) e.g. assets"
+                onChange={(e) => set("assetsFolder", e.target.value)}
               />
             </Row>
             <div className="settings-hint">
-              Where a GMC block's "to file" creates its file: relative to the document, <code>{"${workspaceFolder}/…"}</code>, or absolute.
+              Where new .gmc files (GMC block "to file") and pasted or dropped images are saved: relative to the document, <code>{"${workspaceFolder}/…"}</code>, or absolute.
             </div>
           </section>
 

@@ -1,0 +1,25 @@
+{
+  "name": "@corporate-slides/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "slides": "dist/cli.cjs"
+  },
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@corporate-slides/core": "workspace:*",
+    "@corporate-slides/master-extractor": "workspace:*",
+    "@corporate-slides/parser": "workspace:*",
+    "@corporate-slides/pptx-generator": "workspace:*",
+    "commander": "15.0.0",
+    "image-size": "2.0.4"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

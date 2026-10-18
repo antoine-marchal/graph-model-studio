@@ -20,6 +20,7 @@ The extension uses the same parser, serializer, notation registry, layout engine
 -   External file embeds with line/region selection, locking, stale indicators, diagnostics, completion, hover, source navigation, and workspace updates.
 -   Native `.gmc`/`.graphmodel` embeds and recursive Markdown-file embeds.
 -   Rich HTML paste-to-Markdown plus copy-Markdown-as-rich-HTML.
+-   **Slides Studio**: PowerPoint as code. `.deck` / `*.slides.md` / `*.slides.yaml` decks open in a PowerPoint-like visual editor built on your corporate template, embed GMC diagrams, support GitLab review, and export native, editable `.pptx`.
 
 ## Markdown Studio rich editor
 
@@ -29,7 +30,7 @@ Every Markdown file gets an **Open in Rich Editor** CodeLens (or `Ctrl+Shift+M` 
 -   **Blocks and tables**: Notion-style block handle (add, drag, duplicate, delete), column/row resizing, spreadsheet-like range selection with sum and average, fill handle, sort and view-only filters.
 -   **GMC diagrams**: ` ```gmc ` / ` ```graphmodel ` fences render with the same renderer as the preview. Each block edits its `id=`, `view=`, `theme=`, `width=`, `height=` attributes, opens the **interactive** graph editor in a modal (changes sync back into the block), moves the diagram **to file** (`.gmc` + embed), or exports a **png**. `/gmc` inserts a starter model.
 -   **Embeds and TOC**: embed, link and table-of-contents directives from the context menu or `/embed`, `/link`, `/table of contents`; **Tools → Update embeds & TOC** refreshes them. Directives show as editable cards.
--   **Tools menu**: HTML / PDF / PNG / DOCX export and slides.
+-   **Tools menu**: HTML / PDF / PNG / DOCX export, plus **Slides: open visual editor** and **Slides: export PPTX** (Slides Studio).
 -   **Rich diff**: **Markdown Studio: Open Rich Diff** (SCM context menu, diff editor toolbar, or the editor's Diff button) compares rendered blocks against `HEAD` or any two files.
 -   **Reading layout**: content width, font, line height, line numbers, outline rail or panel, sticky headings, and zen mode (`Ctrl+.` / `Cmd+.`).
 -   **Themes**: follows VS Code by default, or GitHub (Primer) and Claude light and dark palettes; `markdownStudio.customCss` loads your own stylesheet.
@@ -148,6 +149,17 @@ Add this marker where the table of contents should appear:
 
 **Update Code Embeds**, the TOC CodeLens, and saving the Markdown document all regenerate the TOC. Headings inside fenced code blocks are ignored, duplicate heading anchors are numbered consistently, and nested heading levels become nested lists. Optional attributes include `min-level="2"`, `max-level="4"`, or `depth="3"`; `lock="true"` prevents updates.
 
+## Slides Studio (PowerPoint as code)
+
+Write presentations as Markdown (`.deck`, `*.slides.md`) or YAML (`*.slides.yaml`) and edit them in a PowerPoint-like visual editor; every visual edit is written back to the source as a minimal text edit, so decks stay reviewable in Git.
+
+1. **Import the corporate template** — **Corporate Slides: Importer un gabarit PowerPoint** (or right-click a `.pptx`/`.potx`). Layouts, theme colors and fonts are extracted to `.corporate-slides/master/`; the **Masques corporate** explorer view lists them.
+2. **Create a deck** — **Corporate Slides: Nouvelle présentation**, then edit visually (ribbon: clipboard, font, paragraph, drawing, tables, connectors, GMC diagrams) or in source (**Basculer éditeur visuel / source** in the editor title bar).
+3. **Diagrams** — Insert → *Diagramme GMC* creates or picks a `.gmc` file, renders it with the Graph Model Studio renderer and opens the interactive editor in a modal; edits re-render the slide image.
+4. **Export** — **Corporate Slides: Exporter en PowerPoint (.pptx)** writes a native, editable PowerPoint into `out/` (`corporateSlides.exportFolder`).
+
+The editor supports copy / cut / paste of elements, text, images and spreadsheet ranges (Excel → native table), a format painter (`Ctrl+Shift+C` / `Ctrl+Shift+V`), resizable table columns and rows, and draggable connector ends. Sources, CLI and tests live in `slides-studio/` (see its README).
+
 ## Paste as Markdown
 
 Rich HTML copied from browsers, Word, Google Docs, Notion, and similar tools is converted automatically when pasted into Markdown. Conversion is skipped in fenced code, inline code, math blocks, plain-text-only clipboard data, and VS Code editor copies. GFM tables, task lists, strikethrough, code language hints, and common Office/Google Docs cleanup are supported.
@@ -158,15 +170,8 @@ Use **Paste as Markdown: Copy as HTML** to copy a Markdown selection (or file fr
 
 ## Commands
 
-Configure `slides.executablePath` and `slides.themePath` in VS Code settings. `slides.themePath` accepts a theme folder or ZIP. VSIX contains neither executable nor theme.
-
 | Command                                          | Description                                                                                                                                                               |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Slides: Preview**                              | Builds active Markdown with configured `presentation-md.exe` and theme, then opens light Slidev preview beside editor. Toolbar exports HTML, PDF, PPTX, or editable PPTX. |
-| **Slides: Export Standalone HTML**               | Saves current generated Slidev preview as portable HTML.                                                                                                                  |
-| **Slides: Export PDF**                           | Builds active Markdown as PDF.                                                                                                                                            |
-| **Slides: Export PPTX**                          | Builds active Markdown as image-based PowerPoint.                                                                                                                         |
-| **Slides: Export Editable PPTX**                 | Builds active Markdown as PowerPoint with editable supported elements.                                                                                                    |
 | **GMC: Open Graph Preview to the Side**          | Opens the synchronized interactive graph for a `.gmc` document or the GMC Markdown fence under the cursor.                                                                |
 | **GMC: Export Diagram as PNG**                   | Exports the active GMC diagram to a chosen PNG file.                                                                                                                      |
 | **GMC: Export Markdown Diagram as PNG**          | Exports the GMC fence under the cursor.                                                                                                                                   |
@@ -200,6 +205,9 @@ Configure `slides.executablePath` and `slides.themePath` in VS Code settings. `s
 | `markdownToolkit.export.pngHeight`          | `10000` | PNG export capture height (increase for very long documents).                            |
 | `markdownToolkit.pandoc.path`               | empty   | Optional path to the Pandoc executable.                                                  |
 | `markdownToolkit.pandoc.referenceDoc`       | empty   | Optional default reference DOCX template offered during export.                          |
+| `corporateSlides.exportFolder`              | `out`   | Slides Studio export folder, relative to the deck.                                       |
+| `corporateSlides.referenceThumbnails`       | `true`  | Render layout thumbnails with PowerPoint during template import (Windows, if installed). |
+| `corporateSlides.mrTargetBranch`            | empty   | Merge request target branch for the "base MR" visual diff (empty: origin's default).     |
 
 Named regions such as `<!-- embed:example --> … <!-- embed:example:end -->` are recognized as foldable blocks and collapse automatically after updates.
 
@@ -225,13 +233,14 @@ The theme button in the interactive graph stores an explicit extension-level the
 The extension compiles the Graph Model Studio sources in `../src` (parser, notations, renderer, Inspector) into `dist/webview` and `dist/markdown-preview`; the rich editor (`rich-editor/`) is built into `dist/rich-editor` and loads those same bundles for GMC blocks, so a core change reaches every surface on the next build.
 
 ```bash
-pnpm run build:source   # host, graph webview, Markdown runtime, rich editor
+pnpm run build:source   # host, graph webview, Markdown runtime, rich editor, Slides Studio
 pnpm run build          # validate combined artifacts
 pnpm test               # embed tests + rich editor conversion/round-trip tests
+pnpm run test:slides-studio   # Slides Studio unit + integration tests (e2e: pnpm --dir slides-studio test:e2e)
 pnpm run package        # dist/graph-model-studio-<version>.vsix
 ```
 
-See `rich-editor/DEVELOPMENT.md` for the Markdown conversion pipeline.
+See `rich-editor/DEVELOPMENT.md` for the Markdown conversion pipeline. Slides Studio (`slides-studio/`) is a separate pnpm workspace (React 19, zod 4, Vite 8) bundled into `dist/slides-studio`; it reuses this extension's GMC renderer (`gmc.renderFilePng`) and interactive editor bundle (`dist/webview`).
 
 ## Credits
 

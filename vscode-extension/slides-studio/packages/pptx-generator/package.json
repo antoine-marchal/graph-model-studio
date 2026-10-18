@@ -1,0 +1,3 @@
+{ "name": "@corporate-slides/pptx-generator", "version": "0.1.0", "private": true, "type": "module",
+  "main": "src/index.ts", "types": "src/index.ts",
+  "dependencies": { "@corporate-slides/core": "workspace:*", "pptxgenjs-plus": "4.3.4", "jszip": "3.10.2", "fast-xml-parser": "5.11.2" } }

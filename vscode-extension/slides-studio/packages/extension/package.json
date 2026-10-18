@@ -1,0 +1,35 @@
+{
+  "name": "corporate-slides-studio",
+  "private": true,
+  "scripts": {
+    "build:webview": "vite build",
+    "build:ext": "node build.mjs",
+    "build": "pnpm run build:webview && pnpm run build:ext",
+    "dev:webview": "vite",
+    "test:host": "node test/run.mjs"
+  },
+  "dependencies": {
+    "@corporate-slides/cli": "workspace:*",
+    "@corporate-slides/core": "workspace:*",
+    "@corporate-slides/master-extractor": "workspace:*",
+    "@corporate-slides/parser": "workspace:*",
+    "@corporate-slides/pptx-generator": "workspace:*",
+    "@corporate-slides/renderer": "workspace:*",
+    "image-size": "2.0.4"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/vscode": "1.109.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "@vscode/test-electron": "3.1.0",
+    "esbuild": "0.28.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.3",
+    "vite": "8.3.4",
+    "zustand": "5.0.15"
+  },
+  "description": "Corporate Slides Studio, bundled into the Graph Model Studio extension (dist/slides-studio)."
+}

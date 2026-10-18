@@ -1,0 +1,43 @@
+model {
+  startEvent_qf3it = startEvent "GO"
+  lane_huhmn = lane "Users" {
+    accentColor "#65A30D"
+    userTask_dnvpj = userTask "Commande" {
+      accentColor "#0891B2"
+    }
+    parallelGateway_r7p4s = parallelGateway "Parallel Gateway"
+    serviceTask_a5t20 = serviceTask "Send Mail" {
+      accentColor "#4F46E5"
+    }
+    serviceTask_lf0p = serviceTask "Send Print" {
+      accentColor "#4F46E5"
+    }
+    gateway_t9y9g = gateway "Gateway"
+  }
+  endEvent_hdxkw = endEvent "End Event"
+
+  startEvent_qf3it -> userTask_dnvpj
+  userTask_dnvpj -> parallelGateway_r7p4s anchor r l
+  parallelGateway_r7p4s -> serviceTask_a5t20 anchor b _
+  parallelGateway_r7p4s -> serviceTask_lf0p anchor r _
+  serviceTask_a5t20 -> gateway_t9y9g anchor r t
+  serviceTask_lf0p -> gateway_t9y9g anchor r r
+  gateway_t9y9g -> endEvent_hdxkw anchor b _
+}
+
+views {
+  view default "Default View" {
+    include *
+    autolayout tb
+    userTask_dnvpj at 146 16
+    parallelGateway_r7p4s at 191 144
+    serviceTask_a5t20 at 44 300
+    serviceTask_lf0p at 248 300
+    gateway_t9y9g at 191 444
+    startEvent_qf3it at 351 40
+    lane_huhmn at 149 160
+    endEvent_hdxkw at 351 768
+    timelineGraph_114v8 size 908 560
+    lane_huhmn size 460 514
+  }
+}

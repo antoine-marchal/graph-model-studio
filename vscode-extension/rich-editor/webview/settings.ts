@@ -89,6 +89,8 @@ export interface BetterMarkdownSettings {
   fontFamily: string;
   /** Show markdown source line numbers in the margin. */
   lineNumbers: boolean;
+  /** Indent each heading section by its depth in the heading hierarchy. */
+  indentHeadings: boolean;
   /** Heading navigator: compact rail (left edge), sidebar panel, or none. */
   outlineStyle: "rail" | "panel" | "off";
   /** Vertical position of table cell content (markdown has no syntax for it). */
@@ -104,10 +106,11 @@ export interface BetterMarkdownSettings {
   exportTheme: "light" | "editor";
 
   /**
-   * Folder for .gmc files created by a GMC block's "to file": relative to the
-   * document, `${workspaceFolder}/…`, or absolute. "" = next to the document.
+   * Folder for assets — .gmc files created by a GMC block's "to file", pasted
+   * or dropped images: relative to the document, `${workspaceFolder}/…`, or
+   * absolute. "" = next to the document.
    */
-  gmcFolder: string;
+  assetsFolder: string;
 }
 
 export const LAYOUT_LIMITS = {
@@ -164,12 +167,13 @@ export const DEFAULT_SETTINGS: BetterMarkdownSettings = {
   lineHeight: 1.6,
   fontFamily: "",
   lineNumbers: false,
+  indentHeadings: false,
   outlineStyle: "rail",
   tableVerticalAlign: "top",
   tocHeading: true,
   tocHeadingText: "Table of content",
   exportTheme: "light",
-  gmcFolder: "",
+  assetsFolder: "",
 };
 
 /**
@@ -200,12 +204,13 @@ export const SETTING_KEYS: (keyof BetterMarkdownSettings)[] = [
   "lineHeight",
   "fontFamily",
   "lineNumbers",
+  "indentHeadings",
   "outlineStyle",
   "tableVerticalAlign",
   "tocHeading",
   "tocHeadingText",
   "exportTheme",
-  "gmcFolder",
+  "assetsFolder",
 ];
 
 /**

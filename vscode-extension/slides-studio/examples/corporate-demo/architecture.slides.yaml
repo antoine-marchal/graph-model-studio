@@ -1,0 +1,74 @@
+# Déclaration précise au pouce près (DSL) — voir docs/dsl-spec.md
+presentation:
+  title: Architecture cible
+  master: corporate
+  footer: Corporate Slides Studio — DSL
+
+slides:
+  - id: architecture-overview
+    layout: content
+    elements:
+      - id: title-1
+        type: text
+        placeholder: title
+        content: Architecture cible
+
+      - id: plm-box
+        type: shape
+        shape: roundRect
+        x: 1.0
+        y: 2.0
+        w: 3.2
+        h: 1.1
+        style:
+          fill: theme.accent1
+
+      - id: plm-label
+        type: text
+        x: 1.4
+        y: 2.3
+        w: 2.4
+        h: 0.5
+        content: '**PLM**'
+        style:
+          color: theme.lt1
+          align: center
+
+      - id: link
+        type: shape
+        shape: line
+        x: 4.2
+        y: 2.55
+        w: 1.6
+        h: 0
+        style:
+          line: theme.dk2
+          lineWidth: 2
+
+      - id: erp-box
+        type: shape
+        shape: ellipse
+        x: 5.8
+        y: 2.0
+        w: 3.2
+        h: 1.1
+        content: ERP
+        style:
+          fill: theme.accent5
+
+  - id: details
+    layout: two-columns
+    elements:
+      - id: title
+        placeholder: title
+        content: Responsabilités
+      - id: left
+        placeholder: left
+        content: |-
+          - Données techniques
+          - Configuration
+      - id: right
+        placeholder: right
+        content: |-
+          - Ordres de fabrication
+          - Stocks

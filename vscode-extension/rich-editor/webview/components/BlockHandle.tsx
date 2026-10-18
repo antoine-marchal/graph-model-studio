@@ -121,6 +121,23 @@ export function BlockHandle({ editor, containerRef, gutter = 0 }: {
     };
   }, [containerRef, editor, locate, menuOpen]);
 
+  // Auto-scroll while dragging near the top/bottom edge (wheel events don't
+  // fire during a native drag). dragover repeats ~every 50ms even when still.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const EDGE = 80;
+    const onDragOver = (e: DragEvent) => {
+      const r = container.getBoundingClientRect();
+      const up = e.clientY - r.top;
+      const down = r.bottom - e.clientY;
+      if (up < EDGE) container.scrollTop -= Math.ceil((EDGE - up) / 2);
+      else if (down < EDGE) container.scrollTop += Math.ceil((EDGE - down) / 2);
+    };
+    container.addEventListener("dragover", onDragOver);
+    return () => container.removeEventListener("dragover", onDragOver);
+  }, [containerRef]);
+
   // Hide on edits (positions shift) unless the menu is in use.
   useEffect(() => {
     const onUpdate = () => {

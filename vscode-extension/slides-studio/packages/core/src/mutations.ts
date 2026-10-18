@@ -1,0 +1,176 @@
+import { z } from 'zod';
+import { ColAlign, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
+import { round4 } from './units.js';
+
+/**
+ * Typed mutations emitted by the visual editor. They are validated by the extension host,
+ * applied to the *source text* by the parser package (format-preserving), and can be applied
+ * to a canonical `SlideDocument` with `applyToDocument` (used for optimistic UI and tests).
+ */
+const num = z.number().finite();
+export const ElementPatch = z
+  .object({
+    x: num.optional(),
+    y: num.optional(),
+    w: num.min(0).optional(),
+    h: num.min(0).optional(),
+    rotation: num.optional(),
+    /** Style keys to set; a key set to `null` removes the override. */
+    style: z.record(z.string(), z.unknown()).optional(),
+    paragraphs: z.array(Paragraph).optional(),
+    placeholder: z.string().nullable().optional(),
+    locked: z.boolean().optional(),
+    hidden: z.boolean().optional(),
+    src: z.string().optional(),
+    rows: z.array(z.array(z.string())).optional(),
+    header: z.boolean().optional(),
+    colAlign: z.array(ColAlign.nullable()).optional(),
+    colWidths: z.array(z.number().positive()).optional(),
+    rowHeights: z.array(z.number().positive()).optional(),
+    shape: ShapeKind.optional(),
+    from: Id.optional(),
+    to: Id.optional(),
+    route: z.enum(['straight', 'elbow', 'curved']).optional(),
+    fromSide: ConnectorSide.optional(),
+    toSide: ConnectorSide.optional(),
+  })
+  .strict();
+export type ElementPatch = z.infer<typeof ElementPatch>;
+
+export const Mutation = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('updateElement'), slideId: Id, elementId: Id, patch: ElementPatch }),
+  z.object({ kind: z.literal('addElement'), slideId: Id, element: SlideElement }),
+  z.object({ kind: z.literal('deleteElement'), slideId: Id, elementId: Id }),
+  z.object({ kind: z.literal('reorderElement'), slideId: Id, elementId: Id, direction: z.enum(['front', 'back', 'forward', 'backward']) }),
+  z.object({ kind: z.literal('addSlide'), slideId: Id, layout: z.string().min(1), afterSlideId: Id.optional(), title: z.string().optional() }),
+  z.object({ kind: z.literal('deleteSlide'), slideId: Id }),
+  z.object({ kind: z.literal('duplicateSlide'), slideId: Id, newSlideId: Id }),
+  z.object({ kind: z.literal('moveSlide'), slideId: Id, toIndex: z.number().int().min(0) }),
+  z.object({ kind: z.literal('setSlideLayout'), slideId: Id, layout: z.string().min(1) }),
+  z.object({ kind: z.literal('setNotes'), slideId: Id, notes: z.string() }),
+]);
+export type Mutation = z.infer<typeof Mutation>;
+
+export const Transaction = z.object({ id: z.string().max(64), baseVersion: z.number().int(), mutations: z.array(Mutation).min(1).max(200) });
+export type Transaction = z.infer<typeof Transaction>;
+
+export class MutationError extends Error {}
+
+const roundGeom = <T extends Record<string, unknown>>(patch: T): T => {
+  const out: Record<string, unknown> = { ...patch };
+  for (const k of ['x', 'y', 'w', 'h', 'rotation']) if (typeof out[k] === 'number') out[k] = round4(out[k] as number);
+  return out as T;
+};
+
+/** Normalize a patch: round geometry, validate style values. */
+export function normalizePatch(patch: ElementPatch): ElementPatch {
+  const p = roundGeom(patch);
+  if (p.style) {
+    const set = Object.fromEntries(Object.entries(p.style).filter(([, v]) => v !== null));
+    ElementStyle.partial().parse(set);
+  }
+  return p;
+}
+
+export function getSlide(doc: SlideDocument, slideId: string): SlideNode {
+  const s = doc.slides.find((x) => x.id === slideId);
+  if (!s) throw new MutationError(`Diapositive « ${slideId} » introuvable`);
+  return s;
+}
+
+/** Sorted stacking order after a reorder, as element ids back→front. */
+export function reorderIds(slide: SlideNode, elementId: string, direction: 'front' | 'back' | 'forward' | 'backward'): string[] {
+  const order = slide.elements
+    .map((e, i) => ({ id: e.id, z: e.z ?? i, i }))
+    .sort((a, b) => a.z - b.z || a.i - b.i)
+    .map((e) => e.id);
+  const idx = order.indexOf(elementId);
+  if (idx < 0) throw new MutationError(`Élément « ${elementId} » introuvable`);
+  order.splice(idx, 1);
+  const to = direction === 'front' ? order.length : direction === 'back' ? 0 : direction === 'forward' ? Math.min(order.length, idx + 1) : Math.max(0, idx - 1);
+  order.splice(to, 0, elementId);
+  return order;
+}
+
+/** Pure canonical application (structural clone). Source-level application lives in @corporate-slides/parser. */
+export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): SlideDocument {
+  const next: SlideDocument = structuredClone(doc);
+  for (const m of mutations) {
+    switch (m.kind) {
+      case 'updateElement': {
+        const slide = getSlide(next, m.slideId);
+        const el = slide.elements.find((e) => e.id === m.elementId);
+        if (!el) throw new MutationError(`Élément « ${m.elementId} » introuvable`);
+        const { style, placeholder, ...rest } = normalizePatch(m.patch);
+        Object.assign(el, rest);
+        if (placeholder === null) delete el.placeholder;
+        else if (placeholder !== undefined) el.placeholder = placeholder;
+        if (style) {
+          const s: Record<string, unknown> = { ...(el.style ?? {}) };
+          for (const [k, v] of Object.entries(style)) if (v === null) delete s[k]; else s[k] = v;
+          el.style = Object.keys(s).length ? (s as typeof el.style) : undefined;
+          if (!el.style) delete el.style;
+        }
+        break;
+      }
+      case 'addElement': {
+        const slide = getSlide(next, m.slideId);
+        if (slide.elements.some((e) => e.id === m.element.id)) throw new MutationError(`Identifiant « ${m.element.id} » déjà utilisé`);
+        slide.elements.push(structuredClone(m.element));
+        break;
+      }
+      case 'deleteElement': {
+        const slide = getSlide(next, m.slideId);
+        slide.elements = slide.elements.filter((e) => e.id !== m.elementId);
+        break;
+      }
+      case 'reorderElement': {
+        const slide = getSlide(next, m.slideId);
+        const order = reorderIds(slide, m.elementId, m.direction);
+        for (const e of slide.elements) e.z = order.indexOf(e.id);
+        break;
+      }
+      case 'addSlide': {
+        if (next.slides.some((s) => s.id === m.slideId)) throw new MutationError(`Identifiant « ${m.slideId} » déjà utilisé`);
+        const idx = m.afterSlideId ? next.slides.findIndex((s) => s.id === m.afterSlideId) + 1 : next.slides.length;
+        const elements: SlideNode['elements'] = m.title !== undefined ? [{ id: 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs: [{ text: m.title }] }] }] : [];
+        next.slides.splice(idx, 0, { id: m.slideId, layout: m.layout, elements });
+        break;
+      }
+      case 'deleteSlide':
+        getSlide(next, m.slideId);
+        next.slides = next.slides.filter((s) => s.id !== m.slideId);
+        break;
+      case 'duplicateSlide': {
+        const src = getSlide(next, m.slideId);
+        if (next.slides.some((s) => s.id === m.newSlideId)) throw new MutationError(`Identifiant « ${m.newSlideId} » déjà utilisé`);
+        const copy = structuredClone(src);
+        copy.id = m.newSlideId;
+        next.slides.splice(next.slides.indexOf(src) + 1, 0, copy);
+        break;
+      }
+      case 'moveSlide': {
+        const src = getSlide(next, m.slideId);
+        next.slides.splice(next.slides.indexOf(src), 1);
+        next.slides.splice(Math.min(m.toIndex, next.slides.length), 0, src);
+        break;
+      }
+      case 'setSlideLayout':
+        getSlide(next, m.slideId).layout = m.layout;
+        break;
+      case 'setNotes': {
+        const s = getSlide(next, m.slideId);
+        if (m.notes) s.notes = m.notes;
+        else delete s.notes;
+        break;
+      }
+    }
+  }
+  return next;
+}
+
+/** Generate an id not present in `taken`, e.g. `shape-3`. */
+export function uniqueId(prefix: string, taken: Iterable<string>): string {
+  const set = new Set(taken);
+  for (let i = 1; ; i++) if (!set.has(`${prefix}-${i}`)) return `${prefix}-${i}`;
+}

@@ -1,0 +1,185 @@
+---
+title: Architecture PLM / MES / ERP
+author: Direction des systèmes d'information
+master: corporate
+theme: default
+footer: Corporate Slides Studio — démonstration
+date: 18/10/2026
+---
+
+---
+id: cover
+layout: title
+---
+
+# Architecture cible 2027
+
+Paysage cible et stratégie d'intégration
+
+---
+id: principles
+layout: two-columns
+elements:
+  - id: shape-1
+    type: shape
+    shape: rect
+    x: 3.3961
+    y: 3.75
+    w: 1.6011
+    h: 0.9223
+    style:
+      fill: theme.accent3
+      line: theme.accent1
+---
+
+# Principes d'intégration
+
+::: left
+## PLM
+
+- Définition produit 2D
+- Gestion de configuration
+- Modifications techniques
+:::
+
+::: right
+## MES / ERP
+- Orchestration de l'exécution
+- Opérations de fabrication
+- Planification des ressources
+:::
+
+::: notes
+Insister sur la séparation des responsabilités entre PLM et ERP.
+:::
+
+---
+id: landscape
+layout: title-only
+elements:
+  - id: plm-box
+    type: shape
+    shape: roundRect
+    x: 0.9
+    y: 2.2
+    w: 3.2
+    h: 1.4
+    content: '**PLM**'
+    style:
+      fill: theme.accent1
+      fontSize: 24
+      align: center
+  - id: mes-box
+    type: shape
+    shape: roundRect
+    x: 5.05
+    y: 2.2
+    w: 3.2
+    h: 1.4
+    content: '**MES**'
+    style:
+      fill: theme.accent2
+      fontSize: 24
+  - id: erp-box
+    type: shape
+    shape: roundRect
+    x: 9.2
+    y: 2.2
+    w: 3.2
+    h: 1.4
+    content: '**ERP**'
+    style:
+      fill: theme.dk2
+      fontSize: 24
+  - id: flow-1
+    type: shape
+    shape: rightArrow
+    x: 4.2
+    y: 2.65
+    w: 0.75
+    h: 0.5
+    style:
+      fill: theme.dk1.lighter40
+  - id: flow-2
+    type: shape
+    shape: rightArrow
+    x: 8.35
+    y: 2.65
+    w: 0.75
+    h: 0.5
+    style:
+      fill: theme.dk1.lighter40
+  - id: caption
+    type: text
+    x: 0.6823
+    y: 4.2987
+    w: 11.5
+    h: 1.2
+    content: |-
+      Nomenclature d'ingénierie → nomenclature de fabrication → ordres de fabrication
+      *Flux unidirectionnels, référentiel article maîtrisé par le PLM*
+    style:
+      fontSize: 16
+      align: center
+---
+
+# Paysage cible
+
+---
+id: diagram
+layout: title-only
+---
+
+# Flux applicatifs
+
+---
+id: diagram-1
+layout: title-only
+elements:
+  - id: diagram-1
+    type: image
+    x: 5.6676
+    y: 1.9949
+    w: 2.3226
+    h: 3.5103
+    src: diagrams/architecture.gmc
+    alt: architecture
+---
+
+# Flux applicatifs
+
+---
+id: roadmap
+layout: content
+---
+
+# Feuille de route
+
+| Lot | Périmètre | Échéance |
+| :---: | --- | --- |
+| 1 | Référentiel article PLM | T1 2027 |
+| 2 | Interface PLM → ERP | T1 2028 |
+| 3 | Intégration MES | T1 2029 |
+
+---
+id: roadmap-1
+layout: content
+---
+
+# Feuille de route
+
+---
+id: end
+layout: end
+elements:
+  - id: body-1
+    type: text
+    placeholder: body
+    content: Hello
+  - id: body-2-1
+    type: text
+    placeholder: body-2
+    content: Waw
+---
+
+# Merci

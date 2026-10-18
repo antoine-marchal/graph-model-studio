@@ -32,7 +32,7 @@ import { DEFAULT_SETTINGS, SETTING_KEYS, THEMES, mergeSettings } from "../webvie
 import packageJson from "../../package.json";
 import { sourceBlockLines } from "../webview/sourceLines";
 import { splitBlocks, diffBlocks, similarity } from "../webview/renderedDiff";
-import { parseDirective, setDirectiveAttr, gmcEmbedDirective, gmcViewNames, setFenceOption, parseTableLayout, formatTableLayout, COLUMNS_OPEN, COLUMN_OPEN } from "../webview/conversion-utils";
+import { parseDirective, setDirectiveAttr, gmcEmbedDirective, gmcViewNames, setFenceOption, parseTableLayout, formatTableLayout, COLUMNS_OPEN, COLUMN_OPEN, columnOpen } from "../webview/conversion-utils";
 import { AlignBlock, Highlight, HASHTAG_RE, highlightBlockTr, setBlockAlignTr } from "../webview/extensions/BlockStyle";
 import { isMetaComment } from "../webview/extensions/RawHtmlBlock";
 import { getSchema } from "@tiptap/core";
@@ -916,6 +916,9 @@ async function run() {
       /^<div data-type="columns">\s*<div data-type="column">\s*<h1>A<\/h1>[\s\S]*<\/div>\s*<div data-type="column">\s*<p>b<\/p>\s*<\/div>\s*<\/div>$/.test(html.trim()), html);
     await roundtripCase("columns survive", `${cols}\n\nafter`);
     await roundtripCase("empty column survives", `${COLUMNS_OPEN}\n\n${COLUMN_OPEN}\n\nx\n\n</div>\n\n${COLUMN_OPEN}\n\n</div>\n\n</div>`);
+    const sized = `${COLUMNS_OPEN}\n\n${columnOpen(0.67)}\n\na\n\n</div>\n\n${columnOpen(1.33)}\n\nb\n\n</div>\n\n</div>`;
+    assert("column width → data-flex", (await mdToHtml(sized)).includes('<div data-type="column" data-flex="0.67">'), sized);
+    await roundtripCase("column widths survive", sized);
   }
   {
     const html = await mdToHtml('a <mark>b **c**</mark> <mark data-color="red">d</mark> e');

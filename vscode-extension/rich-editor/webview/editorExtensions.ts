@@ -19,6 +19,7 @@ import { DirectiveBlock } from "./extensions/DirectiveBlock";
 import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/BlockStyle";
 import { TableFilter } from "./extensions/TableFilter";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
+import { HeadingIndent } from "./extensions/HeadingIndent";
 
 const lowlight = createLowlight(common);
 
@@ -59,5 +60,6 @@ export function contentExtensions() {
     MathInline,
     MathBlock,
     GitHubEmbed,
+    HeadingIndent,
   ];
 }

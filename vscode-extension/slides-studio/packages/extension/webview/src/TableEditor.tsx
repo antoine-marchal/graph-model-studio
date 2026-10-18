@@ -1,0 +1,496 @@
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
+import { tableWeights, type ElementPatch, type ResolvedElement } from '@corporate-slides/core';
+import { PPI } from '@corporate-slides/renderer';
+import { useEditor } from './store';
+import { Icon, type IconName } from './icons';
+
+/*
+ * Table editing with the Markdown Studio UX: cells edited in place, Tab / Enter / arrows move
+ * between cells, drag or Shift+click selects a range (count, Σ and average shown), a floating
+ * toolbar inserts / deletes rows and columns and aligns them, and the fill handle extends a
+ * series over the cells it is dragged across, and column / row borders drag to resize. Edits are
+ * applied as one mutation on exit (Escape, or a click anywhere outside the table).
+ */
+
+type Align = 'left' | 'center' | 'right' | null;
+type VAlign = 'top' | 'middle' | 'bottom';
+interface Rect {
+  r0: number;
+  c0: number;
+  r1: number;
+  c1: number;
+}
+const norm = (a: { r: number; c: number }, b: { r: number; c: number }): Rect => ({ r0: Math.min(a.r, b.r), c0: Math.min(a.c, b.c), r1: Math.max(a.r, b.r), c1: Math.max(a.c, b.c) });
+
+/** Last pointer press: editing opened by a double-click starts in the clicked cell. */
+let lastPointer = { x: -1, y: -1 };
+window.addEventListener('pointerdown', (e) => (lastPointer = { x: e.clientX, y: e.clientY }), true);
+
+const NUM_RE = /^[-+]?(\d+[.,]?\d*|[.,]\d+)$/;
+const parseNum = (t: string): number | null => {
+  const c = t.trim().replace(/[\s ]/g, '').replace(/^[$€£¥]|[$€£¥%]$/g, '');
+  return c && NUM_RE.test(c) ? parseFloat(c.replace(',', '.')) : null;
+};
+const fmt = (n: number) => (Number.isInteger(n) ? n.toLocaleString('fr-FR') : n.toLocaleString('fr-FR', { maximumFractionDigits: 4 }));
+
+/** Values continuing `seed` over `count` cells: numeric series, "Item 3" series, or repetition. */
+export function fillSeries(seed: string[], count: number): string[] {
+  const nums = seed.map(parseNum);
+  if (seed.length >= 2 && nums.every((n) => n !== null)) {
+    const step = (nums[nums.length - 1]! - nums[0]!) / (seed.length - 1);
+    const decimals = Math.max(...seed.map((s) => (s.split(/[.,]/)[1] ?? '').length));
+    return Array.from({ length: count }, (_, i) => (nums[nums.length - 1]! + step * (i + 1)).toFixed(decimals));
+  }
+  const m = seed.map((s) => /^(.*?)(\d+)(\D*)$/.exec(s));
+  if (seed.length && m.every((x) => x && x[1] === m[0]![1] && x[3] === m[0]![3]) && !(seed.length === 1 && nums[0] !== null)) {
+    const vals = m.map((x) => Number(x![2]));
+    const step = vals.length >= 2 ? (vals[vals.length - 1]! - vals[0]!) / (vals.length - 1) : 1;
+    const width = m[0]![2]!.length;
+    return Array.from({ length: count }, (_, i) => `${m[0]![1]}${String(Math.round(vals[vals.length - 1]! + step * (i + 1))).padStart(width, '0')}${m[0]![3]}`);
+  }
+  return Array.from({ length: count }, (_, i) => seed[i % seed.length] ?? '');
+}
+
+export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch: ElementPatch | null) => void }) {
+  const el = r.element;
+  if (el.type !== 'table') throw new Error('TableEditor: not a table');
+  const master = useEditor((s) => s.master)!;
+  const width = Math.max(...el.rows.map((x) => x.length));
+  const [rows, setRows] = useState<string[][]>(() => el.rows.map((row) => Array.from({ length: width }, (_, i) => row[i] ?? '')));
+  const [colAlign, setColAlign] = useState<Align[]>(() => Array.from({ length: width }, (_, i) => el.colAlign?.[i] ?? null));
+  const [valign, setValign] = useState<VAlign>(el.style?.valign ?? 'middle');
+  const [header, setHeader] = useState(el.header !== false);
+  const [colW, setColW] = useState(() => tableWeights(el.colWidths, width));
+  const [rowH, setRowH] = useState(() => tableWeights(el.rowHeights, el.rows.length));
+  const [sel, setSel] = useState<{ a: { r: number; c: number }; h: { r: number; c: number } }>({ a: { r: 0, c: 0 }, h: { r: 0, c: 0 } });
+  const [gen, setGen] = useState(0);
+  const [fill, setFill] = useState<Rect | null>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const done = useRef(false);
+  const focusCell = useRef<{ r: number; c: number; select?: boolean } | null>(null);
+  const state = useRef({ rows, colAlign, valign, header, colW, rowH });
+  state.current = { rows, colAlign, valign, header, colW, rowH };
+  /** Text as typed, kept current on every keystroke: the DOM is gone when a click outside unmounts us. */
+  const typed = useRef(rows);
+  useLayoutEffect(() => {
+    typed.current = rows.map((row) => [...row]);
+  }, [rows]);
+  const rect = norm(sel.a, sel.h);
+
+  /** Cell texts as typed (the DOM is the live state while editing). */
+  const read = (): string[][] => {
+    const t = tableRef.current;
+    if (!t) return typed.current;
+    return state.current.rows.map((row, ri) => row.map((v, ci) => (t.querySelector<HTMLElement>(`[data-cell="${ri}:${ci}"]`)?.innerText ?? v).replace(/\n/g, ' ').trimEnd()));
+  };
+  /** Structural change: sync typed text, rebuild the cells, keep the caret at (r, c). */
+  const restructure = (next: string[][], align: Align[], at: { r: number; c: number }, widths = colW, heights = rowH) => {
+    setRows(next);
+    setColAlign(align);
+    setColW(tableWeights(widths, next[0]?.length ?? 1));
+    setRowH(tableWeights(heights, next.length));
+    focusCell.current = { r: Math.max(0, Math.min(at.r, next.length - 1)), c: Math.max(0, Math.min(at.c, (next[0]?.length ?? 1) - 1)) };
+    setSel({ a: focusCell.current, h: focusCell.current });
+    setGen((g) => g + 1);
+  };
+
+  const commit = () => {
+    if (done.current) return;
+    done.current = true;
+    const s = state.current;
+    const next = read();
+    const patch: ElementPatch = {};
+    if (JSON.stringify(next) !== JSON.stringify(el.rows)) patch.rows = next;
+    const ca = s.colAlign.slice(0, next[0]?.length ?? 0);
+    if (JSON.stringify(ca) !== JSON.stringify(Array.from({ length: ca.length }, (_, i) => el.colAlign?.[i] ?? null))) patch.colAlign = ca;
+    if (s.valign !== (el.style?.valign ?? 'middle')) patch.style = { valign: s.valign === 'middle' ? null : s.valign };
+    if (s.header !== (el.header !== false)) patch.header = s.header;
+    const round = (w: number[]) => w.map((x) => Math.round(x * 1000) / 1000);
+    const same = (a: number[], b: number[]) => JSON.stringify(round(a)) === JSON.stringify(round(b));
+    if (!same(s.colW, tableWeights(el.colWidths, next[0]?.length ?? 1))) patch.colWidths = round(s.colW);
+    if (!same(s.rowH, tableWeights(el.rowHeights, next.length))) patch.rowHeights = round(s.rowH);
+    onDone(Object.keys(patch).length ? patch : null);
+  };
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  // Leaving editing (click elsewhere clears editingId) unmounts us: commit then.
+  useEffect(() => () => commitRef.current(), []);
+
+  useLayoutEffect(() => {
+    const start = cellAt(lastPointer.x, lastPointer.y) ?? { r: 0, c: 0 };
+    focusCell.current = { ...start, select: true };
+    setSel({ a: start, h: start });
+  }, []);
+
+  useLayoutEffect(() => {
+    const f = focusCell.current;
+    if (!f) return;
+    focusCell.current = null;
+    const cell = tableRef.current?.querySelector<HTMLElement>(`[data-cell="${f.r}:${f.c}"]`);
+    if (!cell) return;
+    cell.focus();
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    if (!f.select) range.collapse(false);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  });
+
+  const go = (r0: number, c0: number, select = true) => {
+    const R = rows.length, C = rows[0]?.length ?? 1;
+    const r1 = Math.max(0, Math.min(R - 1, r0)), c1 = Math.max(0, Math.min(C - 1, c0));
+    focusCell.current = { r: r1, c: c1, select };
+    setSel({ a: { r: r1, c: c1 }, h: { r: r1, c: c1 } });
+  };
+
+  const caretAtEdge = (cell: HTMLElement, end: boolean) => {
+    const s = window.getSelection();
+    if (!s || !s.isCollapsed) return false;
+    const range = document.createRange();
+    range.selectNodeContents(cell);
+    range.setEnd(s.anchorNode!, s.anchorOffset);
+    const before = range.toString().length;
+    return end ? before >= cell.innerText.replace(/\n$/, '').length : before === 0;
+  };
+
+  const onKeyDown = (e: React.KeyboardEvent, ri: number, ci: number) => {
+    e.stopPropagation();
+    const R = rows.length, C = rows[0]?.length ?? 1;
+    const cell = e.currentTarget as HTMLElement;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const idx = ri * C + ci + (e.shiftKey ? -1 : 1);
+      if (idx >= R * C) {
+        const next = read();
+        restructure([...next, Array(C).fill('')], colAlign, { r: R, c: 0 }, colW, [...rowH, 1 / R]);
+      } else if (idx >= 0) {
+        setRows(read());
+        go(Math.floor(idx / C), idx % C);
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      setRows(read());
+      go(ri + (e.shiftKey ? -1 : 1), ci);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      setRows(read());
+      go(ri + (e.key === 'ArrowUp' ? -1 : 1), ci, false);
+    } else if ((e.key === 'ArrowLeft' && caretAtEdge(cell, false) && ci > 0) || (e.key === 'ArrowRight' && caretAtEdge(cell, true) && ci < C - 1)) {
+      e.preventDefault();
+      setRows(read());
+      go(ri, ci + (e.key === 'ArrowLeft' ? -1 : 1), false);
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && (rect.r1 > rect.r0 || rect.c1 > rect.c0)) {
+      e.preventDefault();
+      clearRange();
+    }
+  };
+
+  /* ------------------------------ range selection ------------------------------ */
+
+  const cellAt = (x: number, y: number) => {
+    const td = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-cell]');
+    if (!td || !tableRef.current?.contains(td)) return null;
+    const [r0, c0] = td.dataset.cell!.split(':').map(Number);
+    return { r: r0!, c: c0! };
+  };
+  const onCellPointerDown = (e: React.PointerEvent, ri: number, ci: number) => {
+    e.stopPropagation();
+    if (e.shiftKey) {
+      e.preventDefault();
+      setSel((s) => ({ a: s.a, h: { r: ri, c: ci } }));
+      return;
+    }
+    dragging.current = true;
+    setSel({ a: { r: ri, c: ci }, h: { r: ri, c: ci } });
+  };
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      if (!dragging.current && !fill) return;
+      const at = cellAt(e.clientX, e.clientY);
+      if (!at) return;
+      if (fill) {
+        // Fill handle: extend along the dominant direction only.
+        const base = norm(sel.a, sel.h);
+        const down = at.r - base.r1, right = at.c - base.c1, up = base.r0 - at.r, left = base.c0 - at.c;
+        const best = Math.max(down, right, up, left, 0);
+        setFill(best === 0 ? base : best === down ? { ...base, r1: at.r } : best === up ? { ...base, r0: at.r } : best === right ? { ...base, c1: at.c } : { ...base, c0: at.c });
+        return;
+      }
+      setSel((s) => (s.h.r === at.r && s.h.c === at.c ? s : { a: s.a, h: at }));
+      if (at.r !== sel.a.r || at.c !== sel.a.c) window.getSelection()?.removeAllRanges();
+    };
+    const up = () => {
+      dragging.current = false;
+      if (fill) applyFill(fill);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+  });
+
+  const applyFill = (target: Rect) => {
+    const base = norm(sel.a, sel.h);
+    setFill(null);
+    const next = read();
+    if (target.r1 > base.r1 || target.r0 < base.r0) {
+      for (let c = base.c0; c <= base.c1; c++) {
+        const seed = next.slice(base.r0, base.r1 + 1).map((row) => row[c]!);
+        if (target.r1 > base.r1) fillSeries(seed, target.r1 - base.r1).forEach((v, i) => (next[base.r1 + 1 + i]![c] = v));
+        else fillSeries([...seed].reverse(), base.r0 - target.r0).forEach((v, i) => (next[base.r0 - 1 - i]![c] = v));
+      }
+    } else if (target.c1 > base.c1 || target.c0 < base.c0) {
+      for (let r = base.r0; r <= base.r1; r++) {
+        const seed = next[r]!.slice(base.c0, base.c1 + 1);
+        if (target.c1 > base.c1) fillSeries(seed, target.c1 - base.c1).forEach((v, i) => (next[r]![base.c1 + 1 + i] = v));
+        else fillSeries([...seed].reverse(), base.c0 - target.c0).forEach((v, i) => (next[r]![base.c0 - 1 - i] = v));
+      }
+    } else return;
+    setRows(next);
+    setSel({ a: { r: target.r0, c: target.c0 }, h: { r: target.r1, c: target.c1 } });
+    setGen((g) => g + 1);
+  };
+
+  /* ------------------------------ toolbar actions ------------------------------ */
+
+  const C = rows[0]?.length ?? 1;
+  const insertRow = (after: boolean) => {
+    const next = read();
+    const at = after ? rect.r1 + 1 : rect.r0;
+    next.splice(at, 0, Array(C).fill(''));
+    restructure(next, colAlign, { r: at, c: rect.c0 }, colW, [...rowH.slice(0, at), 1 / rowH.length, ...rowH.slice(at)]);
+  };
+  const insertCol = (after: boolean) => {
+    const at = after ? rect.c1 + 1 : rect.c0;
+    const next = read().map((row) => [...row.slice(0, at), '', ...row.slice(at)]);
+    restructure(next, [...colAlign.slice(0, at), null, ...colAlign.slice(at)], { r: rect.r0, c: at }, [...colW.slice(0, at), 1 / colW.length, ...colW.slice(at)]);
+  };
+  const deleteRows = () => {
+    if (rows.length - (rect.r1 - rect.r0 + 1) < 1) return;
+    const keep = (_: unknown, i: number) => i < rect.r0 || i > rect.r1;
+    restructure(read().filter(keep), colAlign, { r: rect.r0, c: rect.c0 }, colW, rowH.filter(keep));
+  };
+  const deleteCols = () => {
+    if (C - (rect.c1 - rect.c0 + 1) < 1) return;
+    const keep = (_: unknown, i: number) => i < rect.c0 || i > rect.c1;
+    restructure(read().map((row) => row.filter(keep)), colAlign.filter(keep), { r: rect.r0, c: rect.c0 }, colW.filter(keep));
+  };
+  const alignCols = (a: Align) => {
+    setRows(read());
+    const current = colAlign[rect.c0] ?? null;
+    setColAlign(colAlign.map((x, i) => (i >= rect.c0 && i <= rect.c1 ? (current === a ? null : a) : x)));
+  };
+  const clearRange = () => {
+    const next = read().map((row, ri) => row.map((v, ci) => (ri >= rect.r0 && ri <= rect.r1 && ci >= rect.c0 && ci <= rect.c1 ? '' : v)));
+    setRows(next);
+    setGen((g) => g + 1);
+  };
+  const deleteTable = () => {
+    done.current = true;
+    const st = useEditor.getState();
+    const slideId = st.slideId;
+    st.setEditing(null);
+    if (slideId) st.mutate([{ kind: 'deleteElement', slideId, elementId: el.id }]);
+  };
+
+  /* ------------------------------ floating toolbar position ------------------------------ */
+
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useLayoutEffect(() => {
+    const update = () => {
+      const b = wrapRef.current?.getBoundingClientRect();
+      if (b) setPos({ top: Math.max(4, b.top - 38), left: Math.max(4, b.left) });
+    };
+    update();
+    window.addEventListener('resize', update);
+    document.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      document.removeEventListener('scroll', update, true);
+    };
+  }, []);
+
+  const multi = rect.r1 > rect.r0 || rect.c1 > rect.c0;
+  const stats = (() => {
+    if (!multi) return null;
+    const live = tableRef.current ? read() : rows;
+    const texts: string[] = [];
+    for (let i = rect.r0; i <= rect.r1; i++) for (let j = rect.c0; j <= rect.c1; j++) texts.push(live[i]?.[j] ?? '');
+    const nums = texts.map(parseNum).filter((n): n is number => n !== null);
+    const sum = nums.reduce((a, b) => a + b, 0);
+    return { count: texts.length, numeric: nums.length, sum };
+  })();
+  const hold = (e: React.MouseEvent) => e.preventDefault();
+  const btn = (icon: IconName, title: string, action: () => void, active = false, disabled = false) => (
+    <button type="button" className={`tbl-btn${active ? ' is-active' : ''}`} title={title} aria-label={title} aria-pressed={active || undefined} disabled={disabled} onMouseDown={hold} onClick={action}>
+      <Icon name={icon} />
+    </button>
+  );
+  const align = colAlign[rect.c0] ?? null;
+
+  const head = master.theme.colors.accent1 ?? '3E4A83';
+  const s = r.style;
+  const border = `0.5pt solid #${master.theme.palette.dk1?.lighter60 ?? 'A8A8A8'}`;
+  const fillRect = fill ?? null;
+  const inRect = (q: Rect | null, ri: number, ci: number) => !!q && ri >= q.r0 && ri <= q.r1 && ci >= q.c0 && ci <= q.c1;
+
+  return (
+    <div ref={wrapRef} className="table-editor" style={{ position: 'absolute', inset: 0 }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} data-testid="table-editor">
+      <table ref={tableRef} key={gen} style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ((el.style?.fontSize ?? 12) / 72) * PPI, color: `#${s.color}` }}>
+        <colgroup>
+          {colW.map((f, ci) => (
+            <col key={ci} style={{ width: `${f * 100}%` }} />
+          ))}
+        </colgroup>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri} style={{ height: `${(rowH[ri] ?? 0) * 100}%` }}>
+              {row.map((v, ci) => {
+                const style: CSSProperties = { border, padding: '0 8px', verticalAlign: valign, textAlign: colAlign[ci] ?? undefined, outline: 'none', ...(ri === 0 && header ? { background: `#${head}`, color: '#fff', fontWeight: 700 } : {}) };
+                return (
+                  <td
+                    key={ci}
+                    data-cell={`${ri}:${ci}`}
+                    className={`${inRect(rect, ri, ci) && multi ? 'is-range' : ''}${sel.h.r === ri && sel.h.c === ci ? ' is-active' : ''}${inRect(fillRect, ri, ci) && !inRect(rect, ri, ci) ? ' is-fill' : ''}`}
+                    style={style}
+                    contentEditable="plaintext-only"
+                    suppressContentEditableWarning
+                    spellCheck
+                    onFocus={() => !dragging.current && setSel((x) => (x.a.r === ri && x.a.c === ci && x.h.r === ri && x.h.c === ci ? x : multi ? x : { a: { r: ri, c: ci }, h: { r: ri, c: ci } }))}
+                    onPointerDown={(e) => onCellPointerDown(e, ri, ci)}
+                    onKeyDown={(e) => onKeyDown(e, ri, ci)}
+                    onInput={(e) => {
+                      const row = typed.current[ri];
+                      if (row) row[ci] = e.currentTarget.innerText.replace(/\n/g, ' ').trimEnd();
+                    }}
+                  >
+                    {v}
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <ResizeHandles colW={colW} rowH={rowH} wrapRef={wrapRef} onCols={setColW} onRows={setRowH} />
+      <RangeFrame tableRef={tableRef} rect={fill ?? rect} dashed={!!fill} onFillStart={() => setFill(rect)} />
+      {pos &&
+        createPortal(
+          <div className="tbl-toolbar" style={{ top: pos.top, left: pos.left }} onMouseDown={hold} role="toolbar" aria-label="Tableau" data-testid="table-toolbar">
+            {btn('rowAbove', 'Insérer une ligne au-dessus', () => insertRow(false))}
+            {btn('rowBelow', 'Insérer une ligne en dessous', () => insertRow(true))}
+            <span className="tbl-sep" />
+            {btn('colLeft', 'Insérer une colonne à gauche', () => insertCol(false))}
+            {btn('colRight', 'Insérer une colonne à droite', () => insertCol(true))}
+            <span className="tbl-sep" />
+            {btn('rowDelete', 'Supprimer la ligne', deleteRows, false, rows.length <= rect.r1 - rect.r0 + 1)}
+            {btn('colDelete', 'Supprimer la colonne', deleteCols, false, C <= rect.c1 - rect.c0 + 1)}
+            <span className="tbl-sep" />
+            {btn('alignLeft', 'Aligner la colonne à gauche', () => alignCols('left'), align === 'left')}
+            {btn('alignCenter', 'Centrer la colonne', () => alignCols('center'), align === 'center')}
+            {btn('alignRight', 'Aligner la colonne à droite', () => alignCols('right'), align === 'right')}
+            <span className="tbl-sep" />
+            {btn('vTop', 'Cellules : haut', () => setValign('top'), valign === 'top')}
+            {btn('vMiddle', 'Cellules : milieu', () => setValign('middle'), valign === 'middle')}
+            {btn('vBottom', 'Cellules : bas', () => setValign('bottom'), valign === 'bottom')}
+            <span className="tbl-sep" />
+            {btn('tableHeader', "Ligne d'en-tête", () => setHeader(!header), header)}
+            {stats && (
+              <>
+                <span className="tbl-sep" />
+                {btn('eraser', 'Effacer les cellules sélectionnées', clearRange)}
+                <span className="tbl-stats" title="Plage sélectionnée">
+                  {stats.count} cellules{stats.numeric > 0 && ` · Σ ${fmt(stats.sum)} · moy. ${fmt(stats.sum / stats.numeric)}`}
+                </span>
+              </>
+            )}
+            <span className="tbl-sep" />
+            {btn('trash', 'Supprimer le tableau', deleteTable)}
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+
+const MIN_FRACTION = 0.03;
+
+/** Drag handles on the inner column and row borders; dragging moves weight between the two neighbours. */
+function ResizeHandles({ colW, rowH, wrapRef, onCols, onRows }: { colW: number[]; rowH: number[]; wrapRef: React.RefObject<HTMLDivElement | null>; onCols: (w: number[]) => void; onRows: (h: number[]) => void }) {
+  const start = (e: React.PointerEvent, i: number, axis: 'col' | 'row') => {
+    e.preventDefault();
+    e.stopPropagation();
+    const box = wrapRef.current?.getBoundingClientRect();
+    if (!box) return;
+    const w0 = axis === 'col' ? colW : rowH;
+    const size = axis === 'col' ? box.width : box.height;
+    const origin = axis === 'col' ? e.clientX : e.clientY;
+    const pair = w0[i]! + w0[i + 1]!;
+    const cls = axis === 'col' ? 'is-col-resizing' : 'is-row-resizing';
+    document.body.classList.add(cls);
+    const move = (ev: PointerEvent) => {
+      const a = Math.max(MIN_FRACTION, Math.min(pair - MIN_FRACTION, w0[i]! + ((axis === 'col' ? ev.clientX : ev.clientY) - origin) / size));
+      const next = [...w0];
+      next[i] = a;
+      next[i + 1] = pair - a;
+      (axis === 'col' ? onCols : onRows)(next);
+    };
+    const up = () => {
+      document.body.classList.remove(cls);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  };
+  const edges = (w: number[]) => w.slice(0, -1).map((_, i) => w.slice(0, i + 1).reduce((a, b) => a + b, 0));
+  return (
+    <>
+      {edges(colW).map((f, i) => (
+        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: `${f * 100}%` }} title="Redimensionner la colonne" onPointerDown={(e) => start(e, i, 'col')} data-testid="col-resize" />
+      ))}
+      {edges(rowH).map((f, i) => (
+        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: `${f * 100}%` }} title="Redimensionner la ligne" onPointerDown={(e) => start(e, i, 'row')} data-testid="row-resize" />
+      ))}
+    </>
+  );
+}
+
+/** Excel-style frame around the selected range, with the fill handle on its bottom-right corner. */
+function RangeFrame({ tableRef, rect, dashed, onFillStart }: { tableRef: React.RefObject<HTMLTableElement | null>; rect: Rect; dashed: boolean; onFillStart: () => void }) {
+  const [box, setBox] = useState<{ left: number; top: number; width: number; height: number } | null>(null);
+  // Every render: cell sizes follow typing, resizing and restructuring.
+  useLayoutEffect(() => {
+    const t = tableRef.current;
+    const a = t?.querySelector<HTMLElement>(`[data-cell="${rect.r0}:${rect.c0}"]`);
+    const b = t?.querySelector<HTMLElement>(`[data-cell="${rect.r1}:${rect.c1}"]`);
+    const next = a && b ? { left: a.offsetLeft, top: a.offsetTop, width: b.offsetLeft + b.offsetWidth - a.offsetLeft, height: b.offsetTop + b.offsetHeight - a.offsetTop } : null;
+    if (JSON.stringify(next) !== JSON.stringify(box)) setBox(next);
+  });
+  if (!box) return null;
+  return (
+    <div className={`tbl-range-frame${dashed ? ' is-filling' : ''}`} style={box}>
+      <div
+        className="tbl-fill-handle"
+        title="Recopier vers le bas ou la droite (série)"
+        data-testid="fill-handle"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          document.body.classList.add('is-filling');
+          window.addEventListener('pointerup', () => document.body.classList.remove('is-filling'), { once: true });
+          onFillStart();
+        }}
+      />
+    </div>
+  );
+}

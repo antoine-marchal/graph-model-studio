@@ -14,10 +14,8 @@ const ACTIONS: { label: string; command: string }[] = [
   { label: "Export as PNG", command: "markdownToolkit.exportPng" },
   { label: "Export as DOCX (Pandoc)", command: "markdownToolkit.exportDocx" },
   { label: "Export all GMC diagrams (PNG)", command: "gmc.exportAllMarkdownDiagrams" },
-  { label: "Slides: preview", command: "slides.preview" },
-  { label: "Slides: export PDF", command: "slides.exportPdf" },
-  { label: "Slides: export PPTX", command: "slides.exportPptx" },
-  { label: "Slides: export editable PPTX", command: "slides.exportPptxEditable" },
+  { label: "Slides: open visual editor", command: "corporateSlides.openVisualEditor" },
+  { label: "Slides: export PPTX", command: "corporateSlides.exportPptx" },
 ];
 
 export function ToolkitMenu() {

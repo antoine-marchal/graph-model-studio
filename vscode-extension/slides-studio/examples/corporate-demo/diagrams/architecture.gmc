@@ -1,0 +1,24 @@
+model {
+  start = businessEvent "Demande reçue"
+  qualify = businessProcess "Qualifier" {
+    bu_eehx = businessProcess "Qualifier"
+  }
+  bu_nbkn = businessProcess "Qualifier" {
+    bu_mrzb = businessProcess "Qualifier"
+  }
+
+  start -> qualify
+  qualify -> bu_nbkn
+}
+
+views {
+  view main "Architecture" {
+    include *
+    autolayout lr
+    start at 265 161
+    qualify at 490 137
+    bu_eehx at 44 58
+    bu_nbkn at 804 117
+    bu_mrzb at 76 90
+  }
+}

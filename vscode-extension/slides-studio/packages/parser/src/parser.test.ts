@@ -1,0 +1,261 @@
+import { describe, expect, it } from 'vitest';
+import { applyToDocument, tableWeights, type Mutation, type SlideDocument } from '@corporate-slides/core';
+import { applyMutations, documentToDsl, parseDsl, parseMarkdown, parseSource, withoutSource, type SourceKind } from './index.js';
+
+export const MD = `---
+title: Enterprise Architecture
+master: corporate
+theme: default
+---
+
+---
+layout: title
+---
+
+# PLM / MES / ERP Architecture
+
+Target landscape and integration strategy
+
+---
+layout: two-columns
+---
+
+<!-- comment kept verbatim -->
+# Integration principles {#main-title}
+
+::: left
+## PLM
+- Product definition
+- Configuration **management**
+  - Nested
+:::
+
+::: right
+## MES / ERP
+1. Execution orchestration
+2. Resource planning
+:::
+
+::: notes
+Speaker notes here.
+:::
+`;
+
+export const DSL = `# Corporate deck (comment preserved)
+presentation:
+  title: Target Architecture
+  master: corporate
+
+slides:
+  - id: architecture-overview
+    layout: content
+    elements:
+      - id: title-1
+        type: text
+        content: Target Architecture
+        placeholder: title
+
+      - id: plm-box # the PLM box
+        type: shape
+        shape: roundRect
+        x: 1.0
+        y: 2.0
+        w: 3.2
+        h: 1.1
+        style:
+          fill: theme.accent1
+
+      - id: plm-label
+        type: text
+        content: PLM
+        x: 1.4
+        y: 2.3
+        w: 2.4
+        h: 0.5
+`;
+
+/** Canonical comparison: no source refs, elements in stacking order without explicit z. */
+function canon(doc: SlideDocument) {
+  const d = withoutSource(doc);
+  for (const s of d.slides) {
+    s.elements = s.elements
+      .map((e, i) => ({ e, z: e.z ?? i, i }))
+      .sort((a, b) => a.z - b.z || a.i - b.i)
+      .map(({ e }) => {
+        const { z: _z, ...rest } = e;
+        return rest as typeof e;
+      });
+  }
+  return d;
+}
+
+/** Source edit must be equivalent to the canonical edit (the round-trip contract). */
+function checkRoundTrip(kind: SourceKind, src: string, mutations: Mutation[]) {
+  const before = parseSource(src, kind);
+  expect(before.errors).toEqual([]);
+  const text = applyMutations(src, kind, mutations);
+  const after = parseSource(text, kind);
+  expect(after.errors).toEqual([]);
+  expect(canon(after.doc)).toEqual(canon(applyToDocument(before.doc, mutations)));
+  return text;
+}
+
+describe('Markdown parsing', () => {
+  it('parses frontmatter, slides, title/subtitle, slots, lists and notes', () => {
+    const { doc, errors } = parseMarkdown(MD);
+    expect(errors).toEqual([]);
+    expect(doc.metadata.title).toBe('Enterprise Architecture');
+    expect(doc.slides.map((s) => s.layout)).toEqual(['title', 'two-columns']);
+    const [s1, s2] = doc.slides;
+    expect(s1!.elements.map((e) => `${e.id}:${e.placeholder}`)).toEqual(['title:title', 'subtitle:subtitle']);
+    expect(s2!.elements.map((e) => e.id)).toEqual(['main-title', 'left', 'right']);
+    const left = s2!.elements[1]!;
+    expect(left.type === 'text' && left.paragraphs).toEqual([
+      { runs: [{ text: 'PLM' }], heading: 2 },
+      { runs: [{ text: 'Product definition' }], list: 'bullet' },
+      { runs: [{ text: 'Configuration ' }, { text: 'management', bold: true }], list: 'bullet' },
+      { runs: [{ text: 'Nested' }], list: 'bullet', level: 1 },
+    ]);
+    expect(s2!.notes).toBe('Speaker notes here.');
+    expect(s2!.elements[0]!.source).toMatchObject({ kind: 'markdown', startLine: 20 });
+  });
+
+  it('is deterministic', () => {
+    expect(parseMarkdown(MD).doc).toEqual(parseMarkdown(MD).doc);
+  });
+
+  it('edits title text in place, keeping ids, comments and other text', () => {
+    const text = checkRoundTrip('markdown', MD, [
+      { kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs: [{ text: 'Principes ' }, { text: "d'intégration", bold: true }] }] } },
+    ]);
+    expect(text).toContain("# Principes **d'intégration** {#main-title}");
+    expect(text).toContain('<!-- comment kept verbatim -->');
+    expect(text.replace(/# Principes.*\n/, '')).toBe(MD.replace(/# Integration.*\n/, ''));
+  });
+
+  it('refuses (never drops) run formatting Markdown cannot represent', () => {
+    expect(() =>
+      applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs: [{ text: 'x', color: 'theme.accent1' }] }] } }]),
+    ).toThrow(/DSL/);
+  });
+
+  it('stores geometry and style edits as frontmatter overrides', () => {
+    const text = checkRoundTrip('markdown', MD, [
+      { kind: 'updateElement', slideId: 'slide-2', elementId: 'left', patch: { x: 1.23456, y: 2, w: 5, h: 3, style: { color: 'theme.accent1' } } },
+    ]);
+    expect(text).toContain('layout: two-columns\nelements:\n  - id: left\n    x: 1.2346');
+  });
+
+  it('edits slot and subtitle text', () => {
+    checkRoundTrip('markdown', MD, [
+      { kind: 'updateElement', slideId: 'slide-2', elementId: 'right', patch: { paragraphs: [{ runs: [{ text: 'A' }], list: 'number' }, { runs: [{ text: 'B' }], list: 'number', level: 1 }] } },
+      { kind: 'updateElement', slideId: 'slide-1', elementId: 'subtitle', patch: { paragraphs: [{ runs: [{ text: 'Nouveau sous-titre' }] }] } },
+    ]);
+  });
+
+  it('adds, styles, reorders and deletes free elements', () => {
+    checkRoundTrip('markdown', MD, [
+      { kind: 'addElement', slideId: 'slide-1', element: { id: 'box', type: 'shape', shape: 'rect', x: 1, y: 1, w: 2, h: 1, style: { fill: 'theme.accent3' } } },
+      { kind: 'updateElement', slideId: 'slide-1', elementId: 'box', patch: { x: 3, style: { fill: 'theme.accent2' } } },
+      { kind: 'reorderElement', slideId: 'slide-1', elementId: 'box', direction: 'back' },
+      { kind: 'deleteElement', slideId: 'slide-1', elementId: 'subtitle' },
+    ]);
+  });
+
+  it('handles slide structure: add, duplicate, move, layout, notes, delete', () => {
+    const text = checkRoundTrip('markdown', MD, [
+      { kind: 'addSlide', slideId: 'new', layout: 'content', title: 'Nouvelle', afterSlideId: 'slide-1' },
+      { kind: 'duplicateSlide', slideId: 'slide-1', newSlideId: 'copy' },
+      { kind: 'moveSlide', slideId: 'slide-2', toIndex: 0 },
+      { kind: 'setSlideLayout', slideId: 'new', layout: 'two-columns' },
+      { kind: 'setNotes', slideId: 'slide-2', notes: 'Autres notes' },
+      { kind: 'setNotes', slideId: 'new', notes: 'Notes en en-tête' },
+      { kind: 'deleteSlide', slideId: 'copy' },
+    ]);
+    expect(parseMarkdown(text).doc.slides.map((s) => s.id)).toEqual(['slide-2', 'slide-1', 'new']);
+  });
+});
+
+describe('DSL', () => {
+  it('parses the DSL with content sugar and defaults', () => {
+    const { doc, errors } = parseDsl(DSL);
+    expect(errors).toEqual([]);
+    const els = doc.slides[0]!.elements;
+    expect(els.map((e) => e.type)).toEqual(['text', 'shape', 'text']);
+    expect(els[1]).toMatchObject({ shape: 'roundRect', x: 1, style: { fill: 'theme.accent1' } });
+  });
+
+  it('reports schema errors with line numbers', () => {
+    const { errors } = parseDsl('slides:\n  - id: a\n    layout: x\n    elements:\n      - id: e\n        type: shape\n        shape: blob\n');
+    expect(errors[0]).toMatch(/ligne 5/);
+  });
+
+  it('applies edits preserving comments and blank lines', () => {
+    const text = checkRoundTrip('dsl', DSL, [
+      { kind: 'updateElement', slideId: 'architecture-overview', elementId: 'plm-box', patch: { x: 2.5, w: 4, style: { fill: 'theme.accent2' } } },
+      { kind: 'updateElement', slideId: 'architecture-overview', elementId: 'plm-label', patch: { paragraphs: [{ runs: [{ text: 'PLM' }] }, { runs: [{ text: 'Teamcenter' }], list: 'bullet' }] } },
+    ]);
+    expect(text).toContain('# Corporate deck (comment preserved)');
+    expect(text).toContain('- id: plm-box # the PLM box');
+    expect(text).toContain('content: |-\n          PLM\n          - Teamcenter');
+  });
+
+  it('applies structural edits', () => {
+    checkRoundTrip('dsl', DSL, [
+      { kind: 'addSlide', slideId: 's2', layout: 'two-columns', title: 'Deux' },
+      { kind: 'duplicateSlide', slideId: 'architecture-overview', newSlideId: 'dup' },
+      { kind: 'moveSlide', slideId: 's2', toIndex: 0 },
+      { kind: 'reorderElement', slideId: 'dup', elementId: 'title-1', direction: 'front' },
+      { kind: 'addElement', slideId: 's2', element: { id: 'img', type: 'image', src: 'images/a.png', x: 1, y: 1, w: 2, h: 2 } },
+      { kind: 'deleteElement', slideId: 'dup', elementId: 'plm-label' },
+      { kind: 'setNotes', slideId: 's2', notes: 'ligne 1\nligne 2' },
+      { kind: 'deleteSlide', slideId: 'architecture-overview' },
+    ]);
+  });
+
+  it('serializes deterministically and round-trips Markdown → DSL', () => {
+    const md = parseMarkdown(MD).doc;
+    const dsl = documentToDsl(md);
+    expect(documentToDsl(md)).toBe(dsl);
+    expect(canon(parseDsl(dsl).doc)).toEqual(canon(md));
+  });
+
+  it('rejects remote image URLs', () => {
+    const { errors } = parseDsl('slides:\n  - id: a\n    layout: x\n    elements:\n      - id: i\n        type: image\n        src: https://evil.example/x.png\n');
+    expect(errors.join()).toMatch(/URL distante/);
+  });
+});
+
+describe('tables and connectors in sources', () => {
+  const md = `---\ntitle: T\n---\n\n---\nid: s\nlayout: content\n---\n\n# Plan\n\n| A | B |\n| --- | ---: |\n| 1 | 2 |\n`;
+  it('keeps GFM column alignment and rewrites it from the editor', () => {
+    const { doc } = parseMarkdown(md);
+    const t = doc.slides[0]!.elements.find((e) => e.type === 'table')!;
+    expect(t.type === 'table' && t.colAlign).toEqual([null, 'right']);
+    const out = applyMutations(md, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: t.id, patch: { colAlign: ['center', null], rows: [['A', 'B'], ['1', '2'], ['3', '4']] } }]);
+    expect(out).toContain('| :---: | --- |');
+    expect(out).toContain('| 3 | 4 |');
+  });
+  it('stores resized column widths / row heights of a Markdown table in the front matter', () => {
+    const t = parseMarkdown(md).doc.slides[0]!.elements.find((e) => e.type === 'table')!;
+    const out = applyMutations(md, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: t.id, patch: { colWidths: [0.7, 0.3], rowHeights: [0.4, 0.6] } }]);
+    const t2 = parseMarkdown(out).doc.slides[0]!.elements.find((e) => e.type === 'table')!;
+    expect(t2.type === 'table' && [t2.colWidths, t2.rowHeights]).toEqual([[0.7, 0.3], [0.4, 0.6]]);
+    expect(tableWeights([0.7], 3).map((x) => Math.round(x * 100))).toEqual([33, 33, 33]);
+    expect(tableWeights([2, 1], 2)).toEqual([2 / 3, 1 / 3]);
+  });
+  it('stores connectors and arrow/bullet styles in the front matter', () => {
+    const add: Mutation[] = [
+      { kind: 'addElement', slideId: 's', element: { id: 'a', type: 'shape', shape: 'can', x: 1, y: 1, w: 1, h: 1 } },
+      { kind: 'addElement', slideId: 's', element: { id: 'b', type: 'shape', shape: 'hexagon', x: 4, y: 1, w: 1, h: 1, style: { radius: 0.2 } } },
+      { kind: 'addElement', slideId: 's', element: { id: 'c', type: 'connector', from: 'a', to: 'b', route: 'elbow', style: { endArrow: 'stealth' } } },
+    ];
+    const out = applyMutations(md, 'markdown', add);
+    const { doc, errors } = parseMarkdown(out);
+    expect(errors).toEqual([]);
+    const c = doc.slides[0]!.elements.find((e) => e.id === 'c');
+    expect(c).toMatchObject({ type: 'connector', from: 'a', to: 'b', route: 'elbow', style: { endArrow: 'stealth' } });
+    const moved = applyMutations(out, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'c', patch: { route: 'curved', fromSide: 'bottom' } }]);
+    expect(parseMarkdown(moved).doc.slides[0]!.elements.find((e) => e.id === 'c')).toMatchObject({ route: 'curved', fromSide: 'bottom' });
+  });
+});

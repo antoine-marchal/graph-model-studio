@@ -24,7 +24,8 @@ html, body, #root {
 .editor-toolbar {
   position: sticky;
   top: 0;
-  z-index: 5;
+  /* Above .sticky-headings (100), below the search bar (200). */
+  z-index: 150;
   height: 0;
   overflow: visible;
   display: flex;
@@ -37,6 +38,11 @@ html, body, #root {
 
 .editor-toolbar > * {
   pointer-events: auto;
+}
+
+/* Opaque so the buttons stay legible over scrolled text. */
+.editor-toolbar :is(.diff-button, .settings-button):not(:hover):not(.active) {
+  background: var(--vscode-editor-background, #1e1e1e);
 }
 
 /* Tools menu (embeds / export / slides) */
@@ -3043,13 +3049,13 @@ body.zen-mode .tiptap-editor > .zen-here {
 
 /* ---------- Columns (<div class="ms-columns">) ---------- */
 .tiptap-editor .ms-columns {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
+  display: flex;
   gap: 24px;
   margin: 1em 0;
 }
+/* Width = flex-grow (Column `flex` attr, inline style); gap drag resizes. */
 .tiptap-editor .ms-column {
+  flex: 1 1 0;
   min-width: 0;
   padding: 2px 8px;
   margin: 0 -8px;
@@ -3063,6 +3069,13 @@ body.zen-mode .tiptap-editor > .zen-here {
 .tiptap-editor .ms-column:focus-within {
   outline-color: var(--vscode-editorIndentGuide-background, rgba(128, 128, 128, 0.35));
 }
+body.col-resize-hover .tiptap-editor,
+body.col-resize-hover .tiptap-editor *,
+body.col-resizing,
+body.col-resizing * {
+  cursor: col-resize !important;
+}
+body.col-resizing { user-select: none; }
 @media print {
   .tiptap-editor .ms-column { outline: none !important; }
 }
@@ -3325,4 +3338,302 @@ body.zen-mode .tiptap-editor > .zen-here {
 }
 .tiptap-editor .ms-diff-gap-after {
   border-bottom: 2px dashed var(--vscode-editorGutter-deletedBackground, #94151b);
+}
+
+/* ---------- GitLab rendered review (ReviewThreads) ----------
+   Discussions live inside the document, under the block they annotate.
+   Thread state carries the colour everywhere: gutter marker, pill, card. */
+.has-review {
+  --rv-open: var(--vscode-charts-blue, #3794ff);
+  --rv-resolved: var(--vscode-charts-green, #4fb35a);
+  --rv-note: var(--vscode-charts-purple, #b180d7);
+  --rv-draft: var(--vscode-charts-yellow, #d7a70f);
+  --rv-ui: 13px/1.5 var(--vscode-font-family, system-ui, sans-serif);
+  --rv-border: var(--vscode-widget-border, var(--vscode-panel-border, rgba(128, 128, 128, 0.35)));
+  --rv-muted: var(--vscode-descriptionForeground, #8b8b8b);
+}
+.has-review .tiptap-editor { padding-left: 5rem; }
+.has-review .toc-wrapper, .has-review .outline-rail { display: none; }
+
+/* Header row: the toolbar becomes the review bar. */
+.has-review .editor-toolbar {
+  height: auto;
+  min-height: 40px;
+  padding: 6px 16px;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--rv-border);
+}
+.has-review .editor-toolbar { flex-wrap: nowrap; }
+.rv-bar {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  font: var(--rv-ui);
+  font-size: 12.5px;
+  color: var(--rv-muted);
+}
+.rv-info {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 14px;
+}
+.rv-mr { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--vscode-foreground); }
+.rv-side { display: inline-flex; align-items: center; gap: 6px; }
+.rv-side::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+.rv-side.is-old { color: var(--vscode-gitDecoration-deletedResourceForeground, #e5534b); }
+.rv-side.is-new { color: var(--vscode-gitDecoration-addedResourceForeground, #57ab5a); }
+.rv-tally .is-open { color: var(--rv-open); font-weight: 600; }
+.rv-tally .is-resolved { color: var(--rv-resolved); }
+.rv-error { color: var(--vscode-errorForeground, #f48771); }
+.rv-bar-tools { display: inline-flex; flex: none; gap: 2px; }
+.rv-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  cursor: pointer;
+}
+.rv-icon:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground, rgba(128, 128, 128, 0.18)); }
+.rv-icon:disabled { opacity: 0.4; cursor: default; }
+.rv-spin { animation: rv-spin 0.9s linear infinite; }
+@keyframes rv-spin { to { transform: rotate(360deg); } }
+
+/* Gutter: comment marker coloured by state, "add comment" on hover. */
+.line-numbers.is-review .rv-gutter {
+  right: 0.75rem;
+  gap: 6px;
+  justify-content: flex-end;
+  width: 4rem;
+  opacity: 1;
+  pointer-events: auto;
+}
+.rv-num { opacity: 0.6; min-width: 2ch; text-align: right; }
+.rv-marker, .rv-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 0;
+  cursor: pointer;
+  font: 600 11px/1 var(--vscode-font-family, sans-serif);
+}
+.rv-marker {
+  --rv-c: var(--rv-open);
+  height: 20px;
+  padding: 0 6px 0 5px;
+  border-radius: 10px;
+  background: var(--rv-c);
+  color: var(--vscode-editor-background, #1e1e1e);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 120ms ease-out;
+}
+.rv-marker:hover { transform: scale(1.06); }
+.rv-marker[aria-expanded="false"] {
+  background: transparent;
+  color: var(--rv-c);
+  box-shadow: inset 0 0 0 1.5px var(--rv-c);
+}
+.rv-marker.is-resolved { --rv-c: var(--rv-resolved); }
+.rv-marker.is-note { --rv-c: var(--rv-note); }
+.rv-add {
+  width: 22px;
+  height: 20px;
+  justify-content: center;
+  padding: 0;
+  border-radius: 5px;
+  background: var(--vscode-button-background, #0e639c);
+  color: var(--vscode-button-foreground, #fff);
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+.rv-gutter:hover .rv-add, .rv-add:focus-visible { opacity: 1; }
+
+/* Thread cards inside the document. */
+.tiptap-editor .rv-slot {
+  font: var(--rv-ui);
+  color: var(--vscode-foreground);
+  white-space: normal;
+  cursor: auto;
+  user-select: text;
+}
+.rv-stack { display: grid; gap: 8px; margin: 10px 0 18px; }
+.rv-stack.is-top { margin-top: 0; }
+.tiptap-editor .rv-stack-note { margin: 0; font-size: 12px; color: var(--rv-muted); }
+.rv-thread {
+  --rv-c: var(--rv-open);
+  border: 1px solid color-mix(in srgb, var(--rv-c) 38%, var(--rv-border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--rv-c) 5%, var(--vscode-editor-background, #1e1e1e));
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+.rv-thread.is-resolved { --rv-c: var(--rv-resolved); }
+.rv-thread.is-note { --rv-c: var(--rv-note); }
+.rv-thread.is-draft { --rv-c: var(--rv-draft); }
+.rv-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 8px 0 4px;
+}
+.rv-thread:has(.rv-notes) .rv-thread-head,
+.rv-thread.is-draft .rv-thread-head { border-bottom: 1px solid color-mix(in srgb, var(--rv-c) 22%, transparent); }
+.rv-toggle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rv-toggle svg { flex: none; color: var(--rv-c); }
+.rv-toggle.is-static { cursor: default; }
+.rv-line { font-weight: 600; white-space: nowrap; }
+.rv-count { color: var(--rv-muted); white-space: nowrap; }
+.rv-peek { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--rv-muted); }
+.rv-peek b { color: var(--vscode-foreground); font-weight: 600; }
+.rv-line-input {
+  width: 6ch;
+  margin-left: 4px;
+  font: inherit;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, var(--rv-border));
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.rv-pill {
+  --rv-c: var(--rv-open);
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 10px 0 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--rv-c) 18%, transparent);
+  color: color-mix(in srgb, var(--rv-c) 78%, var(--vscode-foreground));
+}
+.rv-pill.is-resolved { --rv-c: var(--rv-resolved); }
+.rv-pill.is-note { --rv-c: var(--rv-note); }
+
+.tiptap-editor .rv-notes { list-style: none; margin: 0; padding: 12px 14px 4px; }
+.rv-note { display: grid; grid-template-columns: 28px 1fr; gap: 10px; padding-bottom: 12px; border-radius: 6px; }
+.rv-note.is-reply { position: relative; margin-left: 13px; padding-left: 22px; grid-template-columns: 24px 1fr; }
+.rv-note.is-reply::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: -10px;
+  width: 14px;
+  height: 22px;
+  border-left: 1px solid var(--rv-border);
+  border-bottom: 1px solid var(--rv-border);
+  border-bottom-left-radius: 8px;
+}
+.rv-avatar {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: hsl(var(--rv-hue, 210) 42% 40%);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.is-reply .rv-avatar { width: 24px; height: 24px; font-size: 10px; }
+.rv-note-main { min-width: 0; }
+.rv-note-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.rv-note-meta b { font-weight: 600; }
+.rv-handle, .rv-note-meta time { color: var(--rv-muted); font-size: 12px; }
+.tiptap-editor .rv-body { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.rv-note.is-flash { animation: rv-flash 1.8s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes rv-flash {
+  from { background: color-mix(in srgb, var(--vscode-focusBorder, #007fd4) 28%, transparent); }
+  to { background: transparent; }
+}
+
+.rv-reply-field, .rv-composer textarea {
+  display: block;
+  box-sizing: border-box;
+  width: calc(100% - 28px);
+  margin: 0 14px 12px;
+  padding: 7px 10px;
+  border: 1px solid var(--vscode-input-border, var(--rv-border));
+  border-radius: 6px;
+  background: var(--vscode-input-background, rgba(0, 0, 0, 0.2));
+  color: var(--vscode-input-foreground, inherit);
+  font: inherit;
+  text-align: left;
+}
+.rv-reply-field { color: var(--vscode-input-placeholderForeground, var(--rv-muted)); cursor: text; }
+.rv-reply-field:hover { border-color: color-mix(in srgb, var(--rv-c) 50%, var(--rv-border)); }
+.rv-composer { margin: 0; padding-top: 12px; }
+.rv-thread:has(.rv-notes) .rv-composer { padding-top: 0; }
+.rv-composer textarea { margin-bottom: 8px; resize: vertical; min-height: 64px; }
+.rv-composer textarea:focus, .rv-reply-field:focus-visible { outline: none; border-color: var(--vscode-focusBorder, #007fd4); }
+.rv-composer-foot { display: flex; align-items: center; gap: 8px; padding: 0 14px 12px; }
+.rv-hint { margin-right: auto; font-size: 12px; color: var(--rv-muted); }
+.rv-btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 5px;
+  background: var(--vscode-button-secondaryBackground, rgba(128, 128, 128, 0.2));
+  color: var(--vscode-button-secondaryForeground, inherit);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.rv-btn:hover:not(:disabled) { background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.3)); }
+.rv-btn.is-primary { background: var(--vscode-button-background, #0e639c); color: var(--vscode-button-foreground, #fff); }
+.rv-btn.is-primary:hover:not(:disabled) { background: var(--vscode-button-hoverBackground, #1177bb); }
+.rv-btn.is-ghost { background: transparent; color: var(--rv-muted); }
+.rv-btn.is-ghost:hover:not(:disabled) { color: var(--vscode-foreground); }
+.rv-btn:disabled { opacity: 0.5; cursor: default; }
+.rv-bar :focus-visible, .rv-slot :focus-visible, .rv-gutter :focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rv-spin, .rv-note.is-flash { animation: none; }
+  .rv-marker, .rv-add { transition: none; }
+}
+@media (max-width: 600px) {
+  .has-review .tiptap-editor { padding-left: 4rem; padding-right: 1rem; }
+  .rv-hint, .rv-peek { display: none; }
+}
+
+/* ---------- Heading indentation (indentHeadings setting) ---------- */
+/* --ms-hdepth is set per top-level block by the HeadingIndent extension. */
+body.indent-headings .tiptap-editor > [style*="--ms-hdepth"] {
+  margin-left: calc(var(--ms-hdepth) * 2em);
 }

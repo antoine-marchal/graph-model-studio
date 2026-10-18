@@ -4,14 +4,15 @@ const gmc = require('../dist/extension.js')
 const richEditor = require('../dist/rich-editor/extension.js')
 const markdownEmbedder = require('./markdown-code-embedder/extension.js')
 const markdownToolkit = require('./markdown-toolkit/extension.js')
-const slides = require('./slides/extension.js')
+const slides = require('../dist/slides-studio/extension.cjs')
 
 function activate(context) {
   markdownEmbedder.activate(context)
   markdownToolkit.activate(context)
-  slides.activate(context)
   richEditor.activate(context)
-  return gmc.activate(context)
+  const api = gmc.activate(context)
+  // Corporate Slides Studio (PowerPoint as code); its API serves the extension host tests.
+  return { ...api, slides: slides.activate(context) }
 }
 
 function deactivate() {

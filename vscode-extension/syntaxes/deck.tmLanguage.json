@@ -1,0 +1,5 @@
+{
+  "name": "Deck",
+  "scopeName": "text.html.markdown.deck",
+  "patterns": [{ "include": "text.html.markdown" }]
+}

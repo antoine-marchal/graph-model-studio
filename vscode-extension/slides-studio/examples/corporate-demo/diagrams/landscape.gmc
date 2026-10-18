@@ -1,0 +1,22 @@
+model {
+  plm = softwareSystem "PLM" {
+    description "Définition produit"
+  }
+  mes = softwareSystem "MES" {
+    description "Exécution"
+  }
+  erp = softwareSystem "ERP" {
+    description "Planification"
+  }
+
+  plm -> erp "Nomenclatures"
+  erp -> mes "Ordres de fabrication"
+  mes -> erp "Déclarations"
+}
+
+views {
+  view main "Flux applicatifs" {
+    include *
+    autolayout lr
+  }
+}

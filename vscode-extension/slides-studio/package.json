@@ -1,0 +1,33 @@
+{
+  "name": "slides-studio-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:e2e": "pnpm --filter corporate-slides-studio run build:webview && playwright test",
+    "build": "pnpm --filter @corporate-slides/cli run build && pnpm --filter corporate-slides-studio run build",
+    "slides": "node packages/cli/dist/cli.cjs",
+    "test:host": "pnpm --filter corporate-slides-studio run test:host"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "24.19.2",
+    "esbuild": "0.28.2",
+    "typescript": "6.0.3",
+    "vitest": "5.0.5",
+    "jszip": "3.10.2",
+    "pngjs": "7.0.0",
+    "@types/pngjs": "6.0.5",
+    "@corporate-slides/core": "workspace:*",
+    "@corporate-slides/master-extractor": "workspace:*",
+    "@corporate-slides/parser": "workspace:*",
+    "@corporate-slides/pptx-generator": "workspace:*",
+    "@corporate-slides/cli": "workspace:*"
+  }
+}

@@ -17,11 +17,15 @@ const CUSTOM_CSS_ID = "markdown-studio-custom-css";
  * `<head>` so it wins ties against the bundled stylesheet and theme.
  */
 export function useAppearance(settings: BetterMarkdownSettings): void {
-  const { theme, contentWidth, fontSize, lineHeight, fontFamily, tableVerticalAlign } = settings;
+  const { theme, contentWidth, fontSize, lineHeight, fontFamily, tableVerticalAlign, indentHeadings } = settings;
   useEffect(() => {
     if (theme === "default") delete document.body.dataset.theme;
     else document.body.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    document.body.classList.toggle("indent-headings", indentHeadings);
+  }, [indentHeadings]);
 
   // Reading column (nuza-style): editor.css reads these variables.
   useEffect(() => {
