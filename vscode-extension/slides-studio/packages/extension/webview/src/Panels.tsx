@@ -15,6 +15,7 @@ import {
   type SlideNode,
   isDiagramSrc,
   type SlideElement,
+  tr,
 } from '@corporate-slides/core';
 import { PPI, SlideView } from '@corporate-slides/renderer';
 import { Icon, type IconName } from './icons';
@@ -163,7 +164,7 @@ export function AddSlideMenu({ trigger }: { trigger: (open: () => void) => React
     >
       {(close) => (
         <div className="layout-picker">
-          <input className="search" placeholder="Rechercher une disposition…" value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label="Rechercher une disposition" />
+          <input className="search" placeholder={tr("Rechercher une disposition…", "Search layouts…")} value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label={tr("Rechercher une disposition", "Search layouts")} />
           <div className="layout-grid">
             {layouts.map((l) => (
               <button
@@ -175,7 +176,7 @@ export function AddSlideMenu({ trigger }: { trigger: (open: () => void) => React
                   close();
                   const id = uniqueId('slide', doc.slides.map((s) => s.id));
                   const hasTitle = l.placeholders.some((p) => p.type === 'title');
-                  mutate([{ kind: 'addSlide', slideId: id, layout: l.aliases[0] ?? l.id, afterSlideId: slide?.id, ...(hasTitle ? { title: 'Titre' } : {}) }]);
+                  mutate([{ kind: 'addSlide', slideId: id, layout: l.aliases[0] ?? l.id, afterSlideId: slide?.id, ...(hasTitle ? { title: tr('Titre', 'Title') } : {}) }]);
                   select(id, []);
                 }}
               >
@@ -229,21 +230,21 @@ export function Navigator() {
 
   const ghost = (g: { slide: SlideNode }) => (
     <li key={`ghost-${g.slide.id}`} className={`slide-item is-ghost${ghostSlideId === g.slide.id ? ' is-current' : ''}`} data-testid={`slide-ghost-${g.slide.id}`}>
-      <button className="slide-button" onClick={() => set({ ghostSlideId: g.slide.id, showBase: false })} aria-label={`Diapositive supprimée ${g.slide.id}`}>
+      <button className="slide-button" onClick={() => set({ ghostSlideId: g.slide.id, showBase: false })} aria-label={tr(`Diapositive supprimée ${g.slide.id}`, `Deleted slide ${g.slide.id}`)}>
         <span className="slide-num"><Icon name="trash" size={12} /></span>
         <Thumb width={150}>
           <SlideView slide={g.slide} master={master} assets={assets} metadata={doc.metadata} />
         </Thumb>
       </button>
       <div className="slide-meta">
-        <span className="diff-chip diff-del">Supprimée</span>
+        <span className="diff-chip diff-del">{tr('Supprimée', 'Deleted')}</span>
         <span className="slide-layout">{g.slide.id}</span>
       </div>
     </li>
   );
 
   return (
-    <nav className="navigator" aria-label="Diapositives">
+    <nav className="navigator" aria-label={tr("Diapositives", "Slides")}>
       <ol className="slide-list" onDragLeave={() => setDropIndex(null)}>
         {ghostsAfter(null).map(ghost)}
         {doc.slides.map((s, i) => {
@@ -283,7 +284,17 @@ export function Navigator() {
                 setDropIndex(null);
               }}
             >
-              <button className="slide-button" onClick={() => select(s.id, [])} aria-current={s.id === slideId} aria-label={`Diapositive ${i + 1}`}>
+              <button
+                className="slide-button"
+                onClick={() => select(s.id, [])}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  select(s.id, []);
+                  useEditor.getState().set({ contextMenu: { x: e.clientX, y: e.clientY, target: 'slide' } });
+                }}
+                aria-current={s.id === slideId}
+                aria-label={`${tr('Diapositive', 'Slide')} ${i + 1}`}
+              >
                 <span className="slide-num">{i + 1}</span>
                 <Thumb width={150}>
                   <SlideView slide={s} master={master} assets={assets} metadata={doc.metadata} slideNumber={i + 1} />
@@ -291,7 +302,7 @@ export function Navigator() {
                 {threads > 0 && <span className="comment-chip" title={`${threads} discussion(s) ouverte(s)`}><Icon name="comment" size={12} />{threads}</span>}
               </button>
               <div className="slide-meta">
-                {change && <span className={`diff-chip diff-${change === 'added' ? 'add' : 'mod'}`} data-testid={`diff-chip-${s.id}`}>{change === 'added' ? 'Ajoutée' : 'Modifiée'}</span>}
+                {change && <span className={`diff-chip diff-${change === 'added' ? 'add' : 'mod'}`} data-testid={`diff-chip-${s.id}`}>{change === 'added' ? tr('Ajoutée', 'Added') : tr('Modifiée', 'Changed')}</span>}
                 <span className="slide-layout" title={layout?.name ?? s.layout}>{layout?.name ?? `⚠ ${s.layout}`}</span>
                 {issues.length > 0 && (
                   <span className={`badge ${errors ? 'badge-error' : 'badge-warn'}`} title={issues.map((d) => d.message).join('\n')}>
@@ -301,8 +312,8 @@ export function Navigator() {
               </div>
               {!readOnly && (
                 <div className="slide-actions">
-                  <IconButton icon="copy" label="Dupliquer la diapositive" onClick={() => mutate([{ kind: 'duplicateSlide', slideId: s.id, newSlideId: uniqueId(s.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
-                  <IconButton icon="trash" label="Supprimer la diapositive" disabled={doc.slides.length <= 1} onClick={() => mutate([{ kind: 'deleteSlide', slideId: s.id }])} />
+                  <IconButton icon="copy" label={tr("Dupliquer la diapositive", "Duplicate slide")} onClick={() => mutate([{ kind: 'duplicateSlide', slideId: s.id, newSlideId: uniqueId(s.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
+                  <IconButton icon="trash" label={tr("Supprimer la diapositive", "Delete slide")} disabled={doc.slides.length <= 1} onClick={() => mutate([{ kind: 'deleteSlide', slideId: s.id }])} />
                 </div>
               )}
             </li>,
@@ -329,9 +340,9 @@ export function NotesPane() {
         className="notes-input"
         value={notes}
         readOnly={readOnly}
-        aria-label="Notes de l'orateur"
+        aria-label={tr("Notes de l'orateur", "Speaker notes")}
         data-testid="notes"
-        placeholder="Cliquez pour ajouter des notes"
+        placeholder={tr("Cliquez pour ajouter des notes", "Click to add notes")}
         onChange={(e) => setNotes(e.target.value)}
         onKeyDown={(e) => e.stopPropagation()}
         onBlur={() => notes !== (slide.notes ?? '') && mutate([{ kind: 'setNotes', slideId: slide.id, notes }])}
@@ -344,25 +355,23 @@ export function NotesPane() {
 /* Inspector                                                           */
 /* ------------------------------------------------------------------ */
 
-function ColorPicker({ label, value, onChange, allowNone, testId }: { label: string; value: string | undefined; onChange: (v: string | null) => void; allowNone?: boolean; testId?: string }) {
+/** Corporate palette popup (theme tokens with tints/shades) plus a free color; shared by inspector and table toolbar. */
+export function PaletteMenu({ trigger, value, onChange, allowNone, testId }: { trigger: (open: () => void) => ReactNode; value: string | undefined; onChange: (v: string | null) => void; allowNone?: boolean; testId?: string }) {
+  return (
+    <Menu testId={testId} trigger={trigger}>
+      {(close) => <PaletteGrid value={value} onChange={onChange} allowNone={allowNone} testId={testId} close={close} />}
+    </Menu>
+  );
+}
+
+/** The palette itself (chips, free color, default / none), embeddable in any popup. */
+export function PaletteGrid({ value, onChange, allowNone, testId, close }: { value: string | undefined; onChange: (v: string | null) => void; allowNone?: boolean; testId?: string; close: () => void }) {
   const master = useEditor((s) => s.master)!;
   const tokens = paletteTokens(master);
   const base = tokens.filter((t) => t.token.split('.').length === 2);
-  const current = value ? tokens.find((t) => t.token === value) : undefined;
-  const hexValue = current?.hex ?? (value && !value.startsWith('theme.') && value !== 'none' ? value.replace('#', '') : undefined);
+  const custom = value && !value.startsWith('theme.') && value !== 'none' ? `#${value.replace('#', '')}` : '#000000';
   return (
-    <Menu
-      testId={testId ? `${testId}-menu` : undefined}
-      trigger={(open) => (
-        <button type="button" className="color-field" onClick={open} data-testid={testId} aria-label={`${label} : ${value ?? 'par défaut'}`}>
-          <span className="swatch" style={{ background: value === 'none' ? 'transparent' : hexValue ? `#${hexValue}` : 'transparent' }} data-none={value === 'none' || !hexValue} />
-          <span className="color-label">{label}</span>
-          <span className="color-token">{value ?? 'défaut'}</span>
-        </button>
-      )}
-    >
-      {(close) => (
-        <div className="palette">
+        <div className="palette" onMouseDown={(e) => e.target instanceof HTMLButtonElement && e.preventDefault()}>
           <div className="palette-rows">
             {base.map((b) => {
               const slot = b.token.split('.')[1]!;
@@ -372,6 +381,7 @@ function ColorPicker({ label, value, onChange, allowNone, testId }: { label: str
                   {[b, ...variants].map((t) => (
                     <button
                       key={t.token}
+                      type="button"
                       className={`palette-chip${t.token === value ? ' is-selected' : ''}`}
                       style={{ background: `#${t.hex}` }}
                       title={`${t.token} (#${t.hex})`}
@@ -388,12 +398,36 @@ function ColorPicker({ label, value, onChange, allowNone, testId }: { label: str
             })}
           </div>
           <div className="palette-actions">
-            <button className="menu-item" onClick={() => (onChange(null), close())}>Valeur par défaut</button>
-            {allowNone && <button className="menu-item" onClick={() => (onChange('none'), close())}>Aucune</button>}
+            <label className="menu-item palette-custom" title={tr('Couleur hors charte : signalée par la validation', 'Off-brand color: flagged by validation')}>
+              {/* Native `change` (picker closed), not React's per-drag `input`: one mutation per choice. */}
+              <input type="color" defaultValue={custom} ref={(n) => void (n && (n.onchange = () => (onChange(n.value.toUpperCase()), close())))} data-testid={testId ? `${testId}-custom` : undefined} />
+              {tr('Autre couleur…', 'More colors…')}
+            </label>
+            <button type="button" className="menu-item" onClick={() => (onChange(null), close())}>{tr('Valeur par défaut', 'Default')}</button>
+            {allowNone && <button type="button" className="menu-item" onClick={() => (onChange('none'), close())}>{tr('Aucune', 'None')}</button>}
           </div>
         </div>
+  );
+}
+
+export function ColorPicker({ label, value, onChange, allowNone, testId }: { label: string; value: string | undefined; onChange: (v: string | null) => void; allowNone?: boolean; testId?: string }) {
+  const master = useEditor((s) => s.master)!;
+  const current = value ? paletteTokens(master).find((t) => t.token === value) : undefined;
+  const hexValue = current?.hex ?? (value && !value.startsWith('theme.') && value !== 'none' ? value.replace('#', '') : undefined);
+  return (
+    <PaletteMenu
+      testId={testId ? `${testId}-menu` : undefined}
+      value={value}
+      onChange={onChange}
+      allowNone={allowNone}
+      trigger={(open) => (
+        <button type="button" className="color-field" onClick={open} data-testid={testId} aria-label={`${label} : ${value ?? tr('par défaut', 'default')}`}>
+          <span className="swatch" style={{ background: value === 'none' ? 'transparent' : hexValue ? `#${hexValue}` : 'transparent' }} data-none={value === 'none' || !hexValue} />
+          <span className="color-label">{label}</span>
+          <span className="color-token">{value ?? tr('défaut', 'default')}</span>
+        </button>
       )}
-    </Menu>
+    />
   );
 }
 
@@ -407,20 +441,20 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
   const style = (k: keyof ElementStyle, v: unknown) => upd({ style: { [k]: v } });
   const hasText = el.type === 'text' || (el.type === 'shape' && el.shape !== 'line') || el.type === 'table';
   const geom = (k: 'x' | 'y' | 'w' | 'h', v: number) => upd({ x: r.box.x, y: r.box.y, w: r.box.w, h: r.box.h, [k]: v });
-  const TYPE_LABEL: Record<string, string> = { text: 'Texte', shape: 'Forme', image: el.type === 'image' && isDiagramSrc(el.src) ? 'Diagramme GMC' : 'Image', table: 'Tableau', connector: 'Connecteur' };
+  const TYPE_LABEL: Record<string, string> = { text: tr('Texte', 'Text'), shape: tr('Forme', 'Shape'), image: el.type === 'image' && isDiagramSrc(el.src) ? tr('Diagramme GMC', 'GMC diagram') : 'Image', table: tr('Tableau', 'Table'), connector: tr('Connecteur', 'Connector') };
   const fonts = [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])];
 
   return (
     <>
       <div className="insp-head">
         <span className="insp-kind">{TYPE_LABEL[el.type]}</span>
-        <code className="insp-id" title="Identifiant stable">{el.id}</code>
+        <code className="insp-id" title={tr("Identifiant stable", "Stable identifier")}>{el.id}</code>
         <span className="grow" />
-        <IconButton icon={el.locked ? 'lock' : 'unlock'} label={el.locked ? 'Déverrouiller' : 'Verrouiller'} active={el.locked} onClick={() => upd({ locked: !el.locked })} />
-        <IconButton icon={el.hidden ? 'eyeOff' : 'eye'} label={el.hidden ? 'Afficher' : 'Masquer'} active={el.hidden} onClick={() => upd({ hidden: !el.hidden })} />
+        <IconButton icon={el.locked ? 'lock' : 'unlock'} label={el.locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock')} active={el.locked} onClick={() => upd({ locked: !el.locked })} />
+        <IconButton icon={el.hidden ? 'eyeOff' : 'eye'} label={el.hidden ? tr('Afficher', 'Show') : tr('Masquer', 'Hide')} active={el.hidden} onClick={() => upd({ hidden: !el.hidden })} />
         <IconButton
           icon="trash"
-          label="Supprimer l'élément"
+          label={tr("Supprimer l'élément", "Delete element")}
           onClick={() => {
             mutate(deleteMutations(slide, [el.id]));
             select(slide.id, []);
@@ -432,15 +466,15 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
         <Section title="Graph Model Studio">
           <p className="hint"><code>{el.src}</code> → rendu <code>{el.src.replace(/\.gmc$/i, '.png')}</code></p>
           <div className="row">
-            <button className="btn grow" data-testid="inspector-edit-gmc" onClick={() => useEditor.getState().set({ gmcEdit: el.src })}><Icon name="diagram" /> Modifier</button>
-            <button className="btn grow" onClick={() => post({ type: 'refreshGmc', src: el.src })}><Icon name="refresh" /> Actualiser</button>
+            <button className="btn grow" data-testid="inspector-edit-gmc" onClick={() => useEditor.getState().set({ gmcEdit: el.src })}><Icon name="diagram" /> {tr('Modifier', 'Edit')}</button>
+            <button className="btn grow" onClick={() => post({ type: 'refreshGmc', src: el.src })}><Icon name="refresh" /> {tr('Actualiser', 'Refresh')}</button>
           </div>
         </Section>
       )}
 
       <ShapeSections r={r} upd={upd} />
 
-      {el.type !== 'connector' && <Section title="Position et taille" aside={r.inheritedGeometry ? <span className="hint">hérité de la disposition</span> : undefined}>
+      {el.type !== 'connector' && <Section title={tr("Position et taille", "Position and size")} aside={r.inheritedGeometry ? <span className="hint">{tr('hérité de la disposition', 'inherited from the layout')}</span> : undefined}>
         <div className="grid2">
           <NumField label="X" unit="in" value={r.box.x} onCommit={(v) => geom('x', v)} testId="field-x" disabled={el.locked} />
           <NumField label="Y" unit="in" value={r.box.y} onCommit={(v) => geom('y', v)} testId="field-y" disabled={el.locked} />
@@ -451,15 +485,15 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
       </Section>}
 
       {hasText && (
-        <Section title="Typographie">
+        <Section title={tr("Typographie", "Typography")}>
           <div className="row">
             <select
               className="select grow"
-              aria-label="Police"
+              aria-label={tr("Police", "Font")}
               value={el.style?.fontFace ?? ''}
               onChange={(e) => style('fontFace', e.target.value || null)}
             >
-              <option value="">Disposition ({r.style.fontFace})</option>
+              <option value="">{tr('Disposition', 'Layout')} ({r.style.fontFace})</option>
               <option value="theme.heading">Titres — {master.theme.fonts.heading}</option>
               <option value="theme.body">Corps — {master.theme.fonts.body}</option>
               {fonts.map((f) => (
@@ -467,55 +501,54 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
               ))}
             </select>
             <NumField label="pt" value={el.style?.fontSize ?? r.style.fontSize} step={1} onCommit={(v) => style('fontSize', Math.max(4, v))} testId="field-size" />
-            <div className="seg" role="group" aria-label="Taille de police">
-              <IconButton icon="fontGrow" label="Augmenter la taille de police" onClick={() => style('fontSize', stepFontSize(r.style.fontSize, 1))} />
-              <IconButton icon="fontShrink" label="Réduire la taille de police" onClick={() => style('fontSize', stepFontSize(r.style.fontSize, -1))} />
+            <div className="seg" role="group" aria-label={tr("Taille de police", "Font size")}>
+              <IconButton icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} onClick={() => style('fontSize', stepFontSize(r.style.fontSize, 1))} />
+              <IconButton icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} onClick={() => style('fontSize', stepFontSize(r.style.fontSize, -1))} />
             </div>
           </div>
           <div className="row">
             <div className="seg" role="group" aria-label="Style">
-              <IconButton icon="bold" label="Gras" active={!!el.style?.bold} onClick={() => style('bold', el.style?.bold ? null : true)} />
-              <IconButton icon="italic" label="Italique" active={!!el.style?.italic} onClick={() => style('italic', el.style?.italic ? null : true)} />
-              <IconButton icon="underline" label="Souligné" active={!!el.style?.underline} onClick={() => style('underline', el.style?.underline ? null : true)} />
+              <IconButton icon="bold" label={tr("Gras", "Bold")} active={!!el.style?.bold} onClick={() => style('bold', el.style?.bold ? null : true)} />
+              <IconButton icon="italic" label={tr("Italique", "Italic")} active={!!el.style?.italic} onClick={() => style('italic', el.style?.italic ? null : true)} />
+              <IconButton icon="underline" label={tr("Souligné", "Underline")} active={!!el.style?.underline} onClick={() => style('underline', el.style?.underline ? null : true)} />
             </div>
-            <div className="seg" role="group" aria-label="Alignement horizontal">
+            <div className="seg" role="group" aria-label={tr("Alignement horizontal", "Horizontal alignment")}>
               {(['left', 'center', 'right', 'justify'] as const).map((a) => (
-                <IconButton key={a} icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: 'Aligner à gauche', center: 'Centrer', right: 'Aligner à droite', justify: 'Justifier' }[a]} active={r.style.align === a} onClick={() => style('align', a)} />
+                <IconButton key={a} icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: tr('Aligner à gauche', 'Align left'), center: tr('Centrer', 'Center'), right: tr('Aligner à droite', 'Align right'), justify: tr('Justifier', 'Justify') }[a]} active={r.style.align === a} onClick={() => style('align', a)} />
               ))}
             </div>
           </div>
           <div className="row">
-            <div className="seg" role="group" aria-label="Alignement vertical">
+            <div className="seg" role="group" aria-label={tr("Alignement vertical", "Vertical alignment")}>
               {(['top', 'middle', 'bottom'] as const).map((a) => (
-                <IconButton key={a} icon={a === 'top' ? 'vTop' : a === 'middle' ? 'vMiddle' : 'vBottom'} label={{ top: 'Haut', middle: 'Milieu', bottom: 'Bas' }[a]} active={r.style.valign === a} onClick={() => style('valign', a)} />
+                <IconButton key={a} icon={a === 'top' ? 'vTop' : a === 'middle' ? 'vMiddle' : 'vBottom'} label={{ top: tr('Haut', 'Top'), middle: tr('Milieu', 'Middle'), bottom: tr('Bas', 'Bottom') }[a]} active={r.style.valign === a} onClick={() => style('valign', a)} />
               ))}
             </div>
           </div>
         </Section>
       )}
 
-      <Section title="Couleurs de la charte">
+      <Section title={tr("Couleurs de la charte", "Brand colors")}>
         <div className="stack">
-          {el.type !== 'image' && el.type !== 'connector' && <ColorPicker label="Texte" value={el.style?.color} onChange={(v) => style('color', v)} testId="color-text" />}
-          {el.type === 'text' && <ColorPicker label="Fond" value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
-          {el.type === 'shape' && el.shape !== 'line' && <ColorPicker label="Remplissage" value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
-          {(el.type === 'shape' || el.type === 'connector') && <ColorPicker label={el.type === 'connector' || (el.type === 'shape' && el.shape === 'line') ? 'Trait' : 'Contour'} value={el.style?.line} onChange={(v) => style('line', v)} allowNone={el.type === 'shape'} testId="color-line" />}
+          {el.type !== 'image' && el.type !== 'connector' && <ColorPicker label={tr("Texte", "Text")} value={el.style?.color} onChange={(v) => style('color', v)} testId="color-text" />}
+          {el.type === 'text' && <ColorPicker label={tr("Fond", "Background")} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
+          {el.type === 'shape' && el.shape !== 'line' && <ColorPicker label={tr("Remplissage", "Fill")} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />}
         </div>
       </Section>
 
-      <Section title="Calque">
-        <div className="seg" role="group" aria-label="Ordre des calques">
+      <Section title={tr("Calque", "Layer")}>
+        <div className="seg" role="group" aria-label={tr("Ordre des calques", "Layer order")}>
           {(['front', 'forward', 'backward', 'back'] as const).map((d) => (
-            <IconButton key={d} icon={d} label={{ front: 'Premier plan', forward: 'Avancer', backward: 'Reculer', back: 'Arrière-plan' }[d]} onClick={() => mutate([{ kind: 'reorderElement', slideId: slide.id, elementId: el.id, direction: d }])} />
+            <IconButton key={d} icon={d} label={{ front: tr('Premier plan', 'Bring to front'), forward: tr('Avancer', 'Bring forward'), backward: tr('Reculer', 'Send backward'), back: tr('Arrière-plan', 'Send to back') }[d]} onClick={() => mutate([{ kind: 'reorderElement', slideId: slide.id, elementId: el.id, direction: d }])} />
           ))}
         </div>
       </Section>
 
       {(el.type === 'text' || el.type === 'image') && layout && (
-        <Section title="Espace réservé">
+        <Section title={tr("Espace réservé", "Placeholder")}>
           <select
             className="select"
-            aria-label="Espace réservé lié"
+            aria-label={tr("Espace réservé lié", "Bound placeholder")}
             value={el.placeholder ?? ''}
             onChange={(e) => {
               const v = e.target.value;
@@ -526,13 +559,13 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
               }
             }}
           >
-            <option value="">Libre (non lié)</option>
+            <option value="">{tr('Libre (non lié)', 'Free (unbound)')}</option>
             {layout.placeholders.map((p) => (
               <option key={p.key} value={p.key}>{p.key} — {p.type}</option>
             ))}
             {el.placeholder && !layout.placeholders.some((p) => p.key === el.placeholder) && <option value={el.placeholder}>{el.placeholder} (alias)</option>}
           </select>
-          <p className="hint">Lier un texte à un espace réservé conserve l'héritage de la disposition dans PowerPoint.</p>
+          <p className="hint">{tr('Lier un texte à un espace réservé conserve l\'héritage de la disposition dans PowerPoint.', 'Binding a text to a placeholder keeps the layout inheritance in PowerPoint.')}</p>
         </Section>
       )}
     </>
@@ -550,11 +583,11 @@ function SlideInspector() {
   return (
     <>
       <div className="insp-head">
-        <span className="insp-kind">Diapositive</span>
+        <span className="insp-kind">{tr('Diapositive', 'Slide')}</span>
         <code className="insp-id">{slide.id}</code>
       </div>
-      <Section title="Disposition corporate">
-        <select className="select" aria-label="Disposition" data-testid="slide-layout" value={layout?.id ?? slide.layout} onChange={(e) => {
+      <Section title={tr("Disposition corporate", "Corporate layout")}>
+        <select className="select" aria-label={tr("Disposition", "Layout")} data-testid="slide-layout" value={layout?.id ?? slide.layout} onChange={(e) => {
           const l = master.layouts.find((x) => x.id === e.target.value)!;
           mutate([{ kind: 'setSlideLayout', slideId: slide.id, layout: l.aliases[0] ?? l.id }]);
         }}>
@@ -575,8 +608,8 @@ function SlideInspector() {
           </ul>
         )}
       </Section>
-      <Section title="Conformité">
-        {issues.length === 0 ? <p className="hint ok">Aucun problème détecté sur cette diapositive.</p> : (
+      <Section title={tr("Conformité", "Compliance")}>
+        {issues.length === 0 ? <p className="hint ok">{tr('Aucun problème détecté sur cette diapositive.', 'No issue found on this slide.')}</p> : (
           <ul className="diag-list">
             {issues.map((d, i) => (
               <li key={i} className={d.severity}>
@@ -626,15 +659,15 @@ function MultiInspector({ rs }: { rs: ResolvedElement[] }) {
   };
   return (
     <>
-      <div className="insp-head"><span className="insp-kind">{rs.length} éléments</span></div>
-      <Section title="Aligner">
-        <div className="seg" role="group" aria-label="Aligner la sélection">
-          <IconButton icon="alignLeft" label="Aligner à gauche" onClick={() => align('left')} />
-          <IconButton icon="alignCenter" label="Centrer horizontalement" onClick={() => align('hcenter')} />
-          <IconButton icon="alignRight" label="Aligner à droite" onClick={() => align('right')} />
-          <IconButton icon="vTop" label="Aligner en haut" onClick={() => align('top')} />
-          <IconButton icon="vMiddle" label="Centrer verticalement" onClick={() => align('vcenter')} />
-          <IconButton icon="vBottom" label="Aligner en bas" onClick={() => align('bottom')} />
+      <div className="insp-head"><span className="insp-kind">{rs.length} {tr('éléments', 'elements')}</span></div>
+      <Section title={tr("Aligner", "Align")}>
+        <div className="seg" role="group" aria-label={tr("Aligner la sélection", "Align the selection")}>
+          <IconButton icon="alignLeft" label={tr("Aligner à gauche", "Align left")} onClick={() => align('left')} />
+          <IconButton icon="alignCenter" label={tr("Centrer horizontalement", "Center horizontally")} onClick={() => align('hcenter')} />
+          <IconButton icon="alignRight" label={tr("Aligner à droite", "Align right")} onClick={() => align('right')} />
+          <IconButton icon="vTop" label={tr("Aligner en haut", "Align top")} onClick={() => align('top')} />
+          <IconButton icon="vMiddle" label={tr("Centrer verticalement", "Center vertically")} onClick={() => align('vcenter')} />
+          <IconButton icon="vBottom" label={tr("Aligner en bas", "Align bottom")} onClick={() => align('bottom')} />
         </div>
       </Section>
     </>
@@ -665,22 +698,22 @@ export function StatusBar() {
   const open = anchors.filter((a) => !a.thread.resolved).length;
   return (
     <footer className="statusbar">
-      <span className="status-item">{doc ? `Diapositive ${index + 1} sur ${doc.slides.length}` : ''}</span>
+      <span className="status-item">{doc ? tr(`Diapositive ${index + 1} sur ${doc.slides.length}`, `Slide ${index + 1} of ${doc.slides.length}`) : ''}</span>
       <span className="status-item">{sourceKind === 'markdown' ? 'Markdown + YAML' : 'DSL YAML'}</span>
-      <span className={pending ? 'status-item sync is-pending' : 'status-item sync'} data-testid="sync-state">{pending ? 'Synchronisation…' : 'Synchronisé avec la source'}</span>
+      <span className={pending ? 'status-item sync is-pending' : 'status-item sync'} data-testid="sync-state">{pending ? tr('Synchronisation…', 'Syncing…') : tr('Synchronisé avec la source', 'Synced with the source')}</span>
       <button type="button" className={`status-btn diag-count${errors ? ' has-errors' : warnings ? ' has-warnings' : ''}`} data-testid="diag-count" title={[...parseErrors, ...diagnostics.map((d) => d.message)].join('\n')} onClick={() => post({ type: 'validate' })}>
-        {errors} erreur{errors > 1 ? 's' : ''} · {warnings} avertissement{warnings > 1 ? 's' : ''}
+        {errors} {errors > 1 ? tr('erreurs', 'errors') : tr('erreur', 'error')} · {warnings} {warnings > 1 ? tr('avertissements', 'warnings') : tr('avertissement', 'warning')}
       </button>
       <span className="grow" />
       <button type="button" className={`status-btn${notesOpen ? ' is-active' : ''}`} aria-pressed={notesOpen} onClick={() => set({ notesOpen: !notesOpen })}><Icon name="notes" size={14} /> Notes</button>
       <button type="button" className={`status-btn${pane === 'comments' ? ' is-active' : ''}`} aria-pressed={pane === 'comments'} onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })}><Icon name="comment" size={14} /> Commentaires{open ? ` (${open})` : ''}</button>
       <span className="sep" />
       <div className="zoom" role="group" aria-label="Zoom">
-        <button type="button" className="status-btn" aria-label="Zoom arrière" onClick={() => setZoom(Math.max(0.1, round4(z / 1.2)))}><Icon name="zoomOut" size={14} /></button>
-        <input type="range" min={10} max={400} step={1} value={Math.round(z * 100)} aria-label="Niveau de zoom" onChange={(e) => setZoom(Number(e.target.value) / 100)} />
-        <button type="button" className="status-btn" aria-label="Zoom avant" onClick={() => setZoom(Math.min(4, round4(z * 1.2)))}><Icon name="zoomIn" size={14} /></button>
+        <button type="button" className="status-btn" aria-label={tr("Zoom arrière", "Zoom out")} onClick={() => setZoom(Math.max(0.1, round4(z / 1.2)))}><Icon name="zoomOut" size={14} /></button>
+        <input type="range" min={10} max={400} step={1} value={Math.round(z * 100)} aria-label={tr("Niveau de zoom", "Zoom level")} onChange={(e) => setZoom(Number(e.target.value) / 100)} />
+        <button type="button" className="status-btn" aria-label={tr("Zoom avant", "Zoom in")} onClick={() => setZoom(Math.min(4, round4(z * 1.2)))}><Icon name="zoomIn" size={14} /></button>
         <span className="zoom-value" data-testid="zoom-value">{Math.round(z * 100)} %</span>
-        <button type="button" className={`status-btn${zoom === 'fit' ? ' is-active' : ''}`} aria-label="Ajuster la diapositive à la fenêtre" title="Ajuster la diapositive à la fenêtre" onClick={() => setZoom('fit')}><Icon name="fit" size={14} /></button>
+        <button type="button" className={`status-btn${zoom === 'fit' ? ' is-active' : ''}`} aria-label={tr("Ajuster la diapositive à la fenêtre", "Fit slide to window")} title={tr("Ajuster la diapositive à la fenêtre", "Fit slide to window")} onClick={() => setZoom('fit')}><Icon name="fit" size={14} /></button>
       </div>
     </footer>
   );

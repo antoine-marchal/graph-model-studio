@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ColAlign, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
+import { AnchorPoint, CellStyle, ColAlign, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
 import { round4 } from './units.js';
 
 /**
@@ -27,12 +27,17 @@ export const ElementPatch = z
     colAlign: z.array(ColAlign.nullable()).optional(),
     colWidths: z.array(z.number().positive()).optional(),
     rowHeights: z.array(z.number().positive()).optional(),
+    /** `null` removes every cell override. */
+    cellStyles: z.array(z.array(CellStyle.nullable())).nullable().optional(),
     shape: ShapeKind.optional(),
     from: Id.optional(),
     to: Id.optional(),
     route: z.enum(['straight', 'elbow', 'curved']).optional(),
     fromSide: ConnectorSide.optional(),
     toSide: ConnectorSide.optional(),
+    /** `null` detaches the end from its free point (back to `fromSide` / `toSide`). */
+    fromPoint: AnchorPoint.nullable().optional(),
+    toPoint: AnchorPoint.nullable().optional(),
   })
   .strict();
 export type ElementPatch = z.infer<typeof ElementPatch>;
@@ -102,7 +107,10 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         const el = slide.elements.find((e) => e.id === m.elementId);
         if (!el) throw new MutationError(`Élément « ${m.elementId} » introuvable`);
         const { style, placeholder, ...rest } = normalizePatch(m.patch);
-        Object.assign(el, rest);
+        for (const [k, v] of Object.entries(rest)) {
+          if (v === null) delete (el as Record<string, unknown>)[k];
+          else if (v !== undefined) (el as Record<string, unknown>)[k] = v;
+        }
         if (placeholder === null) delete el.placeholder;
         else if (placeholder !== undefined) el.placeholder = placeholder;
         if (style) {

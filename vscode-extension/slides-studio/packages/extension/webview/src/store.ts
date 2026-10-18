@@ -8,6 +8,7 @@ import {
   type Mutation,
   type ReviewData,
   type SlideDocument,
+  tr
 } from '@corporate-slides/core';
 import { post } from './host';
 
@@ -75,6 +76,8 @@ export interface EditorState {
   gmcEdit: string | null;
   /** Format painter armed with this style: applied to the next element selected. */
   painter: ElementStyle | null;
+  /** Right-click menu at a viewport position, on the selection or on the slide itself. */
+  contextMenu: { x: number; y: number; target: 'element' | 'slide' } | null;
 
   setDocument(p: { version: number; fileName: string; sourceKind: 'markdown' | 'dsl'; doc: SlideDocument; master: CorporateMaster | null; assetUrls: Record<string, string>; diagnostics: Diagnostic[]; parseErrors: string[]; readOnly: boolean; review: EditorState['review'] }): void;
   mutate(mutations: Mutation[]): void;
@@ -91,7 +94,7 @@ export interface EditorState {
   notify(level: Notice['level'], message: string): void;
   dismiss(id: number): void;
   setReference(r: EditorState['reference']): void;
-  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter'>>): void;
+  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter' | 'contextMenu'>>): void;
 }
 
 let txCounter = 0;
@@ -135,6 +138,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   connectFrom: null,
   gmcEdit: null,
   painter: null,
+  contextMenu: null,
 
   set(p) {
     set(p);
@@ -151,7 +155,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   mutate(mutations) {
     const { doc, version, readOnly } = get();
     if (!doc || !mutations.length) return;
-    if (readOnly) return get().notify('info', 'Révision de merge request : la présentation est en lecture seule.');
+    if (readOnly) return get().notify('info', tr('Révision de merge request : la présentation est en lecture seule.', 'Merge request revision: the presentation is read-only.'));
     let next: SlideDocument;
     try {
       next = applyToDocument(doc, mutations);

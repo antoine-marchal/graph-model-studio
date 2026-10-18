@@ -11,6 +11,8 @@ import { GmcEditor } from './GmcEditor';
 import { anchorOf } from './Review';
 import { installClipboard, pasteHostText } from './clipboard';
 import { Icon } from './icons';
+import { ContextMenu } from './ContextMenu';
+import { tr } from '@corporate-slides/core';
 
 export function App({ mode }: { mode: 'editor' | 'masters' }) {
   const [masters, setMasters] = useState<Extract<HostMessage, { type: 'masters' }> | null>(null);
@@ -37,7 +39,7 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
           st.ack(m.txId, m.version);
           break;
         case 'rejected':
-          st.reject(m.txId, m.conflict ? `Conflit : la source a changé pendant l'édition. ${m.reason}` : m.reason);
+          st.reject(m.txId, m.conflict ? tr(`Conflit : la source a changé pendant l'édition. ${m.reason}`, `Conflict: the source changed while editing. ${m.reason}`) : m.reason);
           break;
         case 'select':
           st.select(m.slideId, m.elementId ? [m.elementId] : []);
@@ -79,7 +81,7 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
     return () => (off(), offClipboard());
   }, []);
 
-  if (mode === 'masters') return masters ? <MasterBrowser data={masters} /> : <div className="loading">Chargement des masques…</div>;
+  if (mode === 'masters') return masters ? <MasterBrowser data={masters} /> : <div className="loading">{tr('Chargement des masques…', 'Loading masters…')}</div>;
   return <Editor />;
 }
 
@@ -99,13 +101,13 @@ function Editor() {
   const parseErrors = useEditor((s) => s.parseErrors);
   const doc = useEditor((s) => s.doc);
   const notesOpen = useEditor((s) => s.notesOpen);
-  if (!ready) return <div className="loading">Chargement de la présentation…</div>;
+  if (!ready) return <div className="loading">{tr('Chargement de la présentation…', 'Loading the presentation…')}</div>;
   if (!master) {
     return (
       <div className="empty-state">
-        <h1>Aucun masque corporate importé</h1>
-        <p>Importez le gabarit PowerPoint de l'entreprise pour afficher et éditer les diapositives avec ses dispositions.</p>
-        <p className="hint">Palette de commandes : <code>Corporate Slides: Importer un gabarit PowerPoint</code></p>
+        <h1>{tr('Aucun masque corporate importé', 'No corporate master imported')}</h1>
+        <p>{tr('Importez le gabarit PowerPoint de l\'entreprise pour afficher et éditer les diapositives avec ses dispositions.', 'Import your company\'s PowerPoint template to show and edit slides with its layouts.')}</p>
+        <p className="hint">{tr('Palette de commandes :', 'Command palette:')} <code>{tr('Corporate Slides: Importer un gabarit PowerPoint', 'Corporate Slides: Import a PowerPoint Template')}</code></p>
       </div>
     );
   }
@@ -116,8 +118,8 @@ function Editor() {
         <div className="banner banner-error" role="alert">
           <Icon name="warn" />
           <span>
-            La source contient {parseErrors.length} erreur{parseErrors.length > 1 ? 's' : ''} : {parseErrors[0]}
-            {doc?.slides.length ? ' — l’aperçu montre la dernière partie lisible.' : ''}
+            {tr('La source contient', 'The source contains')} {parseErrors.length} {parseErrors.length > 1 ? tr('erreurs', 'errors') : tr('erreur', 'error')} : {parseErrors[0]}
+            {doc?.slides.length ? tr(' — l’aperçu montre la dernière partie lisible.', ' — the preview shows the last readable part.') : ''}
           </span>
         </div>
       )}
@@ -136,6 +138,7 @@ function Editor() {
       <StatusBar />
       <GmcDialog />
       <GmcEditor />
+      <ContextMenu />
     </div>
   );
 }
@@ -148,7 +151,7 @@ function Notices() {
       {notices.map((n) => (
         <div key={n.id} className={`notice notice-${n.level}`} role={n.level === 'error' ? 'alert' : 'status'}>
           <span>{n.message}</span>
-          <button className="ibtn" aria-label="Fermer" onClick={() => dismiss(n.id)}>
+          <button className="ibtn" aria-label={tr("Fermer", "Close")} onClick={() => dismiss(n.id)}>
             <Icon name="close" />
           </button>
         </div>
@@ -162,15 +165,15 @@ function Reference() {
   const setReference = useEditor((s) => s.setReference);
   if (!ref) return null;
   return (
-    <div className="reference" role="dialog" aria-label="Rendu de référence">
+    <div className="reference" role="dialog" aria-label={tr("Rendu de référence", "Reference rendering")}>
       <header>
-        <strong>Rendu de référence — diapositive {ref.slideIndex + 1}</strong>
+        <strong>{tr('Rendu de référence — diapositive', 'Reference rendering — slide')} {ref.slideIndex + 1}</strong>
         <span className="grow" />
-        <button className="ibtn" aria-label="Fermer" onClick={() => setReference(null)}>
+        <button className="ibtn" aria-label={tr("Fermer", "Close")} onClick={() => setReference(null)}>
           <Icon name="close" />
         </button>
       </header>
-      {ref.url ? <img src={ref.url} alt={`Rendu PowerPoint de la diapositive ${ref.slideIndex + 1}`} /> : <p className="hint">{ref.message ?? 'Rendu en cours…'}</p>}
+      {ref.url ? <img src={ref.url} alt={tr(`Rendu PowerPoint de la diapositive ${ref.slideIndex + 1}`, `PowerPoint rendering of slide ${ref.slideIndex + 1}`)} /> : <p className="hint">{ref.message ?? tr('Rendu en cours…', 'Rendering…')}</p>}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import type { ArrowHead, ConnectorSide, CorporateMaster, ElementStyle, LayoutDef, LevelStyle, Numbering, PlaceholderDef, SlideElement, SlideNode } from './schema.js';
+import type { AnchorPoint, ArrowHead, ConnectorSide, CorporateMaster, ElementStyle, LayoutDef, LevelStyle, Numbering, PlaceholderDef, SlideElement, SlideNode } from './schema.js';
 import { findLayout, resolveColor, resolveFont } from './theme.js';
 
 export interface Box {
@@ -42,6 +42,9 @@ export interface ConnectorPath {
   y2: number;
   fromSide: Exclude<ConnectorSide, 'auto'>;
   toSide: Exclude<ConnectorSide, 'auto'>;
+  /** True when an end sits on a free point rather than a side midpoint (no native connection site). */
+  freeFrom?: boolean;
+  freeTo?: boolean;
 }
 
 export interface ResolvedElement {
@@ -141,15 +144,54 @@ const SIDES = ['top', 'right', 'bottom', 'left'] as const;
 const sidePoint = (b: Box, side: (typeof SIDES)[number]) =>
   side === 'top' ? { x: b.x + b.w / 2, y: b.y } : side === 'bottom' ? { x: b.x + b.w / 2, y: b.y + b.h } : side === 'left' ? { x: b.x, y: b.y + b.h / 2 } : { x: b.x + b.w, y: b.y + b.h / 2 };
 
-/** End points of a connector between two boxes; `auto` sides face each other along the dominant axis. */
-export function connectorPath(a: Box, b: Box, fromSide: ConnectorSide = 'auto', toSide: ConnectorSide = 'auto'): ConnectorPath {
+/** Side a free point leaves from: the box edge it is closest to (in box-relative units). */
+export function anchorSide([fx, fy]: AnchorPoint): Exclude<ConnectorSide, 'auto'> {
+  const d = { top: fy, bottom: 1 - fy, left: fx, right: 1 - fx };
+  return (Object.keys(d) as (keyof typeof d)[]).reduce((a, b) => (d[b] < d[a] ? b : a));
+}
+
+/** Closest point of the box outline to (px, py), as box fractions; snaps to side midpoints and corners. */
+export function perimeterAnchor(b: Box, px: number, py: number, snap = 0.06): AnchorPoint {
+  let fx = Math.max(0, Math.min(1, (px - b.x) / Math.max(b.w, 1e-6)));
+  let fy = Math.max(0, Math.min(1, (py - b.y) / Math.max(b.h, 1e-6)));
+  const side = anchorSide([fx, fy]);
+  if (side === 'top') fy = 0;
+  else if (side === 'bottom') fy = 1;
+  else if (side === 'left') fx = 0;
+  else fx = 1;
+  for (const v of [0, 0.5, 1]) {
+    if (Math.abs(fx - v) < snap) fx = v;
+    if (Math.abs(fy - v) < snap) fy = v;
+  }
+  return [Math.round(fx * 1000) / 1000, Math.round(fy * 1000) / 1000];
+}
+
+/** Side midpoint equivalent of a point, or null when it is a free point. */
+export function pointSide([fx, fy]: AnchorPoint): Exclude<ConnectorSide, 'auto'> | null {
+  if (fx === 0.5 && fy === 0) return 'top';
+  if (fx === 0.5 && fy === 1) return 'bottom';
+  if (fx === 0 && fy === 0.5) return 'left';
+  if (fx === 1 && fy === 0.5) return 'right';
+  return null;
+}
+
+/**
+ * End points of a connector between two boxes; `auto` sides face each other along the dominant axis.
+ * Free points (box fractions) take precedence over sides.
+ */
+export function connectorPath(a: Box, b: Box, fromSide: ConnectorSide = 'auto', toSide: ConnectorSide = 'auto', fromPoint?: AnchorPoint, toPoint?: AnchorPoint): ConnectorPath {
   const dx = b.x + b.w / 2 - (a.x + a.w / 2);
   const dy = b.y + b.h / 2 - (a.y + a.h / 2);
   const horizontal = Math.abs(dx) - (a.w + b.w) / 2 > Math.abs(dy) - (a.h + b.h) / 2;
-  const fs = fromSide !== 'auto' ? fromSide : horizontal ? (dx >= 0 ? 'right' : 'left') : dy >= 0 ? 'bottom' : 'top';
-  const ts = toSide !== 'auto' ? toSide : horizontal ? (dx >= 0 ? 'left' : 'right') : dy >= 0 ? 'top' : 'bottom';
-  const p1 = sidePoint(a, fs), p2 = sidePoint(b, ts);
-  return { x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, fromSide: fs, toSide: ts };
+  const fs = fromPoint ? anchorSide(fromPoint) : fromSide !== 'auto' ? fromSide : horizontal ? (dx >= 0 ? 'right' : 'left') : dy >= 0 ? 'bottom' : 'top';
+  const ts = toPoint ? anchorSide(toPoint) : toSide !== 'auto' ? toSide : horizontal ? (dx >= 0 ? 'left' : 'right') : dy >= 0 ? 'top' : 'bottom';
+  const at = (box: Box, p: AnchorPoint) => ({ x: box.x + p[0] * box.w, y: box.y + p[1] * box.h });
+  const p1 = fromPoint ? at(a, fromPoint) : sidePoint(a, fs), p2 = toPoint ? at(b, toPoint) : sidePoint(b, ts);
+  return {
+    x1: p1.x, y1: p1.y, x2: p2.x, y2: p2.y, fromSide: fs, toSide: ts,
+    ...(fromPoint && !pointSide(fromPoint) ? { freeFrom: true } : {}),
+    ...(toPoint && !pointSide(toPoint) ? { freeTo: true } : {}),
+  };
 }
 
 export interface ResolvedSlide {
@@ -169,7 +211,7 @@ export function resolveSlide(slide: SlideNode, master: CorporateMaster): Resolve
     if (el.type !== 'connector') continue;
     const a = byId.get(el.from), b = byId.get(el.to);
     if (!a || !b || a.element.type === 'connector' || b.element.type === 'connector') continue;
-    r.path = connectorPath(a.box, b.box, el.fromSide, el.toSide);
+    r.path = connectorPath(a.box, b.box, el.fromSide, el.toSide, el.fromPoint, el.toPoint);
     const { x1, y1, x2, y2 } = r.path;
     r.box = { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
   }

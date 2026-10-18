@@ -4,6 +4,7 @@ import type { HostMessage } from '@corporate-slides/core';
 import { onHostMessage, post } from './host';
 import { useEditor } from './store';
 import { Icon } from './icons';
+import { tr } from '@corporate-slides/core';
 
 /*
  * Graph Model Studio's interactive editor in a modal over the slide (same approach as its
@@ -78,7 +79,7 @@ function GmcModal({ src }: { src: string }) {
     post({ type: 'gmcOpen', src });
     return onHostMessage((m) => {
       if (m.type !== 'gmcEditor' || m.src !== src) return;
-      if (m.error || !m.editorJs || !m.editorCss) return setError(m.error ?? 'Éditeur indisponible.');
+      if (m.error || !m.editorJs || !m.editorCss) return setError(m.error ?? tr('Éditeur indisponible.', 'Editor unavailable.'));
       setInfo(m);
       loadBundle(m.editorJs, m.editorCss).then(
         (files) => setDoc(srcdoc(files, m.editorJs!.replace(/[^/]*$/, ''))),
@@ -89,7 +90,7 @@ function GmcModal({ src }: { src: string }) {
 
   useEffect(() => {
     if (ready || error) return;
-    const t = setTimeout(() => setError((e) => e || "L'éditeur de diagramme n'a pas démarré."), 10_000);
+    const t = setTimeout(() => setError((e) => e || tr("L'éditeur de diagramme n'a pas démarré.", "The diagram editor did not start.")), 10_000);
     return () => clearTimeout(t);
   }, [ready, error]);
 
@@ -126,26 +127,26 @@ function GmcModal({ src }: { src: string }) {
 
   return createPortal(
     <div className="gmc-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="gmc-modal" role="dialog" aria-label={`Diagramme ${src}`} data-testid="gmc-editor">
+      <div className="gmc-modal" role="dialog" aria-label={tr(`Diagramme ${src}`, `Diagram ${src}`)} data-testid="gmc-editor">
         <header className="gmc-modal-head">
           <span className="chip">GMC</span>
           <strong>{info?.name ?? src}</strong>
-          <span className="hint">{readOnly ? 'Lecture seule' : 'Les modifications sont enregistrées dans le fichier .gmc ; le rendu de la diapositive est actualisé à la fermeture.'}</span>
+          <span className="hint">{readOnly ? tr('Lecture seule', 'Read-only') : tr('Les modifications sont enregistrées dans le fichier .gmc ; le rendu de la diapositive est actualisé à la fermeture.', 'Changes are saved to the .gmc file; the slide rendering refreshes on close.')}</span>
           <span className="grow" />
-          <button type="button" className="ibtn has-label" title="Ouvrir Graph Model Studio dans un onglet à côté" onClick={() => (close(), post({ type: 'editGmc', src }))}>
-            <Icon name="external" /> À côté
+          <button type="button" className="ibtn has-label" title={tr("Ouvrir Graph Model Studio dans un onglet à côté", "Open Graph Model Studio in a tab to the side")} onClick={() => (close(), post({ type: 'editGmc', src }))}>
+            <Icon name="external" /> {tr('À côté', 'To the side')}
           </button>
-          <button type="button" className="ibtn" aria-label="Fermer (Échap)" title="Fermer (Échap)" onClick={close} data-testid="gmc-close">
+          <button type="button" className="ibtn" aria-label={tr("Fermer (Échap)", "Close (Esc)")} title={tr("Fermer (Échap)", "Close (Esc)")} onClick={close} data-testid="gmc-close">
             <Icon name="close" />
           </button>
         </header>
         {error && !ready && (
           <div className="gmc-modal-error" role="alert">
             {error}
-            <button type="button" className="btn" onClick={() => (close(), post({ type: 'editGmc', src }))}>Ouvrir à côté</button>
+            <button type="button" className="btn" onClick={() => (close(), post({ type: 'editGmc', src }))}>{tr('Ouvrir à côté', 'Open to the side')}</button>
           </div>
         )}
-        {doc ? <iframe ref={frame} className="gmc-modal-frame" srcDoc={doc} title="Graph Model Studio" /> : !error && <p className="gmc-modal-loading">Chargement de l'éditeur de diagramme…</p>}
+        {doc ? <iframe ref={frame} className="gmc-modal-frame" srcDoc={doc} title="Graph Model Studio" /> : !error && <p className="gmc-modal-loading">{tr('Chargement de l\'éditeur de diagramme…', 'Loading the diagram editor…')}</p>}
       </div>
     </div>,
     document.body,

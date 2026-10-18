@@ -20,7 +20,7 @@ export function webviewHtml(webview: vscode.Webview, extensionUri: vscode.Uri, m
     `script-src 'nonce-${nonce}' 'wasm-unsafe-eval'`,
   ].join('; ');
   return `<!doctype html>
-<html lang="fr">
+<html lang="${vscode.env.language.startsWith('fr') ? 'fr' : 'en'}">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">

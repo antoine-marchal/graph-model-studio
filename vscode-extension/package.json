@@ -260,6 +260,11 @@
         "category": "Corporate Slides"
       },
       {
+        "command": "corporateSlides.importPresentation",
+        "title": "Importer une présentation PowerPoint (.pptx → .deck)",
+        "category": "Corporate Slides"
+      },
+      {
         "command": "corporateSlides.showMasters",
         "title": "Afficher les masques corporate",
         "category": "Corporate Slides"
@@ -286,11 +291,6 @@
       {
         "command": "corporateSlides.validate",
         "title": "Valider la présentation",
-        "category": "Corporate Slides"
-      },
-      {
-        "command": "corporateSlides.convertToDsl",
-        "title": "Convertir en DSL complet (.slides.yaml)",
         "category": "Corporate Slides"
       },
       {

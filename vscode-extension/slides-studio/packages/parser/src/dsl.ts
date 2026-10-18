@@ -19,7 +19,7 @@ import { formatZodError } from './types.js';
 /* DSL ⇄ canonical element conversion                                 */
 /* ------------------------------------------------------------------ */
 
-const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'content', 'paragraphs', 'src', 'alt', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'from', 'to', 'route', 'fromSide', 'toSide', 'flipH', 'flipV', 'style'];
+const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'content', 'paragraphs', 'src', 'alt', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'style'];
 
 /** Canonical element → plain DSL object (deterministic key order, `content` sugar when lossless). */
 export function elementToDsl(el: SlideElement): Record<string, unknown> {
@@ -176,10 +176,21 @@ const textNode = (d: Document, s: string) => {
   return n;
 };
 
+/** Arrays read best inline: `[0.5, 1]`, rows as `- [a, b]`, cell styles as `- [null, { fill: '#FF0000' }]`. */
+function flowArrays(n: Node): Node {
+  if (!isSeq(n)) return n;
+  if (n.items.every((i) => !isMap(i) && !isSeq(i))) n.flow = true;
+  else for (const i of n.items) if (isSeq(i)) i.flow = true;
+  return n;
+}
+
 /** Apply an element patch to a YAML map node holding a DSL element (also used by Markdown frontmatter). */
 export function patchElementNode(d: Document, node: YAMLMap, patch: ReturnType<typeof normalizePatch>, opts: { allowText: boolean }): void {
   const { style, paragraphs, placeholder, ...rest } = patch;
-  for (const [k, v] of Object.entries(rest)) if (v !== undefined) node.set(k, Array.isArray(v) ? d.createNode(v) : v);
+  for (const [k, v] of Object.entries(rest)) {
+    if (v === null) node.delete(k);
+    else if (v !== undefined) node.set(k, typeof v === 'object' ? flowArrays(d.createNode(v) as Node) : v);
+  }
   if (placeholder === null) node.delete('placeholder');
   else if (placeholder !== undefined) node.set('placeholder', placeholder);
   if (style) {

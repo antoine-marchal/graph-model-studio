@@ -19,6 +19,7 @@ export * from './safety.js';
 export * from './ooxml.js';
 export * from './normalize.js';
 export * from './reference.js';
+export * from './slides.js';
 
 export const PPTX_MASTERS_VERSION = '0.1.1';
 export const MASTER_DIR = join('.corporate-slides', 'master');

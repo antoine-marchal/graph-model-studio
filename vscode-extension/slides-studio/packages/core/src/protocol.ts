@@ -31,7 +31,6 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('save') }),
   z.object({ type: z.literal('export') }),
   z.object({ type: z.literal('validate') }),
-  z.object({ type: z.literal('convertToDsl') }),
   z.object({ type: z.literal('reveal'), slideId: z.string().max(64), elementId: z.string().max(64).optional() }),
   z.object({ type: z.literal('pickImage'), slideId: z.string().max(64) }),
   /** Image pasted from the clipboard (base64), saved under `images/` next to the presentation. */

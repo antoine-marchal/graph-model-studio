@@ -683,3 +683,46 @@ export function applyMarkdownMutations(text: string, mutations: Mutation[], opts
 
 /** Convert a parsed Markdown presentation to the full DSL (explicit, lossless conversion). */
 export { documentToDsl as markdownToDsl } from './dsl.js';
+
+/**
+ * Whole document → `.deck` text (new files, PowerPoint import). Each slide's title becomes its
+ * `# heading` when it is plain text; every other element is a full definition in the slide
+ * frontmatter, so geometry and styles survive exactly.
+ */
+export function documentToDeck(doc: SlideDocument): string {
+  const fm: Record<string, unknown> = { title: doc.metadata.title };
+  for (const k of ['author', 'subject', 'footer', 'date'] as const) if (doc.metadata[k]) fm[k] = doc.metadata[k];
+  fm.master = doc.masterRef;
+  fm.theme = doc.themeRef;
+  if (doc.constraints) fm.constraints = doc.constraints;
+  const yaml = (v: Record<string, unknown>) => {
+    const d = new Document(v);
+    blockify(d.contents);
+    return d.toString({ lineWidth: 0 });
+  };
+  let out = `---\n${yaml(fm)}---\n`;
+  for (const s of doc.slides) {
+    const head: Record<string, unknown> = { id: s.id, layout: s.layout };
+    if (s.hidden) head.hidden = true;
+    if (s.notes) head.notes = s.notes;
+    const title = s.elements.find((e) => e.id === 'title' && e.type === 'text' && e.placeholder === 'title' && e.paragraphs.length === 1 && isPlainRepresentable(e.paragraphs) && !e.paragraphs[0]!.list);
+    const rest: Record<string, unknown>[] = [];
+    for (const e of s.elements) {
+      const { source: _s, ...el } = e as SlideElement & { source?: unknown };
+      if (e === title) {
+        // The heading carries the text; geometry and style stay as a frontmatter override.
+        const { id: _i, type: _t, paragraphs: _p, placeholder: _ph, ...over } = el as Record<string, unknown>;
+        if (Object.keys(over).length) rest.push({ id: 'title', ...over });
+      } else rest.push(elementToDsl(el as SlideElement));
+    }
+    if (rest.length) head.elements = rest;
+    out += `\n---\n${yaml(head)}---\n\n`;
+    if (title?.type === 'text') out += `# ${formatInline(title.paragraphs[0]!.runs)}\n`;
+  }
+  return out;
+}
+
+function blockify(node: unknown): void {
+  if (isMap(node) || isSeq(node)) for (const item of node.items as unknown[]) blockify((item as { value?: unknown }).value ?? item);
+  else if (node && typeof node === 'object' && 'value' in node && typeof (node as { value: unknown }).value === 'string' && ((node as { value: string }).value).includes('\n')) (node as { type?: string }).type = 'BLOCK_LITERAL';
+}

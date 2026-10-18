@@ -1,11 +1,12 @@
-import { resolveSlide, round4, uniqueId, type ElementStyle, type Mutation, type SlideElement } from '@corporate-slides/core';
+import { resolveSlide, round4, tr, uniqueId, type CellStyle, type ElementStyle, type Mutation, type SlideElement } from '@corporate-slides/core';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
 
 /*
  * Clipboard: copy / cut / paste of slide elements (between slides and decks), plus paste of
  * plain text (text box), images (saved next to the deck by the host) and spreadsheet ranges
- * (Excel / Sheets copy as HTML or TSV → native table). The format painter copies an element
+ * (Excel / Sheets copy as HTML or TSV → native table, keeping cell fill, bold and text color).
+ * Excel also puts a picture of the range on the clipboard: the table always wins over it. The format painter copies an element
  * style and applies it to the next element selected (or with Ctrl+Shift+C / Ctrl+Shift+V).
  */
 
@@ -46,7 +47,7 @@ function selection(): Clip | null {
       return (e.type === 'connector' || !b ? rest : { ...rest, x: b.x, y: b.y, w: b.w, h: b.h }) as SlideElement;
     });
   // Elements without text still need a recognisable clipboard text (the host may only relay text).
-  const text = elements.map(plainText).filter(Boolean).join('\n') || `[Corporate Slides : ${elements.length} élément${elements.length > 1 ? 's' : ''}]`;
+  const text = elements.map(plainText).filter(Boolean).join('\n') || `[Corporate Slides : ${elements.length} ${elements.length > 1 ? tr('éléments', 'elements') : tr('élément', 'element')}]`;
   return elements.length ? { slideId: slide.id, elements, text, pastes: 0 } : null;
 }
 
@@ -102,13 +103,52 @@ function addNew(el: Omit<SlideElement, 'id'>) {
   pasteElements([{ ...el, id: el.type } as SlideElement], '');
 }
 
-/** Rows of the first table in clipboard HTML (Excel, Sheets, Word, web pages). */
-export function htmlTableRows(html: string): string[][] | null {
-  const table = new DOMParser().parseFromString(html, 'text/html').querySelector('table');
-  if (!table) return null;
-  const rows = [...table.querySelectorAll('tr')].map((tr) => [...tr.querySelectorAll('th, td')].map((c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim()));
-  return rows.some((r) => r.length) ? rows : null;
+/** CSS color (`#RGB`, `#RRGGBB`, `rgb()`, `windowtext`…) → `#RRGGBB`, or null for transparent / unknown. */
+function cssHex(v: string | undefined | null): string | null {
+  const s = (v ?? '').trim().toLowerCase();
+  if (!s || s === 'transparent' || s === 'none' || s === 'inherit') return null;
+  let m = /^#([0-9a-f]{3})$/.exec(s);
+  if (m) return `#${[...m[1]!].map((c) => c + c).join('')}`.toUpperCase();
+  m = /^#([0-9a-f]{6})$/.exec(s);
+  if (m) return `#${m[1]}`.toUpperCase();
+  const rgb = /^rgba?\((\d+)\D+(\d+)\D+(\d+)(?:\D+([\d.]+))?/.exec(s);
+  if (rgb && (rgb[4] === undefined || Number(rgb[4]) > 0)) return `#${[rgb[1], rgb[2], rgb[3]].map((n) => Number(n).toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+  return s === 'white' ? '#FFFFFF' : s === 'black' || s === 'windowtext' ? '#000000' : null;
 }
+
+/** Declarations of a CSS block / inline style, lower-cased keys. */
+const decls = (css: string) => Object.fromEntries(css.split(';').map((d) => d.split(':')).filter((p) => p.length >= 2).map(([k, ...v]) => [k!.trim().toLowerCase(), v.join(':').trim()]));
+
+/** First table in clipboard HTML (Excel, Sheets, Word, web pages): texts and cell look (fill, bold, color). */
+export function htmlTableGrid(html: string): { rows: string[][]; styles: (CellStyle | null)[][] } | null {
+  const dom = new DOMParser().parseFromString(html, 'text/html');
+  const table = dom.querySelector('table');
+  if (!table) return null;
+  // Excel styles cells through classes (`.xl65 { background:#FFC000; }`) in a <style> block.
+  const classes = new Map<string, Record<string, string>>();
+  for (const st of dom.querySelectorAll('style')) for (const m of (st.textContent ?? '').matchAll(/\.([\w-]+)\s*\{([^}]*)\}/g)) classes.set(m[1]!, decls(m[2]!));
+  const rows: string[][] = [];
+  const styles: (CellStyle | null)[][] = [];
+  for (const row of table.querySelectorAll('tr')) {
+    const cells = [...row.querySelectorAll('th, td')];
+    rows.push(cells.map((c) => (c.textContent ?? '').replace(/\s+/g, ' ').trim()));
+    styles.push(cells.map((c) => {
+      const d = { ...Object.assign({}, ...[...c.classList].map((k) => classes.get(k) ?? {})), ...decls(c.getAttribute('style') ?? '') } as Record<string, string>;
+      const fill = cssHex(c.getAttribute('bgcolor')) ?? cssHex(d['background-color'] ?? d.background?.split(/\s+/)[0]);
+      const color = cssHex(d.color);
+      const bold = c.tagName === 'TH' || /^(bold|[6-9]00)$/.test(d['font-weight'] ?? '') || !!c.querySelector('b, strong');
+      const s: CellStyle = {};
+      if (fill && fill !== '#FFFFFF') s.fill = fill as CellStyle['fill'];
+      if (color && color !== '#000000') s.color = color as CellStyle['color'];
+      if (bold) s.bold = true;
+      return Object.keys(s).length ? s : null;
+    }));
+  }
+  return rows.some((r) => r.length) ? { rows, styles } : null;
+}
+
+/** Rows of the first table in clipboard HTML. */
+export const htmlTableRows = (html: string): string[][] | null => htmlTableGrid(html)?.rows ?? null;
 
 /** Tab-separated grid (spreadsheet copy as text), or null for ordinary text. */
 export function tsvRows(text: string): string[][] | null {
@@ -116,10 +156,13 @@ export function tsvRows(text: string): string[][] | null {
   return lines.some((l) => l.includes('\t')) ? lines.map((l) => l.split('\t').map((c) => c.trim())) : null;
 }
 
-function pasteTable(rows: string[][]) {
+function pasteTable(rows: string[][], styles?: (CellStyle | null)[][]) {
   const width = Math.max(...rows.map((r) => r.length));
   const grid = rows.map((r) => Array.from({ length: width }, (_, i) => r[i] ?? ''));
-  addNew({ type: 'table', header: true, rows: grid, ...centered(round4(Math.min(11, Math.max(4, width * 1.8))), round4(Math.min(6, grid.length * 0.4))) } as never);
+  const cellStyles = styles?.some((r) => r.some(Boolean)) ? grid.map((r, ri) => r.map((_, ci) => styles[ri]?.[ci] ?? null)) : undefined;
+  // A styled first row is the sheet's own header: keep its look instead of the corporate header band.
+  const header = !cellStyles?.[0]?.some(Boolean);
+  addNew({ type: 'table', header, rows: grid, ...(cellStyles ? { cellStyles } : {}), ...centered(round4(Math.min(11, Math.max(4, width * 1.8))), round4(Math.min(6, grid.length * 0.4))) } as never);
 }
 
 function pasteText(text: string) {
@@ -136,13 +179,13 @@ function pasteImage(blob: Blob) {
   const slide = currentSlide(st);
   if (!slide) return;
   const mime = (['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/svg+xml'] as const).find((t) => t === blob.type);
-  if (!mime) return st.notify('warning', `Format d’image non pris en charge : ${blob.type}`);
+  if (!mime) return st.notify('warning', `${tr('Format d’image non pris en charge', 'Unsupported image format')} : ${blob.type}`);
   const reader = new FileReader();
   reader.onload = () => post({ type: 'pasteImage', slideId: slide.id, mime, data: String(reader.result).replace(/^data:[^,]*,/, '') });
   reader.readAsDataURL(blob);
 }
 
-/** Paste from a DataTransfer (Ctrl+V) — richest first: our elements, image, table, text. */
+/** Paste from a DataTransfer (Ctrl+V) — richest first: our elements, table, image, text. */
 function pasteData(data: DataTransfer) {
   const own = data.getData(MIME);
   if (own) {
@@ -151,10 +194,13 @@ function pasteData(data: DataTransfer) {
   }
   const text = data.getData('text/plain');
   if (last && text && text === last.text) return pasteElements(last.elements, last.slideId, last);
+  // Spreadsheets copy HTML + TSV + a picture of the range: the table comes first.
+  const grid = htmlTableGrid(data.getData('text/html'));
+  if (grid) return pasteTable(grid.rows, grid.styles);
+  const rows = tsvRows(text);
+  if (rows) return pasteTable(rows);
   const image = [...data.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
   if (image) return pasteImage(image);
-  const rows = htmlTableRows(data.getData('text/html'));
-  if (rows) return pasteTable(rows);
   pasteText(text);
 }
 
@@ -163,14 +209,18 @@ export async function pasteFromRibbon() {
   try {
     const items = await navigator.clipboard.read();
     for (const item of items) {
-      const img = item.types.find((t) => t.startsWith('image/'));
-      if (img) return pasteImage(await item.getType(img));
-    }
-    for (const item of items) {
       if (item.types.includes('text/html')) {
-        const rows = htmlTableRows(await (await item.getType('text/html')).text());
+        const grid = htmlTableGrid(await (await item.getType('text/html')).text());
+        if (grid) return pasteTable(grid.rows, grid.styles);
+      }
+      if (item.types.includes('text/plain')) {
+        const rows = tsvRows(await (await item.getType('text/plain')).text());
         if (rows) return pasteTable(rows);
       }
+    }
+    for (const item of items) {
+      const img = item.types.find((t) => t.startsWith('image/'));
+      if (img) return pasteImage(await item.getType(img));
     }
     const text = await navigator.clipboard.readText();
     pasteHostText(text);
@@ -249,7 +299,7 @@ export function installClipboard(): () => void {
     if (k === 'c') {
       e.preventDefault();
       const s = copyStyle();
-      if (s) useEditor.getState().notify('info', 'Mise en forme copiée : Ctrl+Maj+V pour l’appliquer.');
+      if (s) useEditor.getState().notify('info', tr('Mise en forme copiée : Ctrl+Maj+V pour l’appliquer.', 'Formatting copied: Ctrl+Shift+V to apply it.'));
       painterStyle = s;
     } else if (k === 'v' && painterStyle) {
       e.preventDefault();
@@ -278,3 +328,16 @@ export function installClipboard(): () => void {
 
 /** Style held by Ctrl+Shift+C. */
 let painterStyle: ElementStyle | null = null;
+
+/** Context menu "Copy formatting": same slot as Ctrl+Shift+C. */
+export function copyFormat(): boolean {
+  painterStyle = copyStyle();
+  return !!painterStyle;
+}
+
+/** Context menu "Paste formatting": same as Ctrl+Shift+V. */
+export function pasteFormat(): void {
+  if (painterStyle) applyStyle(painterStyle);
+}
+
+export const hasCopiedFormat = (): boolean => !!painterStyle;

@@ -244,6 +244,8 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
           const file = renderedImageSrc(el.src);
           const path = isAbsolute(file) ? file : join(opts.sourceDir, file);
           s.addImage({ ...boxOptions(r), path, ...(el.alt ? { altText: el.alt } : {}), objectName: el.id } as never);
+          // Pictures have no outline option in pptxgenjs: the border is an unfilled rectangle on top.
+          if (r.style.line) s.addShape('rect' as never, { ...boxOptions(r), line: fillLine(r).line, objectName: `${el.id}-border` } as never);
           stats.nativeImages++;
           break;
         }
@@ -264,8 +266,9 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
             ...(g.flipH ? { flipH: true } : {}),
             ...(g.flipV ? { flipV: true } : {}),
             objectName: el.id,
-            ...(rectLike(byId.get(from)) ? { start: { shape: from, site: RECT_SITES[fromSide] } } : {}),
-            ...(rectLike(byId.get(to)) ? { end: { shape: to, site: RECT_SITES[toSide] } } : {}),
+            // Free points have no native connection site: the connector is drawn at its position, unattached.
+            ...(rectLike(byId.get(from)) && !(g.reversed ? r.path.freeTo : r.path.freeFrom) ? { start: { shape: from, site: RECT_SITES[fromSide] } } : {}),
+            ...(rectLike(byId.get(to)) && !(g.reversed ? r.path.freeFrom : r.path.freeTo) ? { end: { shape: to, site: RECT_SITES[toSide] } } : {}),
             line: Object.fromEntries(Object.entries(line).filter(([, v]) => v !== undefined)),
           } as never);
           stats.nativeShapes++;
@@ -274,8 +277,26 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
         case 'table': {
           const header = el.header !== false;
           const head = resolveColor('theme.accent1', master) ?? '3E4A83';
+          const border = (line: string | undefined, width: number | undefined, dash: string | undefined, fallback: string) =>
+            line === 'none' ? { type: 'none' } : { type: dash && dash !== 'solid' ? 'dash' : 'solid', pt: width ?? 0.5, color: resolveColor(line, master) ?? fallback };
+          const grid = resolveColor('theme.dk1.lighter60', master) ?? 'A8A8A8';
+          const tableBorder = border(el.style?.line, el.style?.lineWidth, el.style?.dash, grid);
           const rows = el.rows.map((row, ri) =>
-            row.map((text, ci) => ({ text, options: { ...(ri === 0 && header ? { bold: true, color: 'FFFFFF', fill: { color: head } } : {}), ...(el.colAlign?.[ci] ? { align: el.colAlign[ci] } : {}) } })),
+            row.map((text, ci) => {
+              const cs = el.cellStyles?.[ri]?.[ci];
+              const fill = cs?.fill && cs.fill !== 'none' ? resolveColor(cs.fill, master) : null;
+              return {
+                text,
+                options: {
+                  ...(ri === 0 && header ? { bold: true, color: 'FFFFFF', fill: { color: head } } : {}),
+                  ...(el.colAlign?.[ci] ? { align: el.colAlign[ci] } : {}),
+                  ...(fill ? { fill: { color: fill } } : {}),
+                  ...(cs?.color ? { color: resolveColor(cs.color, master) ?? undefined } : {}),
+                  ...(cs?.bold !== undefined ? { bold: cs.bold } : {}),
+                  ...(cs?.line || cs?.lineWidth !== undefined || cs?.dash ? { border: border(cs.line ?? el.style?.line, cs.lineWidth ?? el.style?.lineWidth, cs.dash ?? el.style?.dash, grid) } : {}),
+                },
+              };
+            }),
           );
           const cols = Math.max(...el.rows.map((x) => x.length));
           s.addTable(rows as never, {
@@ -283,7 +304,7 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
             fontFace: r.style.fontFace,
             fontSize: el.style?.fontSize ?? 12,
             color: r.style.color,
-            border: { type: 'solid', pt: 0.5, color: resolveColor('theme.dk1.lighter60', master) ?? 'A8A8A8' },
+            border: tableBorder,
             colW: tableWeights(el.colWidths, cols).map((f) => f * r.box.w),
             ...(el.rowHeights ? { rowH: tableWeights(el.rowHeights, el.rows.length).map((f) => f * r.box.h) } : {}),
             valign: el.style?.valign ?? 'middle',

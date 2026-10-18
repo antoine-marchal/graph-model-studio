@@ -1,16 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { tableWeights, type ElementPatch, type ResolvedElement } from '@corporate-slides/core';
-import { PPI } from '@corporate-slides/renderer';
+import { fmtNumber, tableWeights, tr, type CellStyle, type ElementPatch, type ResolvedElement } from '@corporate-slides/core';
+import { PPI, tableCellStyle, tokenHex } from '@corporate-slides/renderer';
 import { useEditor } from './store';
 import { Icon, type IconName } from './icons';
+import { Menu, PaletteGrid, PaletteMenu } from './Panels';
+import { htmlTableGrid, tsvRows } from './clipboard';
 
 /*
  * Table editing with the Markdown Studio UX: cells edited in place, Tab / Enter / arrows move
  * between cells, drag or Shift+click selects a range (count, Σ and average shown), a floating
  * toolbar inserts / deletes rows and columns and aligns them, and the fill handle extends a
- * series over the cells it is dragged across, and column / row borders drag to resize. Edits are
- * applied as one mutation on exit (Escape, or a click anywhere outside the table).
+ * series over the cells it is dragged across, and column / row borders drag to resize. Cells and
+ * ranges take a background and a border (color, width, dash); a spreadsheet range pasted into a cell
+ * fills the grid from there, growing the table. Edits are applied as one mutation on exit (Escape,
+ * or a click anywhere outside the table).
  */
 
 type Align = 'left' | 'center' | 'right' | null;
@@ -32,7 +36,16 @@ const parseNum = (t: string): number | null => {
   const c = t.trim().replace(/[\s ]/g, '').replace(/^[$€£¥]|[$€£¥%]$/g, '');
   return c && NUM_RE.test(c) ? parseFloat(c.replace(',', '.')) : null;
 };
-const fmt = (n: number) => (Number.isInteger(n) ? n.toLocaleString('fr-FR') : n.toLocaleString('fr-FR', { maximumFractionDigits: 4 }));
+const fmt = (n: number) => fmtNumber(n);
+type Cell = CellStyle | null;
+type CellPatch = Partial<Record<keyof CellStyle, unknown>>;
+const BORDER_WIDTHS = [0.5, 1, 1.5, 2.25, 3, 4.5, 6];
+const DASHES = [
+  { id: 'solid', fr: 'Continu', en: 'Solid' },
+  { id: 'dash', fr: 'Tirets', en: 'Dashed' },
+  { id: 'dot', fr: 'Pointillés', en: 'Dotted' },
+] as const;
+const sameCells = (a: Cell[][], b: Cell[][]) => JSON.stringify(a) === JSON.stringify(b);
 
 /** Values continuing `seed` over `count` cells: numeric series, "Item 3" series, or repetition. */
 export function fillSeries(seed: string[], count: number): string[] {
@@ -63,6 +76,8 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   const [header, setHeader] = useState(el.header !== false);
   const [colW, setColW] = useState(() => tableWeights(el.colWidths, width));
   const [rowH, setRowH] = useState(() => tableWeights(el.rowHeights, el.rows.length));
+  const initialCells = () => el.rows.map((_, ri) => Array.from({ length: width }, (_, ci) => el.cellStyles?.[ri]?.[ci] ?? null));
+  const [cells, setCells] = useState<Cell[][]>(initialCells);
   const [sel, setSel] = useState<{ a: { r: number; c: number }; h: { r: number; c: number } }>({ a: { r: 0, c: 0 }, h: { r: 0, c: 0 } });
   const [gen, setGen] = useState(0);
   const [fill, setFill] = useState<Rect | null>(null);
@@ -71,8 +86,8 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   const dragging = useRef(false);
   const done = useRef(false);
   const focusCell = useRef<{ r: number; c: number; select?: boolean } | null>(null);
-  const state = useRef({ rows, colAlign, valign, header, colW, rowH });
-  state.current = { rows, colAlign, valign, header, colW, rowH };
+  const state = useRef({ rows, colAlign, valign, header, colW, rowH, cells });
+  state.current = { rows, colAlign, valign, header, colW, rowH, cells };
   /** Text as typed, kept current on every keystroke: the DOM is gone when a click outside unmounts us. */
   const typed = useRef(rows);
   useLayoutEffect(() => {
@@ -87,8 +102,9 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     return state.current.rows.map((row, ri) => row.map((v, ci) => (t.querySelector<HTMLElement>(`[data-cell="${ri}:${ci}"]`)?.innerText ?? v).replace(/\n/g, ' ').trimEnd()));
   };
   /** Structural change: sync typed text, rebuild the cells, keep the caret at (r, c). */
-  const restructure = (next: string[][], align: Align[], at: { r: number; c: number }, widths = colW, heights = rowH) => {
+  const restructure = (next: string[][], align: Align[], at: { r: number; c: number }, widths = colW, heights = rowH, styles = cells) => {
     setRows(next);
+    setCells(styles);
     setColAlign(align);
     setColW(tableWeights(widths, next[0]?.length ?? 1));
     setRowH(tableWeights(heights, next.length));
@@ -112,6 +128,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     const same = (a: number[], b: number[]) => JSON.stringify(round(a)) === JSON.stringify(round(b));
     if (!same(s.colW, tableWeights(el.colWidths, next[0]?.length ?? 1))) patch.colWidths = round(s.colW);
     if (!same(s.rowH, tableWeights(el.rowHeights, next.length))) patch.rowHeights = round(s.rowH);
+    if (!sameCells(s.cells, initialCells())) patch.cellStyles = s.cells.some((row) => row.some(Boolean)) ? s.cells : null;
     onDone(Object.keys(patch).length ? patch : null);
   };
   const commitRef = useRef(commit);
@@ -168,7 +185,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
       const idx = ri * C + ci + (e.shiftKey ? -1 : 1);
       if (idx >= R * C) {
         const next = read();
-        restructure([...next, Array(C).fill('')], colAlign, { r: R, c: 0 }, colW, [...rowH, 1 / R]);
+        restructure([...next, Array(C).fill('')], colAlign, { r: R, c: 0 }, colW, [...rowH, 1 / R], [...cells, Array(C).fill(null)]);
       } else if (idx >= 0) {
         setRows(read());
         go(Math.floor(idx / C), idx % C);
@@ -266,22 +283,22 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     const next = read();
     const at = after ? rect.r1 + 1 : rect.r0;
     next.splice(at, 0, Array(C).fill(''));
-    restructure(next, colAlign, { r: at, c: rect.c0 }, colW, [...rowH.slice(0, at), 1 / rowH.length, ...rowH.slice(at)]);
+    restructure(next, colAlign, { r: at, c: rect.c0 }, colW, [...rowH.slice(0, at), 1 / rowH.length, ...rowH.slice(at)], [...cells.slice(0, at), Array(C).fill(null), ...cells.slice(at)]);
   };
   const insertCol = (after: boolean) => {
     const at = after ? rect.c1 + 1 : rect.c0;
     const next = read().map((row) => [...row.slice(0, at), '', ...row.slice(at)]);
-    restructure(next, [...colAlign.slice(0, at), null, ...colAlign.slice(at)], { r: rect.r0, c: at }, [...colW.slice(0, at), 1 / colW.length, ...colW.slice(at)]);
+    restructure(next, [...colAlign.slice(0, at), null, ...colAlign.slice(at)], { r: rect.r0, c: at }, [...colW.slice(0, at), 1 / colW.length, ...colW.slice(at)], rowH, cells.map((row) => [...row.slice(0, at), null, ...row.slice(at)]));
   };
   const deleteRows = () => {
     if (rows.length - (rect.r1 - rect.r0 + 1) < 1) return;
     const keep = (_: unknown, i: number) => i < rect.r0 || i > rect.r1;
-    restructure(read().filter(keep), colAlign, { r: rect.r0, c: rect.c0 }, colW, rowH.filter(keep));
+    restructure(read().filter(keep), colAlign, { r: rect.r0, c: rect.c0 }, colW, rowH.filter(keep), cells.filter(keep));
   };
   const deleteCols = () => {
     if (C - (rect.c1 - rect.c0 + 1) < 1) return;
     const keep = (_: unknown, i: number) => i < rect.c0 || i > rect.c1;
-    restructure(read().map((row) => row.filter(keep)), colAlign.filter(keep), { r: rect.r0, c: rect.c0 }, colW.filter(keep));
+    restructure(read().map((row) => row.filter(keep)), colAlign.filter(keep), { r: rect.r0, c: rect.c0 }, colW.filter(keep), rowH, cells.map((row) => row.filter(keep)));
   };
   const alignCols = (a: Align) => {
     setRows(read());
@@ -293,6 +310,45 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     setRows(next);
     setGen((g) => g + 1);
   };
+  /** Merge a cell style into every cell of the range (`null` values drop the key); `null` clears all formatting. */
+  const styleRange = (patch: CellPatch | null) => {
+    setRows(read());
+    setCells((cur) =>
+      cur.map((row, ri) =>
+        row.map((c, ci) => {
+          if (ri < rect.r0 || ri > rect.r1 || ci < rect.c0 || ci > rect.c1) return c;
+          if (!patch) return null;
+          const next: Record<string, unknown> = { ...(c ?? {}) };
+          for (const [k, v] of Object.entries(patch)) {
+            if (v === null || v === undefined) delete next[k];
+            else next[k] = v;
+          }
+          return Object.keys(next).length ? (next as CellStyle) : null;
+        }),
+      ),
+    );
+  };
+  const active = cells[rect.r0]?.[rect.c0] ?? null;
+
+  /** Spreadsheet range pasted into a cell: written from the active cell, the table grows to fit. */
+  const onPaste = (e: React.ClipboardEvent) => {
+    e.stopPropagation();
+    const html = htmlTableGrid(e.clipboardData.getData('text/html'));
+    const grid = html?.rows ?? tsvRows(e.clipboardData.getData('text/plain'));
+    const gw = grid ? Math.max(...grid.map((g) => g.length)) : 0;
+    if (!grid || (grid.length === 1 && gw <= 1)) return; // single value: native paste into the cell
+    e.preventDefault();
+    const next = read();
+    const r0 = rect.r0, c0 = rect.c0;
+    const R = Math.max(next.length, r0 + grid.length), W = Math.max(C, c0 + gw);
+    const grown = Array.from({ length: R }, (_, ri) => Array.from({ length: W }, (_, ci) => next[ri]?.[ci] ?? ''));
+    grid.forEach((row, i) => row.forEach((v, j) => (grown[r0 + i]![c0 + j] = v)));
+    const styles = Array.from({ length: R }, (_, ri) => Array.from({ length: W }, (_, ci) => cells[ri]?.[ci] ?? null));
+    html?.styles.forEach((row, i) => row.forEach((st, j) => st && (styles[r0 + i]![c0 + j] = st)));
+    restructure(grown, [...colAlign, ...Array(W - C).fill(null)], { r: r0, c: c0 }, [...colW, ...Array(W - C).fill(1 / C)], [...rowH, ...Array(R - next.length).fill(1 / next.length)], styles);
+    setSel({ a: { r: r0, c: c0 }, h: { r: r0 + grid.length - 1, c: c0 + gw - 1 } });
+  };
+
   const deleteTable = () => {
     done.current = true;
     const st = useEditor.getState();
@@ -336,9 +392,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   );
   const align = colAlign[rect.c0] ?? null;
 
-  const head = master.theme.colors.accent1 ?? '3E4A83';
   const s = r.style;
-  const border = `0.5pt solid #${master.theme.palette.dk1?.lighter60 ?? 'A8A8A8'}`;
   const fillRect = fill ?? null;
   const inRect = (q: Rect | null, ri: number, ci: number) => !!q && ri >= q.r0 && ri <= q.r1 && ci >= q.c0 && ci <= q.c1;
 
@@ -354,7 +408,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
           {rows.map((row, ri) => (
             <tr key={ri} style={{ height: `${(rowH[ri] ?? 0) * 100}%` }}>
               {row.map((v, ci) => {
-                const style: CSSProperties = { border, padding: '0 8px', verticalAlign: valign, textAlign: colAlign[ci] ?? undefined, outline: 'none', ...(ri === 0 && header ? { background: `#${head}`, color: '#fff', fontWeight: 700 } : {}) };
+                const style: CSSProperties = { ...tableCellStyle(el, ri, ci, master, { header, valign, align: colAlign[ci] ?? null, cell: cells[ri]?.[ci] ?? null }), outline: 'none' };
                 return (
                   <td
                     key={ci}
@@ -367,6 +421,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
                     onFocus={() => !dragging.current && setSel((x) => (x.a.r === ri && x.a.c === ci && x.h.r === ri && x.h.c === ci ? x : multi ? x : { a: { r: ri, c: ci }, h: { r: ri, c: ci } }))}
                     onPointerDown={(e) => onCellPointerDown(e, ri, ci)}
                     onKeyDown={(e) => onKeyDown(e, ri, ci)}
+                    onPaste={onPaste}
                     onInput={(e) => {
                       const row = typed.current[ri];
                       if (row) row[ci] = e.currentTarget.innerText.replace(/\n/g, ' ').trimEnd();
@@ -384,36 +439,51 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
       <RangeFrame tableRef={tableRef} rect={fill ?? rect} dashed={!!fill} onFillStart={() => setFill(rect)} />
       {pos &&
         createPortal(
-          <div className="tbl-toolbar" style={{ top: pos.top, left: pos.left }} onMouseDown={hold} role="toolbar" aria-label="Tableau" data-testid="table-toolbar">
-            {btn('rowAbove', 'Insérer une ligne au-dessus', () => insertRow(false))}
-            {btn('rowBelow', 'Insérer une ligne en dessous', () => insertRow(true))}
+          <div className="tbl-toolbar" style={{ top: pos.top, left: pos.left }} onMouseDown={hold} role="toolbar" aria-label={tr('Tableau', 'Table')} data-testid="table-toolbar">
+            {btn('rowAbove', tr('Insérer une ligne au-dessus', 'Insert row above'), () => insertRow(false))}
+            {btn('rowBelow', tr('Insérer une ligne en dessous', 'Insert row below'), () => insertRow(true))}
             <span className="tbl-sep" />
-            {btn('colLeft', 'Insérer une colonne à gauche', () => insertCol(false))}
-            {btn('colRight', 'Insérer une colonne à droite', () => insertCol(true))}
+            {btn('colLeft', tr('Insérer une colonne à gauche', 'Insert column left'), () => insertCol(false))}
+            {btn('colRight', tr('Insérer une colonne à droite', 'Insert column right'), () => insertCol(true))}
             <span className="tbl-sep" />
-            {btn('rowDelete', 'Supprimer la ligne', deleteRows, false, rows.length <= rect.r1 - rect.r0 + 1)}
-            {btn('colDelete', 'Supprimer la colonne', deleteCols, false, C <= rect.c1 - rect.c0 + 1)}
+            {btn('rowDelete', tr('Supprimer la ligne', 'Delete row'), deleteRows, false, rows.length <= rect.r1 - rect.r0 + 1)}
+            {btn('colDelete', tr('Supprimer la colonne', 'Delete column'), deleteCols, false, C <= rect.c1 - rect.c0 + 1)}
             <span className="tbl-sep" />
-            {btn('alignLeft', 'Aligner la colonne à gauche', () => alignCols('left'), align === 'left')}
-            {btn('alignCenter', 'Centrer la colonne', () => alignCols('center'), align === 'center')}
-            {btn('alignRight', 'Aligner la colonne à droite', () => alignCols('right'), align === 'right')}
+            {btn('alignLeft', tr('Aligner la colonne à gauche', 'Align column left'), () => alignCols('left'), align === 'left')}
+            {btn('alignCenter', tr('Centrer la colonne', 'Center column'), () => alignCols('center'), align === 'center')}
+            {btn('alignRight', tr('Aligner la colonne à droite', 'Align column right'), () => alignCols('right'), align === 'right')}
             <span className="tbl-sep" />
-            {btn('vTop', 'Cellules : haut', () => setValign('top'), valign === 'top')}
-            {btn('vMiddle', 'Cellules : milieu', () => setValign('middle'), valign === 'middle')}
-            {btn('vBottom', 'Cellules : bas', () => setValign('bottom'), valign === 'bottom')}
+            {btn('vTop', tr('Cellules : haut', 'Cells: top'), () => setValign('top'), valign === 'top')}
+            {btn('vMiddle', tr('Cellules : milieu', 'Cells: middle'), () => setValign('middle'), valign === 'middle')}
+            {btn('vBottom', tr('Cellules : bas', 'Cells: bottom'), () => setValign('bottom'), valign === 'bottom')}
             <span className="tbl-sep" />
-            {btn('tableHeader', "Ligne d'en-tête", () => setHeader(!header), header)}
+            <PaletteMenu
+              testId="cell-fill-menu"
+              value={active?.fill}
+              allowNone
+              onChange={(v) => styleRange({ fill: v })}
+              trigger={(open) => (
+                <button type="button" className="tbl-btn tbl-swatch" title={tr('Couleur de fond des cellules', 'Cell background color')} aria-label={tr('Couleur de fond des cellules', 'Cell background color')} onMouseDown={hold} onClick={open} data-testid="cell-fill">
+                  <Icon name="fillColor" />
+                  <span className="tbl-swatch-bar" style={{ background: tokenHex(active?.fill, master) ? `#${tokenHex(active?.fill, master)}` : 'transparent' }} />
+                </button>
+              )}
+            />
+            <BorderMenu cell={active} onChange={styleRange} />
+            {btn('clearFormat', tr('Effacer la mise en forme des cellules', 'Clear cell formatting'), () => styleRange(null), false, !cells.some((row, ri) => row.some((c, ci) => c && inRect(rect, ri, ci))))}
+            <span className="tbl-sep" />
+            {btn('tableHeader', tr("Ligne d'en-tête", 'Header row'), () => setHeader(!header), header)}
             {stats && (
               <>
                 <span className="tbl-sep" />
-                {btn('eraser', 'Effacer les cellules sélectionnées', clearRange)}
-                <span className="tbl-stats" title="Plage sélectionnée">
-                  {stats.count} cellules{stats.numeric > 0 && ` · Σ ${fmt(stats.sum)} · moy. ${fmt(stats.sum / stats.numeric)}`}
+                {btn('eraser', tr('Effacer les cellules sélectionnées', 'Clear selected cells'), clearRange)}
+                <span className="tbl-stats" title={tr('Plage sélectionnée', 'Selected range')}>
+                  {stats.count} {tr('cellules', 'cells')}{stats.numeric > 0 && ` · Σ ${fmt(stats.sum)} · ${tr('moy.', 'avg.')} ${fmt(stats.sum / stats.numeric)}`}
                 </span>
               </>
             )}
             <span className="tbl-sep" />
-            {btn('trash', 'Supprimer le tableau', deleteTable)}
+            {btn('trash', tr('Supprimer le tableau', 'Delete table'), deleteTable)}
           </div>,
           document.body,
         )}
@@ -456,10 +526,10 @@ function ResizeHandles({ colW, rowH, wrapRef, onCols, onRows }: { colW: number[]
   return (
     <>
       {edges(colW).map((f, i) => (
-        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: `${f * 100}%` }} title="Redimensionner la colonne" onPointerDown={(e) => start(e, i, 'col')} data-testid="col-resize" />
+        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: `${f * 100}%` }} title={tr('Redimensionner la colonne', 'Resize column')} onPointerDown={(e) => start(e, i, 'col')} data-testid="col-resize" />
       ))}
       {edges(rowH).map((f, i) => (
-        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: `${f * 100}%` }} title="Redimensionner la ligne" onPointerDown={(e) => start(e, i, 'row')} data-testid="row-resize" />
+        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: `${f * 100}%` }} title={tr('Redimensionner la ligne', 'Resize row')} onPointerDown={(e) => start(e, i, 'row')} data-testid="row-resize" />
       ))}
     </>
   );
@@ -481,7 +551,7 @@ function RangeFrame({ tableRef, rect, dashed, onFillStart }: { tableRef: React.R
     <div className={`tbl-range-frame${dashed ? ' is-filling' : ''}`} style={box}>
       <div
         className="tbl-fill-handle"
-        title="Recopier vers le bas ou la droite (série)"
+        title={tr('Recopier vers le bas ou la droite (série)', 'Fill down or right (series)')}
         data-testid="fill-handle"
         onPointerDown={(e) => {
           e.preventDefault();
@@ -492,5 +562,53 @@ function RangeFrame({ tableRef, rect, dashed, onFillStart }: { tableRef: React.R
         }}
       />
     </div>
+  );
+}
+
+/** Border of the selected cells: color, width and dash, or no border. */
+function BorderMenu({ cell, onChange }: { cell: Cell; onChange: (p: CellPatch | null) => void }) {
+  const label = tr('Bordure des cellules', 'Cell borders');
+  const width = cell?.lineWidth ?? 0.5;
+  const dash = cell?.dash ?? 'solid';
+  // Picking a width or dash on "no border" cells brings the border back.
+  const visible = cell?.line === 'none' ? { line: null } : {};
+  return (
+    <Menu
+      testId="cell-border-menu"
+      trigger={(open) => (
+        <button type="button" className="tbl-btn" title={label} aria-label={label} onMouseDown={(e) => e.preventDefault()} onClick={open} data-testid="cell-border">
+          <Icon name="borders" />
+        </button>
+      )}
+    >
+      {(close) => (
+        <div className="border-menu" onMouseDown={(e) => e.target instanceof HTMLButtonElement && e.preventDefault()}>
+          <h4>{tr('Couleur', 'Color')}</h4>
+          <PaletteGrid value={cell?.line} allowNone onChange={(v) => onChange({ line: v })} close={() => undefined} testId="cell-border-color" />
+          <h4>{tr('Épaisseur', 'Width')}</h4>
+          <div className="border-opts" role="radiogroup" aria-label={tr('Épaisseur', 'Width')}>
+            {BORDER_WIDTHS.map((w) => (
+              <button key={w} type="button" role="radio" aria-checked={w === width} className={`border-opt${w === width ? ' is-active' : ''}`} onClick={() => onChange({ lineWidth: w === 0.5 ? null : w, ...visible })} data-testid={`cell-border-w-${w}`}>
+                <span className="border-sample" style={{ borderTopWidth: Math.max(1, (w / 72) * 96) }} />
+                {fmtNumber(w, 2)} pt
+              </button>
+            ))}
+          </div>
+          <h4>{tr('Type de trait', 'Dash type')}</h4>
+          <div className="border-opts" role="radiogroup" aria-label={tr('Type de trait', 'Dash type')}>
+            {DASHES.map((d) => (
+              <button key={d.id} type="button" role="radio" aria-checked={d.id === dash} className={`border-opt${d.id === dash ? ' is-active' : ''}`} onClick={() => onChange({ dash: d.id === 'solid' ? null : d.id, ...visible })} data-testid={`cell-border-${d.id}`}>
+                <span className="border-sample" style={{ borderTopStyle: d.id === 'dash' ? 'dashed' : d.id === 'dot' ? 'dotted' : 'solid', borderTopWidth: 2 }} />
+                {tr(d.fr, d.en)}
+              </button>
+            ))}
+          </div>
+          <div className="palette-actions">
+            <button type="button" className="menu-item" onClick={() => (onChange({ line: 'none', lineWidth: null, dash: null }), close())} data-testid="cell-border-none">{tr('Aucune bordure', 'No border')}</button>
+            <button type="button" className="menu-item" onClick={() => (onChange({ line: null, lineWidth: null, dash: null }), close())}>{tr('Bordure par défaut', 'Default border')}</button>
+          </div>
+        </div>
+      )}
+    </Menu>
   );
 }

@@ -4,6 +4,7 @@ import { Icon } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
 import { diffDocs, type DocDiff } from './diff';
+import { tr } from '@corporate-slides/core';
 
 export interface Anchor {
   thread: ReviewThread;
@@ -70,10 +71,10 @@ function Composer({ placeholder, submit, onCancel, autoFocus, testId }: { placeh
         }}
       />
       <div className="composer-actions">
-        <span className="hint">Ctrl+Entrée pour publier</span>
+        <span className="hint">{tr('Ctrl+Entrée pour publier', 'Ctrl+Enter to post')}</span>
         <span className="grow" />
-        {onCancel && <button className="btn" onClick={onCancel}>Annuler</button>}
-        <button className="btn btn-primary" disabled={!text.trim()} onClick={send}>Publier</button>
+        {onCancel && <button className="btn" onClick={onCancel}>{tr('Annuler', 'Cancel')}</button>}
+        <button className="btn btn-primary" disabled={!text.trim()} onClick={send}>{tr('Publier', 'Post')}</button>
       </div>
     </div>
   );
@@ -101,10 +102,10 @@ function ThreadCard({ a, focused }: { a: Anchor; focused: boolean }) {
       >
         <span className="pin-num">{a.n}</span>
         <span className="thread-where">
-          {slideIndex >= 0 ? `Diapositive ${slideIndex + 1}` : 'En-tête du document'}
+          {slideIndex >= 0 ? tr(`Diapositive ${slideIndex + 1}`, `Slide ${slideIndex + 1}`) : tr('En-tête du document', 'Document header')}
           {a.elementId && <code> · {a.elementId}</code>}
         </span>
-        <span className="hint">ligne {t.line}</span>
+        <span className="hint">{tr('ligne', 'line')} {t.line}</span>
       </button>
       {t.notes.map((n) => (
         <div key={n.id} className="note">
@@ -118,14 +119,14 @@ function ThreadCard({ a, focused }: { a: Anchor; focused: boolean }) {
       <footer className="thread-actions">
         {t.resolvable && (
           <button className="btn" onClick={() => sendReview('resolve', { discussionId: t.id, resolved: !t.resolved })}>
-            <Icon name={t.resolved ? 'refresh' : 'check'} /> {t.resolved ? 'Rouvrir' : 'Résoudre'}
+            <Icon name={t.resolved ? 'refresh' : 'check'} /> {t.resolved ? tr('Rouvrir', 'Reopen') : tr('Résoudre', 'Resolve')}
           </button>
         )}
         {canComment && !replying && (
-          <button className="btn" onClick={() => setReplying(true)}>Répondre</button>
+          <button className="btn" onClick={() => setReplying(true)}>{tr('Répondre', 'Reply')}</button>
         )}
       </footer>
-      {replying && <Composer placeholder="Répondre…" autoFocus submit={(text) => (sendReview('reply', { discussionId: t.id, text }), setReplying(false))} onCancel={() => setReplying(false)} />}
+      {replying && <Composer placeholder={tr("Répondre…", "Reply…")} autoFocus submit={(text) => (sendReview('reply', { discussionId: t.id, text }), setReplying(false))} onCancel={() => setReplying(false)} />}
     </article>
   );
 }
@@ -148,39 +149,39 @@ export function CommentsPane() {
   const open = anchors.filter((a) => !a.thread.resolved).length;
 
   return (
-    <aside className="inspector comments-pane" aria-label="Commentaires">
+    <aside className="inspector comments-pane" aria-label={tr("Commentaires", "Comments")}>
       <div className="insp-head">
-        <span className="insp-kind">Commentaires</span>
-        {review && <code className="insp-id">{review.mr} · {review.side === 'new' ? 'modifié' : 'base'}</code>}
+        <span className="insp-kind">{tr('Commentaires', 'Comments')}</span>
+        {review && <code className="insp-id">{review.mr} · {review.side === 'new' ? tr('modifié', 'edited') : 'base'}</code>}
         <span className="grow" />
-        {review && <button className="ibtn" title="Actualiser" aria-label="Actualiser les commentaires" onClick={() => sendReview('load')}><Icon name="refresh" /></button>}
-        <button className="ibtn" title="Fermer" aria-label="Fermer le volet" onClick={() => set({ pane: 'format' })}><Icon name="close" /></button>
+        {review && <button className="ibtn" title={tr("Actualiser", "Refresh")} aria-label={tr("Actualiser les commentaires", "Refresh comments")} onClick={() => sendReview('load')}><Icon name="refresh" /></button>}
+        <button className="ibtn" title={tr("Fermer", "Close")} aria-label={tr("Fermer le volet", "Close the pane")} onClick={() => set({ pane: 'format' })}><Icon name="close" /></button>
       </div>
       {!review ? (
         <div className="pane-empty">
           <Icon name="comment" size={20} />
-          <p>Les discussions GitLab s’affichent ici quand la présentation est ouverte depuis la liste des modifications d’une merge request (extension Project Integration).</p>
+          <p>{tr('Les discussions GitLab s’affichent ici quand la présentation est ouverte depuis la liste des modifications d’une merge request (extension Project Integration).', 'GitLab discussions show here when the presentation is opened from the changes list of a merge request (Project Integration extension).')}</p>
         </div>
       ) : (
         <div className="threads">
           {error && <p className="pane-error" role="alert">{error}</p>}
           {data?.canCreate && (composing ? (
             <div className="thread is-draft">
-              <p className="hint">Sur {target ? <code>{target.id}</code> : 'la diapositive'} · ligne {line ?? 1}</p>
-              <Composer placeholder="Nouveau commentaire (Markdown)…" autoFocus testId="new-comment" submit={(text) => (sendReview('create', { line: line ?? 1, text }), setComposing(false))} onCancel={() => setComposing(false)} />
+              <p className="hint">{tr('Sur', 'On')} {target ? <code>{target.id}</code> : tr('la diapositive', 'the slide')} · {tr('ligne', 'line')} {line ?? 1}</p>
+              <Composer placeholder={tr("Nouveau commentaire (Markdown)…", "New comment (Markdown)…")} autoFocus testId="new-comment" submit={(text) => (sendReview('create', { line: line ?? 1, text }), setComposing(false))} onCancel={() => setComposing(false)} />
             </div>
           ) : (
             <button className="btn btn-block" onClick={() => setComposing(true)} disabled={!line}>
-              <Icon name="commentPlus" /> Commenter {target ? `« ${target.id} »` : 'cette diapositive'}
+              <Icon name="commentPlus" /> {tr('Commenter', 'Comment on')} {target ? tr(`« ${target.id} »`, `“${target.id}”`) : tr('cette diapositive', 'this slide')}
             </button>
           ))}
           <div className="threads-filter">
-            <span className="hint">{open} ouverte{open > 1 ? 's' : ''} · {anchors.length - open} résolue{anchors.length - open > 1 ? 's' : ''}</span>
+            <span className="hint">{open} {open > 1 ? tr('ouvertes', 'open') : tr('ouverte', 'open')} · {anchors.length - open} {anchors.length - open > 1 ? tr('résolues', 'resolved') : tr('résolue', 'resolved')}</span>
             <span className="grow" />
-            <label className="check"><input type="checkbox" checked={onlyOpen} onChange={(e) => setOnlyOpen(e.target.checked)} /> Ouvertes seulement</label>
+            <label className="check"><input type="checkbox" checked={onlyOpen} onChange={(e) => setOnlyOpen(e.target.checked)} /> {tr('Ouvertes seulement', 'Open only')}</label>
           </div>
-          {!data && !error && <p className="hint">Chargement des discussions…</p>}
-          {data && shown.length === 0 && <p className="hint">Aucune discussion sur ce fichier.</p>}
+          {!data && !error && <p className="hint">{tr('Chargement des discussions…', 'Loading discussions…')}</p>}
+          {data && shown.length === 0 && <p className="hint">{tr('Aucune discussion sur ce fichier.', 'No discussion on this file.')}</p>}
           {shown.map((a) => <ThreadCard key={a.thread.id} a={a} focused={focus === a.thread.id} />)}
         </div>
       )}

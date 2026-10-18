@@ -153,6 +153,24 @@ export const ImageElement = z.object({
     .refine((s) => !/^[a-z][a-z0-9+.-]*:/i.test(s) || /^[a-z]:[\\/]/i.test(s), 'URL distante interdite : chemins locaux uniquement'),
   alt: z.string().optional(),
 });
+/** Per-cell overrides of a table: background, border (all four sides) and text. */
+export const CellStyle = z
+  .object({
+    fill: ColorValue.optional(),
+    line: ColorValue.optional(),
+    /** Border width in points. */
+    lineWidth: z.number().min(0).max(20).optional(),
+    dash: z.enum(['solid', 'dash', 'dot']).optional(),
+    color: ColorValue.optional(),
+    bold: z.boolean().optional(),
+  })
+  .strict();
+export type CellStyle = z.infer<typeof CellStyle>;
+
+/** Free attachment point of a connector end, as fractions of the element box (0,0 = top-left). */
+export const AnchorPoint = z.tuple([z.number().min(0).max(1), z.number().min(0).max(1)]);
+export type AnchorPoint = z.infer<typeof AnchorPoint>;
+
 export const TableElement = z.object({
   ...ElementBase,
   type: z.literal('table'),
@@ -163,6 +181,8 @@ export const TableElement = z.object({
   /** Relative column widths / row heights (weights, normalised to the box); absent = even. */
   colWidths: z.array(z.number().positive()).optional(),
   rowHeights: z.array(z.number().positive()).optional(),
+  /** Cell overrides, parallel to `rows` (null / missing = table default). */
+  cellStyles: z.array(z.array(CellStyle.nullable())).optional(),
 });
 
 /**
@@ -177,6 +197,9 @@ export const ConnectorElement = z.object({
   route: z.enum(['straight', 'elbow', 'curved']).optional(),
   fromSide: ConnectorSide.optional(),
   toSide: ConnectorSide.optional(),
+  /** Free attachment points on the boxes; take precedence over `fromSide` / `toSide`. */
+  fromPoint: AnchorPoint.optional(),
+  toPoint: AnchorPoint.optional(),
 });
 
 export const SlideElement = z.discriminatedUnion('type', [TextElement, ShapeElement, ImageElement, TableElement, ConnectorElement]);

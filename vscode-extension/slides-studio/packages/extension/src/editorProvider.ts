@@ -51,7 +51,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
   constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly diagnostics: vscode.DiagnosticCollection,
-    private readonly commands: { exportPptx(uri: vscode.Uri): Promise<void>; renderReference(uri: vscode.Uri, slideIndex: number): Promise<vscode.Uri | null>; convertToDsl(uri: vscode.Uri): Promise<void>; newFromLayout(layout: string): Promise<void> },
+    private readonly commands: { exportPptx(uri: vscode.Uri): Promise<void>; renderReference(uri: vscode.Uri, slideIndex: number): Promise<vscode.Uri | null>; newFromLayout(layout: string): Promise<void> },
   ) {}
 
   async getMaster(fileUri: vscode.Uri): Promise<MasterCache | null> {
@@ -324,9 +324,6 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           await vscode.commands.executeCommand('workbench.actions.view.problems');
           break;
         }
-        case 'convertToDsl':
-          await this.commands.convertToDsl(document.uri);
-          break;
         case 'openSource':
           await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', panel.viewColumn);
           break;

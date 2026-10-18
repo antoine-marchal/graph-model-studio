@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from './icons';
 import { onHostMessage, post } from './host';
 import { currentSlide, useEditor } from './store';
+import { tr } from '@corporate-slides/core';
 
 type Template = 'context' | 'flow' | 'blank';
 
 const TEMPLATES: { id: Template; label: string; hint: string; art: string }[] = [
-  { id: 'context', label: 'Contexte', hint: 'Acteur, système, système externe (C4)', art: 'M4 14h12v8H4zM24 14h12v8H24zM44 14h12v8H44zM16 18h8M36 18h8' },
-  { id: 'flow', label: 'Processus', hint: 'Événement → étapes → résultat', art: 'M6 18a3 3 0 1 0 0.1 0M14 14h10v8H14zM30 14h10v8H30zM50 18a3 3 0 1 0 0.1 0M9 18h5M24 18h6M40 18h7' },
-  { id: 'blank', label: 'Vierge', hint: 'Modèle et vue vides', art: 'M6 8h48v20H6z' },
+  { id: 'context', label: tr('Contexte', 'Context'), hint: tr('Acteur, système, système externe (C4)', 'Actor, system, external system (C4)'), art: 'M4 14h12v8H4zM24 14h12v8H24zM44 14h12v8H44zM16 18h8M36 18h8' },
+  { id: 'flow', label: tr('Processus', 'Process'), hint: tr('Événement → étapes → résultat', 'Event → steps → outcome'), art: 'M6 18a3 3 0 1 0 0.1 0M14 14h10v8H14zM30 14h10v8H30zM50 18a3 3 0 1 0 0.1 0M9 18h5M24 18h6M40 18h7' },
+  { id: 'blank', label: tr('Vierge', 'Blank'), hint: tr('Modèle et vue vides', 'Empty model and view'), art: 'M6 8h48v20H6z' },
 ];
 
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -62,30 +63,30 @@ export function GmcDialog() {
         <header className="dialog-head">
           <Icon name="diagram" size={20} />
           <div>
-            <h2 id="gmc-title">Diagramme Graph Model Studio</h2>
-            <p className="hint">La source reste dans un fichier <code>.gmc</code> versionné ; la diapositive et le PowerPoint affichent son rendu PNG.</p>
+            <h2 id="gmc-title">{tr('Diagramme Graph Model Studio', 'Graph Model Studio diagram')}</h2>
+            <p className="hint">{tr('La source reste dans un fichier', 'The source stays in a')} <code>.gmc</code> {tr('versionné ; la diapositive et le PowerPoint affichent son rendu PNG.', 'file under version control; the slide and the PowerPoint show its PNG rendering.')}</p>
           </div>
         </header>
 
-        <div className="seg seg-wide" role="tablist" aria-label="Origine du diagramme">
-          <button type="button" role="tab" aria-selected={mode === 'new'} className={`ibtn${mode === 'new' ? ' is-active' : ''}`} onClick={() => setMode('new')}>Nouveau diagramme</button>
-          <button type="button" role="tab" aria-selected={mode === 'existing'} className={`ibtn${mode === 'existing' ? ' is-active' : ''}`} onClick={() => setMode('existing')}>Fichier existant</button>
+        <div className="seg seg-wide" role="tablist" aria-label={tr("Origine du diagramme", "Diagram source")}>
+          <button type="button" role="tab" aria-selected={mode === 'new'} className={`ibtn${mode === 'new' ? ' is-active' : ''}`} onClick={() => setMode('new')}>{tr('Nouveau diagramme', 'New diagram')}</button>
+          <button type="button" role="tab" aria-selected={mode === 'existing'} className={`ibtn${mode === 'existing' ? ' is-active' : ''}`} onClick={() => setMode('existing')}>{tr('Fichier existant', 'Existing file')}</button>
         </div>
 
         {mode === 'new' ? (
           <div className="dialog-body">
             <div className="field-row">
               <label className="field">
-                <span>Nom</span>
+                <span>{tr('Nom', 'Name')}</span>
                 <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus data-testid="gmc-name" />
               </label>
               <label className="field">
-                <span>Dossier</span>
+                <span>{tr('Dossier', 'Folder')}</span>
                 <input className="input" value={folder} onChange={(e) => setFolder(e.target.value)} />
               </label>
             </div>
             <fieldset className="templates">
-              <legend>Modèle de départ</legend>
+              <legend>{tr('Modèle de départ', 'Starting template')}</legend>
               {TEMPLATES.map((t) => (
                 <label key={t.id} className={`template${template === t.id ? ' is-selected' : ''}`}>
                   <input type="radio" name="tpl" value={t.id} checked={template === t.id} onChange={() => setTemplate(t.id)} />
@@ -97,15 +98,15 @@ export function GmcDialog() {
             </fieldset>
             <p className={`path-preview${exists ? ' is-error' : ''}`}>
               <code>{file}</code> <Icon name="next" /> <code>{file.replace(/\.gmc$/, '.png')}</code>
-              {exists && <span> — ce fichier existe déjà, choisissez « Fichier existant ».</span>}
+              {exists && <span> {tr('— ce fichier existe déjà, choisissez « Fichier existant ».', '— this file already exists, choose “Existing file”.')}</span>}
             </p>
           </div>
         ) : (
           <div className="dialog-body">
-            <input className="input" placeholder="Rechercher un fichier .gmc…" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un fichier .gmc" />
-            <ul className="file-list" role="listbox" aria-label="Diagrammes du projet">
-              {files === null && <li className="hint">Recherche des diagrammes…</li>}
-              {files && list.length === 0 && <li className="hint">Aucun fichier .gmc dans l’espace de travail.</li>}
+            <input className="input" placeholder={tr("Rechercher un fichier .gmc…", "Search a .gmc file…")} value={query} onChange={(e) => setQuery(e.target.value)} aria-label={tr("Rechercher un fichier .gmc", "Search a .gmc file")} />
+            <ul className="file-list" role="listbox" aria-label={tr("Diagrammes du projet", "Project diagrams")}>
+              {files === null && <li className="hint">{tr('Recherche des diagrammes…', 'Looking for diagrams…')}</li>}
+              {files && list.length === 0 && <li className="hint">{tr('Aucun fichier .gmc dans l’espace de travail.', 'No .gmc file in the workspace.')}</li>}
               {list.map((f) => (
                 <li key={f} role="option" aria-selected={picked === f} className={picked === f ? 'is-selected' : ''} onClick={() => setPicked(f)} onDoubleClick={() => submit(f)}>
                   <Icon name="diagram" /> <code>{f}</code>
@@ -117,9 +118,9 @@ export function GmcDialog() {
 
 
         <footer className="dialog-actions">
-          <button type="button" className="btn" onClick={close}>Annuler</button>
+          <button type="button" className="btn" onClick={close}>{tr('Annuler', 'Cancel')}</button>
           <button type="submit" className="btn btn-primary" disabled={!ready} data-testid="gmc-submit">
-            {mode === 'new' ? 'Créer et modifier' : 'Insérer le diagramme'}
+            {mode === 'new' ? tr('Créer et modifier', 'Create and edit') : tr('Insérer le diagramme', 'Insert diagram')}
           </button>
         </footer>
       </form>

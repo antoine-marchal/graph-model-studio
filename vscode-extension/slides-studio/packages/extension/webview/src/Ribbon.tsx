@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { isDiagramSrc, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement } from '@corporate-slides/core';
+import { isDiagramSrc, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
@@ -77,9 +77,9 @@ function useActions() {
     select(slide.id, [id]);
   };
   return {
-    addText: () => add({ type: 'text', ...center(5, 1), paragraphs: [{ runs: [{ text: 'Nouveau texte' }] }] } as never),
+    addText: () => add({ type: 'text', ...center(5, 1), paragraphs: [{ runs: [{ text: tr('Nouveau texte', 'New text') }] }] } as never),
     addShape: (shape: ShapeKind) => add({ type: 'shape', shape, ...(shape === 'line' ? center(3, 0) : SQUARE.has(shape) ? center(2, 2) : shape === 'can' ? center(1.6, 2) : center(3, 1.5)) } as never),
-    addTable: () => add({ type: 'table', ...center(8, 2), header: true, rows: [['Colonne 1', 'Colonne 2', 'Colonne 3'], ['', '', ''], ['', '', '']] } as never),
+    addTable: () => add({ type: 'table', ...center(8, 2), header: true, rows: [[tr('Colonne 1', 'Column 1'), tr('Colonne 2', 'Column 2'), tr('Colonne 3', 'Column 3')], ['', '', ''], ['', '', '']] } as never),
   };
 }
 
@@ -91,7 +91,7 @@ function ShapesMenu({ big, disabled }: { big?: boolean; disabled?: boolean }) {
   return (
     <ShapeGallery
       onPick={addShape}
-      trigger={(open) => (big ? <Big icon="shape" label="Formes" caret testId="add-shape" disabled={disabled} onClick={open} /> : <Small icon="shape" label="Formes" testId="add-shape" disabled={disabled} onClick={open} />)}
+      trigger={(open) => (big ? <Big icon="shape" label={tr("Formes", "Shapes")} caret testId="add-shape" disabled={disabled} onClick={open} /> : <Small icon="shape" label={tr("Formes", "Shapes")} testId="add-shape" disabled={disabled} onClick={open} />)}
     />
   );
 }
@@ -106,11 +106,11 @@ function ConnectButton({ disabled }: { disabled?: boolean }) {
   return (
     <Big
       icon="connector"
-      label="Relier"
+      label={tr("Relier", "Connect")}
       testId="connect"
       active={connectFrom !== null}
       disabled={disabled}
-      title={pair.length === 2 ? 'Relier les deux éléments sélectionnés' : "Relier deux formes : cliquez sur la forme de départ puis sur celle d'arrivée (Échap pour annuler)"}
+      title={pair.length === 2 ? tr('Relier les deux éléments sélectionnés', 'Connect the two selected elements') : tr("Relier deux formes : cliquez sur la forme de départ puis sur celle d'arrivée (Échap pour annuler)", "Connect two shapes: click the start shape, then the end shape (Esc to cancel)")}
       onClick={() => {
         if (!slide) return;
         if (connectFrom !== null) return set({ connectFrom: null });
@@ -147,24 +147,24 @@ function TitleBar() {
   const readOnly = useEditor((s) => s.readOnly);
   const review = useEditor((s) => s.review);
   return (
-    <header className="titlebar" role="toolbar" aria-label="Accès rapide">
+    <header className="titlebar" role="toolbar" aria-label={tr("Accès rapide", "Quick access")}>
       <div className="qat">
-        <button type="button" className="ibtn" aria-label="Enregistrer (Ctrl+S)" title="Enregistrer (Ctrl+S)" disabled={readOnly} onClick={() => post({ type: 'save' })}><Icon name="save" /></button>
-        <button type="button" className="ibtn" aria-label="Annuler (Ctrl+Z)" title="Annuler (Ctrl+Z)" data-testid="undo" disabled={readOnly} onClick={() => post({ type: 'undo' })}><Icon name="undo" /></button>
-        <button type="button" className="ibtn" aria-label="Rétablir (Ctrl+Y)" title="Rétablir (Ctrl+Y)" data-testid="redo" disabled={readOnly} onClick={() => post({ type: 'redo' })}><Icon name="redo" /></button>
+        <button type="button" className="ibtn" aria-label={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} title={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} disabled={readOnly} onClick={() => post({ type: 'save' })}><Icon name="save" /></button>
+        <button type="button" className="ibtn" aria-label={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} title={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} data-testid="undo" disabled={readOnly} onClick={() => post({ type: 'undo' })}><Icon name="undo" /></button>
+        <button type="button" className="ibtn" aria-label={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} title={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} data-testid="redo" disabled={readOnly} onClick={() => post({ type: 'redo' })}><Icon name="redo" /></button>
       </div>
       <div className="title">
         <span className="file-name" title={fileName}>{fileName}</span>
-        {review && <span className={`chip chip-${review.side}`} title="Révision ouverte depuis la merge request">{review.mr} · {review.side === 'new' ? 'version modifiée' : 'version de base'}</span>}
-        {readOnly && <span className="chip">Lecture seule</span>}
+        {review && <span className={`chip chip-${review.side}`} title={tr("Révision ouverte depuis la merge request", "Revision opened from the merge request")}>{review.mr} · {review.side === 'new' ? tr('version modifiée', 'changed version') : tr('version de base', 'base version')}</span>}
+        {readOnly && <span className="chip">{tr('Lecture seule', 'Read-only')}</span>}
       </div>
       <div className="title-actions">
-        <div className="seg" role="group" aria-label="Mode d'édition">
-          <button type="button" className="ibtn is-active" aria-pressed>Visuel</button>
-          <button type="button" className="ibtn" title="Ouvrir la source dans l'éditeur de texte" data-testid="open-source" onClick={() => post({ type: 'openSource' })}>Source</button>
+        <div className="seg" role="group" aria-label={tr("Mode d'édition", "Editing mode")}>
+          <button type="button" className="ibtn is-active" aria-pressed>{tr('Visuel', 'Visual')}</button>
+          <button type="button" className="ibtn" title={tr("Ouvrir la source dans l'éditeur de texte", "Open the source in the text editor")} data-testid="open-source" onClick={() => post({ type: 'openSource' })}>Source</button>
         </div>
         <button type="button" className="ibtn is-primary has-label" data-testid="export" disabled={!doc || pending > 0} onClick={() => post({ type: 'export' })}>
-          <Icon name="download" /> Exporter .pptx
+          <Icon name="download" /> {tr('Exporter .pptx', 'Export .pptx')}
         </button>
       </div>
     </header>
@@ -196,57 +196,57 @@ function HomeTab() {
   return (
     <>
       <Group label="Presse-papiers">
-        <Big icon="paste" label="Coller" testId="paste" disabled={!slide || readOnly} title="Coller (Ctrl+V) : éléments, texte, image ou tableau Excel" onClick={() => void pasteFromRibbon()} />
+        <Big icon="paste" label={tr("Coller", "Paste")} testId="paste" disabled={!slide || readOnly} title={tr("Coller (Ctrl+V) : éléments, texte, image ou tableau Excel", "Paste (Ctrl+V): elements, text, picture or Excel table")} onClick={() => void pasteFromRibbon()} />
         <Col>
-          <Small icon="cut" label="Couper" testId="cut" disabled={!els.length || readOnly} title="Couper (Ctrl+X)" onClick={() => copyFromRibbon(true)} />
-          <Small icon="copy" label="Copier" testId="copy" disabled={!els.length} title="Copier (Ctrl+C)" onClick={() => copyFromRibbon(false)} />
+          <Small icon="cut" label={tr("Couper", "Cut")} testId="cut" disabled={!els.length || readOnly} title={tr("Couper (Ctrl+X)", "Cut (Ctrl+X)")} onClick={() => copyFromRibbon(true)} />
+          <Small icon="copy" label={tr("Copier", "Copy")} testId="copy" disabled={!els.length} title={tr("Copier (Ctrl+C)", "Copy (Ctrl+C)")} onClick={() => copyFromRibbon(false)} />
           <Small
             icon="brush"
-            label="Reproduire la mise en forme"
+            label={tr("Reproduire la mise en forme", "Format painter")}
             testId="format-painter"
             active={!!painter}
             disabled={(els.length !== 1 && !painter) || readOnly}
-            title="Copier la mise en forme de l’élément sélectionné puis cliquer l’élément cible (Ctrl+Maj+C / Ctrl+Maj+V)"
+            title={tr("Copier la mise en forme de l’élément sélectionné puis cliquer l’élément cible (Ctrl+Maj+C / Ctrl+Maj+V)", "Copy the formatting of the selected element, then click the target element (Ctrl+Shift+C / Ctrl+Shift+V)")}
             onClick={() => useEditor.getState().set({ painter: painter ? null : copyStyle() })}
           />
         </Col>
       </Group>
-      <Group label="Diapositives">
-        <AddSlideMenu trigger={(open) => <Big icon="plus" label="Nouvelle diapositive" caret testId="add-slide" disabled={readOnly} onClick={open} />} />
+      <Group label={tr("Diapositives", "Slides")}>
+        <AddSlideMenu trigger={(open) => <Big icon="plus" label={tr("Nouvelle diapositive", "New slide")} caret testId="add-slide" disabled={readOnly} onClick={open} />} />
         <Col>
-          <Small icon="copy" label="Dupliquer" disabled={!slide || readOnly} onClick={() => slide && doc && mutate([{ kind: 'duplicateSlide', slideId: slide.id, newSlideId: uniqueId(slide.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
-          <Small icon="trash" label="Supprimer" disabled={!slide || readOnly || (doc?.slides.length ?? 0) <= 1} onClick={() => slide && mutate([{ kind: 'deleteSlide', slideId: slide.id }])} />
+          <Small icon="copy" label={tr("Dupliquer", "Duplicate")} disabled={!slide || readOnly} onClick={() => slide && doc && mutate([{ kind: 'duplicateSlide', slideId: slide.id, newSlideId: uniqueId(slide.id.replace(/-\d+$/, '') || 'slide', doc.slides.map((x) => x.id)) }])} />
+          <Small icon="trash" label={tr("Supprimer", "Delete")} disabled={!slide || readOnly || (doc?.slides.length ?? 0) <= 1} onClick={() => slide && mutate([{ kind: 'deleteSlide', slideId: slide.id }])} />
         </Col>
       </Group>
-      <Group label="Dessin">
-        <Big icon="text" label="Zone de texte" testId="add-text" disabled={!slide || readOnly} onClick={addText} />
+      <Group label={tr("Dessin", "Drawing")}>
+        <Big icon="text" label={tr("Zone de texte", "Text box")} testId="add-text" disabled={!slide || readOnly} onClick={addText} />
         <ShapesMenu big disabled={!slide || readOnly} />
         <ConnectButton disabled={!slide || readOnly} />
       </Group>
-      <Group label="Police">
+      <Group label={tr("Police", "Font")}>
         <Col>
           <Row>
-            <Small iconOnly icon="bold" label="Gras (Ctrl+B)" active={all('bold')} disabled={noText} testId="bold" onClick={() => toggle('bold')} />
-            <Small iconOnly icon="italic" label="Italique (Ctrl+I)" active={all('italic')} disabled={noText} testId="italic" onClick={() => toggle('italic')} />
-            <Small iconOnly icon="underline" label="Souligné (Ctrl+U)" active={all('underline')} disabled={noText} testId="underline" onClick={() => toggle('underline')} />
+            <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={all('bold')} disabled={noText} testId="bold" onClick={() => toggle('bold')} />
+            <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={all('italic')} disabled={noText} testId="italic" onClick={() => toggle('italic')} />
+            <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={all('underline')} disabled={noText} testId="underline" onClick={() => toggle('underline')} />
             <span className="rb-count" data-testid="font-size">{size !== undefined ? `${size} pt` : '—'}</span>
-            <Small iconOnly icon="fontGrow" label="Augmenter la taille de police" disabled={readOnly || !textEls.length} testId="font-grow" onClick={() => resize(1)} />
-            <Small iconOnly icon="fontShrink" label="Réduire la taille de police" disabled={readOnly || !textEls.length} testId="font-shrink" onClick={() => resize(-1)} />
+            <Small iconOnly icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} disabled={readOnly || !textEls.length} testId="font-grow" onClick={() => resize(1)} />
+            <Small iconOnly icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} disabled={readOnly || !textEls.length} testId="font-shrink" onClick={() => resize(-1)} />
           </Row>
           <Row>
             {(['left', 'center', 'right', 'justify'] as const).map((a) => (
-              <Small key={a} iconOnly icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: 'Aligner à gauche', center: 'Centrer', right: 'Aligner à droite', justify: 'Justifier' }[a]} active={textEls.length > 0 && textEls.every((e) => e.style?.align === a)} disabled={noText} onClick={() => style({ align: a })} />
+              <Small key={a} iconOnly icon={a === 'left' ? 'alignLeft' : a === 'center' ? 'alignCenter' : a === 'right' ? 'alignRight' : 'alignJustify'} label={{ left: tr('Aligner à gauche', 'Align left'), center: tr('Centrer', 'Center'), right: tr('Aligner à droite', 'Align right'), justify: tr('Justifier', 'Justify') }[a]} active={textEls.length > 0 && textEls.every((e) => e.style?.align === a)} disabled={noText} onClick={() => style({ align: a })} />
             ))}
           </Row>
         </Col>
       </Group>
-      <Group label="Paragraphe">
+      <Group label={tr("Paragraphe", "Paragraph")}>
         <ParagraphTools disabled={readOnly} />
       </Group>
-      <Group label="Organiser">
+      <Group label={tr("Organiser", "Arrange")}>
         <Col>
-          <Small icon="front" label="Premier plan" disabled={readOnly || !els.length} onClick={() => order('front')} />
-          <Small icon="back" label="Arrière-plan" disabled={readOnly || !els.length} onClick={() => order('back')} />
+          <Small icon="front" label={tr("Premier plan", "Bring to front")} disabled={readOnly || !els.length} onClick={() => order('front')} />
+          <Small icon="back" label={tr("Arrière-plan", "Send to back")} disabled={readOnly || !els.length} onClick={() => order('back')} />
         </Col>
       </Group>
     </>
@@ -260,27 +260,27 @@ function InsertTab() {
   const off = !slide || readOnly;
   return (
     <>
-      <Group label="Diapositives">
-        <AddSlideMenu trigger={(open) => <Big icon="plus" label="Nouvelle diapositive" caret testId="add-slide" disabled={readOnly} onClick={open} />} />
+      <Group label={tr("Diapositives", "Slides")}>
+        <AddSlideMenu trigger={(open) => <Big icon="plus" label={tr("Nouvelle diapositive", "New slide")} caret testId="add-slide" disabled={readOnly} onClick={open} />} />
       </Group>
-      <Group label="Éléments">
-        <Big icon="text" label="Zone de texte" testId="add-text" disabled={off} onClick={addText} />
+      <Group label={tr("Éléments", "Elements")}>
+        <Big icon="text" label={tr("Zone de texte", "Text box")} testId="add-text" disabled={off} onClick={addText} />
         <ShapesMenu big disabled={off} />
         <ConnectButton disabled={off} />
         <Big icon="image" label="Image" disabled={off} onClick={() => slide && post({ type: 'pickImage', slideId: slide.id })} />
-        <Big icon="table" label="Tableau" disabled={off} onClick={addTable} />
+        <Big icon="table" label={tr("Tableau", "Table")} disabled={off} onClick={addTable} />
       </Group>
-      <Group label="Diagrammes">
-        <Big icon="diagram" label="Diagramme GMC" testId="insert-gmc" disabled={off} title="Créer ou insérer un diagramme Graph Model Studio (.gmc)" onClick={() => useEditor.getState().set({ gmcDialog: true })} />
+      <Group label={tr("Diagrammes", "Diagrams")}>
+        <Big icon="diagram" label={tr("Diagramme GMC", "GMC diagram")} testId="insert-gmc" disabled={off} title={tr("Créer ou insérer un diagramme Graph Model Studio (.gmc)", "Create or insert a Graph Model Studio diagram (.gmc)")} onClick={() => useEditor.getState().set({ gmcDialog: true })} />
       </Group>
     </>
   );
 }
 
 const BASES: { id: DiffBaseKind; label: string }[] = [
-  { id: 'none', label: 'Aucune' },
+  { id: 'none', label: tr('Aucune', 'None') },
   { id: 'head', label: 'HEAD' },
-  { id: 'mr', label: 'Base MR' },
+  { id: 'mr', label: tr('Base MR', 'MR base') },
 ];
 
 function ReviewTab() {
@@ -312,11 +312,11 @@ function ReviewTab() {
   const baseLoaded = !!diffState.doc;
   return (
     <>
-      <Group label="Comparer">
-        <Big icon="diff" label="Modifications" active={showDiff} disabled={!baseLoaded} testId="toggle-diff" title={baseLoaded ? `Comparer avec ${diffState.label} — ${diff?.count ?? 0} modification(s)` : diffState.error ?? 'Choisissez une version de référence'} onClick={() => set({ showDiff: !showDiff })} />
-        <Big icon="history" label="Version de référence" active={showBase} disabled={!baseLoaded} testId="toggle-base" onClick={() => set({ showBase: !showBase })} />
+      <Group label={tr("Comparer", "Compare")}>
+        <Big icon="diff" label={tr("Modifications", "Changes")} active={showDiff} disabled={!baseLoaded} testId="toggle-diff" title={baseLoaded ? tr(`Comparer avec ${diffState.label} — ${diff?.count ?? 0} modification(s)`, `Compare with ${diffState.label} — ${diff?.count ?? 0} change(s)`) : diffState.error ?? tr('Choisissez une version de référence', 'Choose a reference version')} onClick={() => set({ showDiff: !showDiff })} />
+        <Big icon="history" label={tr("Version de référence", "Reference version")} active={showBase} disabled={!baseLoaded} testId="toggle-base" onClick={() => set({ showBase: !showBase })} />
         <Col>
-          <div className="seg seg-compact" role="radiogroup" aria-label="Version de référence">
+          <div className="seg seg-compact" role="radiogroup" aria-label={tr("Version de référence", "Reference version")}>
             {BASES.filter((b) => diffState.available.includes(b.id)).map((b) => (
               <button key={b.id} type="button" role="radio" aria-checked={diffState.base === b.id} className={`ibtn${diffState.base === b.id ? ' is-active' : ''}`} data-testid={`diff-base-${b.id}`} onClick={() => post({ type: 'setDiffBase', base: b.id })}>
                 {b.label}
@@ -324,25 +324,25 @@ function ReviewTab() {
             ))}
           </div>
           <Row>
-            <Small iconOnly icon="prev" label="Modification précédente" disabled={!changed.length} onClick={() => step(-1)} />
-            <Small iconOnly icon="next" label="Modification suivante" disabled={!changed.length} onClick={() => step(1)} />
-            <span className="rb-count" data-testid="diff-count">{diff ? `${diff.count} modif.` : '—'}</span>
+            <Small iconOnly icon="prev" label={tr("Modification précédente", "Previous change")} disabled={!changed.length} onClick={() => step(-1)} />
+            <Small iconOnly icon="next" label={tr("Modification suivante", "Next change")} disabled={!changed.length} onClick={() => step(1)} />
+            <span className="rb-count" data-testid="diff-count">{diff ? `${diff.count} ${tr('modif.', 'changes')}` : '—'}</span>
           </Row>
         </Col>
       </Group>
-      <Group label="Commentaires">
-        <Big icon="commentPlus" label="Nouveau commentaire" disabled={!reviewData?.canCreate} title={reviewData ? undefined : 'Disponible sur une révision ouverte depuis une merge request GitLab'} onClick={() => set({ pane: 'comments' })} />
+      <Group label={tr("Commentaires", "Comments")}>
+        <Big icon="commentPlus" label={tr("Nouveau commentaire", "New comment")} disabled={!reviewData?.canCreate} title={reviewData ? undefined : tr('Disponible sur une révision ouverte depuis une merge request GitLab', 'Available on a revision opened from a GitLab merge request')} onClick={() => set({ pane: 'comments' })} />
         <Col>
-          <Small icon="comment" label="Volet Commentaires" active={pane === 'comments'} testId="toggle-comments" onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })} />
+          <Small icon="comment" label={tr("Volet Commentaires", "Comments pane")} active={pane === 'comments'} testId="toggle-comments" onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })} />
           <Row>
-            <Small iconOnly icon="prev" label="Commentaire précédent" disabled={!anchors.length} onClick={() => stepComment(-1)} />
-            <Small iconOnly icon="next" label="Commentaire suivant" disabled={!anchors.length} onClick={() => stepComment(1)} />
-            <span className="rb-count">{anchors.length} fil{anchors.length > 1 ? 's' : ''}</span>
+            <Small iconOnly icon="prev" label={tr("Commentaire précédent", "Previous comment")} disabled={!anchors.length} onClick={() => stepComment(-1)} />
+            <Small iconOnly icon="next" label={tr("Commentaire suivant", "Next comment")} disabled={!anchors.length} onClick={() => stepComment(1)} />
+            <span className="rb-count">{anchors.length} {anchors.length > 1 ? tr('fils', 'threads') : tr('fil', 'thread')}</span>
           </Row>
         </Col>
       </Group>
-      <Group label="Vérification">
-        <Big icon="check" label="Valider la charte" onClick={() => post({ type: 'validate' })} />
+      <Group label={tr("Vérification", "Check")}>
+        <Big icon="check" label={tr("Valider la charte", "Validate brand")} onClick={() => post({ type: 'validate' })} />
       </Group>
     </>
   );
@@ -359,22 +359,22 @@ function ViewTab() {
   const index = doc?.slides.findIndex((s) => s.id === slide?.id) ?? -1;
   return (
     <>
-      <Group label="Afficher">
+      <Group label={tr("Afficher", "Show")}>
         <Big icon="notes" label="Notes" active={notesOpen} onClick={() => set({ notesOpen: !notesOpen })} />
         <Col>
-          <Small icon="grid" label="Grille" active={showGrid} onClick={toggleGrid} />
-          <Small icon="magnet" label="Magnétisme" active={snap} title="Magnétisme (Alt pour ignorer)" onClick={toggleSnap} />
+          <Small icon="grid" label={tr("Grille", "Grid")} active={showGrid} onClick={toggleGrid} />
+          <Small icon="magnet" label={tr("Magnétisme", "Snap")} active={snap} title={tr("Magnétisme (Alt pour ignorer)", "Snap (Alt to ignore)")} onClick={toggleSnap} />
         </Col>
       </Group>
       <Group label="Zoom">
-        <Big icon="fit" label="Ajuster" active={zoom === 'fit'} onClick={() => setZoom('fit')} />
+        <Big icon="fit" label={tr("Ajuster", "Fit")} active={zoom === 'fit'} onClick={() => setZoom('fit')} />
         <Big icon="zoomIn" label="100 %" active={zoom === 1} onClick={() => setZoom(1)} />
       </Group>
       <Group label="Source">
-        <Big icon="code" label="Ouvrir la source" onClick={() => post({ type: 'openSource' })} />
+        <Big icon="code" label={tr("Ouvrir la source", "Open source")} onClick={() => post({ type: 'openSource' })} />
         <Col>
-          <Small icon="external" label="Source côte à côte" disabled={!slide} onClick={() => slide && post({ type: 'reveal', slideId: slide.id })} />
-          <Small icon="render" label="Rendu PowerPoint" title="Rendu de référence par PowerPoint (fait foi ; l'aperçu navigateur est approximatif)" onClick={() => post({ type: 'renderReference', slideIndex: Math.max(0, index) })} />
+          <Small icon="external" label={tr("Source côte à côte", "Source side by side")} disabled={!slide} onClick={() => slide && post({ type: 'reveal', slideId: slide.id })} />
+          <Small icon="render" label={tr("Rendu PowerPoint", "PowerPoint rendering")} title={tr("Rendu de référence par PowerPoint (fait foi ; l'aperçu navigateur est approximatif)", "Reference rendering by PowerPoint (authoritative; the browser preview is approximate)")} onClick={() => post({ type: 'renderReference', slideIndex: Math.max(0, index) })} />
         </Col>
       </Group>
     </>
@@ -395,33 +395,33 @@ function FormatTab() {
     <>
       {diagram && (
         <Group label="Graph Model Studio">
-          <Big icon="diagram" label="Modifier le diagramme" testId="edit-gmc" title="Éditeur interactif Graph Model Studio (double-clic sur le diagramme)" onClick={() => useEditor.getState().set({ gmcEdit: diagram.src })} />
+          <Big icon="diagram" label={tr("Modifier le diagramme", "Edit diagram")} testId="edit-gmc" title={tr("Éditeur interactif Graph Model Studio (double-clic sur le diagramme)", "Interactive Graph Model Studio editor (double-click the diagram)")} onClick={() => useEditor.getState().set({ gmcEdit: diagram.src })} />
           <Col>
-            <Small icon="refresh" label="Actualiser le rendu" onClick={() => post({ type: 'refreshGmc', src: diagram.src })} />
-            <Small icon="external" label="Ouvrir à côté" onClick={() => post({ type: 'editGmc', src: diagram.src })} />
+            <Small icon="refresh" label={tr("Actualiser le rendu", "Refresh rendering")} onClick={() => post({ type: 'refreshGmc', src: diagram.src })} />
+            <Small icon="external" label={tr("Ouvrir à côté", "Open to the side")} onClick={() => post({ type: 'editGmc', src: diagram.src })} />
             <span className="rb-note"><code>{diagram.src}</code></span>
           </Col>
         </Group>
       )}
-      <Group label="Organiser">
+      <Group label={tr("Organiser", "Arrange")}>
         <Col>
-          <Small icon="front" label="Premier plan" disabled={readOnly} onClick={() => order('front')} />
-          <Small icon="forward" label="Avancer" disabled={readOnly} onClick={() => order('forward')} />
+          <Small icon="front" label={tr("Premier plan", "Bring to front")} disabled={readOnly} onClick={() => order('front')} />
+          <Small icon="forward" label={tr("Avancer", "Bring forward")} disabled={readOnly} onClick={() => order('forward')} />
         </Col>
         <Col>
-          <Small icon="backward" label="Reculer" disabled={readOnly} onClick={() => order('backward')} />
-          <Small icon="back" label="Arrière-plan" disabled={readOnly} onClick={() => order('back')} />
+          <Small icon="backward" label={tr("Reculer", "Send backward")} disabled={readOnly} onClick={() => order('backward')} />
+          <Small icon="back" label={tr("Arrière-plan", "Send to back")} disabled={readOnly} onClick={() => order('back')} />
         </Col>
       </Group>
       {one && (
-        <Group label="Élément">
+        <Group label={tr("Élément", "Element")}>
           <Col>
-            <Small icon={one.locked ? 'lock' : 'unlock'} label={one.locked ? 'Déverrouiller' : 'Verrouiller'} active={one.locked} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { locked: !one.locked } }])} />
-            <Small icon={one.hidden ? 'eyeOff' : 'eye'} label={one.hidden ? 'Afficher' : 'Masquer'} active={one.hidden} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { hidden: !one.hidden } }])} />
+            <Small icon={one.locked ? 'lock' : 'unlock'} label={one.locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock')} active={one.locked} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { locked: !one.locked } }])} />
+            <Small icon={one.hidden ? 'eyeOff' : 'eye'} label={one.hidden ? tr('Afficher', 'Show') : tr('Masquer', 'Hide')} active={one.hidden} disabled={readOnly} onClick={() => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: one.id, patch: { hidden: !one.hidden } }])} />
           </Col>
           <Col>
-            <Small icon="code" label="Voir dans la source" onClick={() => post({ type: 'reveal', slideId: slide.id, elementId: one.id })} />
-            <Small icon="trash" label="Supprimer" disabled={readOnly} onClick={() => (mutate(deleteMutations(slide, [one.id])), select(slide.id, []))} />
+            <Small icon="code" label={tr("Voir dans la source", "Show in source")} onClick={() => post({ type: 'reveal', slideId: slide.id, elementId: one.id })} />
+            <Small icon="trash" label={tr("Supprimer", "Delete")} disabled={readOnly} onClick={() => (mutate(deleteMutations(slide, [one.id])), select(slide.id, []))} />
           </Col>
         </Group>
       )}
@@ -448,16 +448,16 @@ export function Ribbon() {
   const open = anchors.filter((a) => !a.thread.resolved).length;
 
   const tabs: { id: RibbonTab; label: string; badge?: number }[] = [
-    { id: 'home', label: 'Accueil' },
-    { id: 'insert', label: 'Insertion' },
-    { id: 'review', label: 'Révision', badge: open || diff?.count || undefined },
-    { id: 'view', label: 'Affichage' },
+    { id: 'home', label: tr('Accueil', 'Home') },
+    { id: 'insert', label: tr('Insertion', 'Insert') },
+    { id: 'review', label: tr('Révision', 'Review'), badge: open || diff?.count || undefined },
+    { id: 'view', label: tr('Affichage', 'View') },
   ];
 
   return (
     <div className="ribbon-wrap">
       <TitleBar />
-      <nav className="tabs" role="tablist" aria-label="Ruban">
+      <nav className="tabs" role="tablist" aria-label={tr("Ruban", "Ribbon")}>
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -475,11 +475,11 @@ export function Ribbon() {
         ))}
         {contextual && (
           <button type="button" role="tab" aria-selected={active === 'format'} className={`tab tab-contextual${active === 'format' ? ' is-active' : ''}`} data-testid="tab-format" onClick={() => set({ tab: 'format' })} onDoubleClick={() => set({ ribbonCollapsed: !collapsed })}>
-            {isDiagram ? 'Diagramme' : 'Format'}
+            {isDiagram ? tr('Diagramme', 'Diagram') : 'Format'}
           </button>
         )}
         <span className="grow" />
-        <button type="button" className="ibtn tabs-collapse" aria-label={collapsed ? 'Afficher le ruban' : 'Réduire le ruban'} title={collapsed ? 'Afficher le ruban' : 'Réduire le ruban'} onClick={() => set({ ribbonCollapsed: !collapsed })}>
+        <button type="button" className="ibtn tabs-collapse" aria-label={collapsed ? tr('Afficher le ruban', 'Show the ribbon') : tr('Réduire le ruban', 'Collapse the ribbon')} title={collapsed ? tr('Afficher le ruban', 'Show the ribbon') : tr('Réduire le ruban', 'Collapse the ribbon')} onClick={() => set({ ribbonCollapsed: !collapsed })}>
           <Icon name="chevronDown" style={{ transform: collapsed ? undefined : 'rotate(180deg)' }} />
         </button>
       </nav>

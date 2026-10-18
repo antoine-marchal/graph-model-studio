@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import {
+  round4,
   uniqueId,
   type ArrowHead,
   type ConnectorSide,
@@ -11,10 +12,11 @@ import {
   type ShapeKind,
   type SlideElement,
   type SlideNode,
+  tr,
 } from '@corporate-slides/core';
 import { shapePath } from '@corporate-slides/renderer';
 import { Icon } from './icons';
-import { Menu, NumField, Section } from './Panels';
+import { ColorPicker, Menu, NumField, Section } from './Panels';
 import { currentSlide, useEditor } from './store';
 
 /* ------------------------------------------------------------------ */
@@ -23,46 +25,46 @@ import { currentSlide, useEditor } from './store';
 
 export const SHAPE_GROUPS: { label: string; shapes: { shape: ShapeKind; label: string }[] }[] = [
   {
-    label: 'Formes de base',
+    label: tr('Formes de base', 'Basic shapes'),
     shapes: [
-      { shape: 'rect', label: 'Rectangle' },
-      { shape: 'roundRect', label: 'Rectangle arrondi' },
-      { shape: 'snip1Rect', label: 'Rectangle à coin coupé' },
-      { shape: 'ellipse', label: 'Ellipse' },
+      { shape: 'rect', label: tr('Rectangle', 'Rectangle') },
+      { shape: 'roundRect', label: tr('Rectangle arrondi', 'Rounded rectangle') },
+      { shape: 'snip1Rect', label: tr('Rectangle à coin coupé', 'Snipped rectangle') },
+      { shape: 'ellipse', label: tr('Ellipse', 'Ellipse') },
       { shape: 'triangle', label: 'Triangle' },
-      { shape: 'rtTriangle', label: 'Triangle rectangle' },
-      { shape: 'diamond', label: 'Losange' },
-      { shape: 'parallelogram', label: 'Parallélogramme' },
-      { shape: 'trapezoid', label: 'Trapèze' },
-      { shape: 'pentagon', label: 'Pentagone' },
-      { shape: 'hexagon', label: 'Hexagone' },
-      { shape: 'octagon', label: 'Octogone' },
-      { shape: 'star5', label: 'Étoile' },
-      { shape: 'plus', label: 'Croix' },
-      { shape: 'donut', label: 'Anneau' },
-      { shape: 'can', label: 'Cylindre (base de données)' },
+      { shape: 'rtTriangle', label: tr('Triangle rectangle', 'Right triangle') },
+      { shape: 'diamond', label: tr('Losange', 'Diamond') },
+      { shape: 'parallelogram', label: tr('Parallélogramme', 'Parallelogram') },
+      { shape: 'trapezoid', label: tr('Trapèze', 'Trapezoid') },
+      { shape: 'pentagon', label: tr('Pentagone', 'Pentagon') },
+      { shape: 'hexagon', label: tr('Hexagone', 'Hexagon') },
+      { shape: 'octagon', label: tr('Octogone', 'Octagon') },
+      { shape: 'star5', label: tr('Étoile', 'Star') },
+      { shape: 'plus', label: tr('Croix', 'Cross') },
+      { shape: 'donut', label: tr('Anneau', 'Donut') },
+      { shape: 'can', label: tr('Cylindre (base de données)', 'Cylinder (database)') },
       { shape: 'cube', label: 'Cube' },
     ],
   },
   {
-    label: 'Flèches et processus',
+    label: tr('Flèches et processus', 'Arrows and process'),
     shapes: [
-      { shape: 'rightArrow', label: 'Flèche droite' },
-      { shape: 'leftArrow', label: 'Flèche gauche' },
-      { shape: 'upArrow', label: 'Flèche haut' },
-      { shape: 'downArrow', label: 'Flèche bas' },
-      { shape: 'leftRightArrow', label: 'Double flèche' },
-      { shape: 'chevron', label: 'Chevron (étape)' },
-      { shape: 'homePlate', label: 'Pentagone flèche (jalon)' },
+      { shape: 'rightArrow', label: tr('Flèche droite', 'Right arrow') },
+      { shape: 'leftArrow', label: tr('Flèche gauche', 'Left arrow') },
+      { shape: 'upArrow', label: tr('Flèche haut', 'Up arrow') },
+      { shape: 'downArrow', label: tr('Flèche bas', 'Down arrow') },
+      { shape: 'leftRightArrow', label: tr('Double flèche', 'Double arrow') },
+      { shape: 'chevron', label: tr('Chevron (étape)', 'Chevron (step)') },
+      { shape: 'homePlate', label: tr('Pentagone flèche (jalon)', 'Pentagon arrow (milestone)') },
     ],
   },
   {
-    label: 'Organigramme et annotations',
+    label: tr('Organigramme et annotations', 'Flowchart and callouts'),
     shapes: [
-      { shape: 'flowChartTerminator', label: 'Début / fin' },
+      { shape: 'flowChartTerminator', label: tr('Début / fin', 'Start / end') },
       { shape: 'flowChartDocument', label: 'Document' },
-      { shape: 'wedgeRectCallout', label: 'Bulle de légende' },
-      { shape: 'line', label: 'Ligne' },
+      { shape: 'wedgeRectCallout', label: tr('Bulle de légende', 'Callout') },
+      { shape: 'line', label: tr('Ligne', 'Line') },
     ],
   },
 ];
@@ -128,6 +130,59 @@ export function deleteMutations(slide: SlideNode, ids: string[]): Mutation[] {
 export function connectMutation(slide: SlideNode, from: string, to: string, route: 'straight' | 'elbow' | 'curved' = 'elbow'): { m: Mutation; id: string } {
   const id = uniqueId('connector', slide.elements.map((e) => e.id));
   return { id, m: { kind: 'addElement', slideId: slide.id, element: { id, type: 'connector', from, to, route } as SlideElement } };
+}
+
+export type AlignMode = 'left' | 'hcenter' | 'right' | 'top' | 'vcenter' | 'bottom' | 'hdistribute' | 'vdistribute';
+
+/**
+ * Align (or distribute) elements: against the selection bounds when several are given, against the
+ * slide (`frame`) for a single one. Locked elements and connectors stay put.
+ */
+export function alignMutations(slideId: string, rs: ResolvedElement[], mode: AlignMode, frame: { w: number; h: number }): Mutation[] {
+  const movable = rs.filter((r) => !r.element.locked && r.element.type !== 'connector');
+  if (!movable.length) return [];
+  const one = rs.length === 1;
+  const x0 = one ? 0 : Math.min(...rs.map((r) => r.box.x)), x1 = one ? frame.w : Math.max(...rs.map((r) => r.box.x + r.box.w));
+  const y0 = one ? 0 : Math.min(...rs.map((r) => r.box.y)), y1 = one ? frame.h : Math.max(...rs.map((r) => r.box.y + r.box.h));
+  const boxes = new Map(movable.map((r) => [r.element.id, { ...r.box }]));
+  if (mode === 'hdistribute' || mode === 'vdistribute') {
+    const h = mode === 'hdistribute';
+    const sorted = [...movable].sort((a, b) => (h ? a.box.x - b.box.x : a.box.y - b.box.y));
+    const total = sorted.reduce((s, r) => s + (h ? r.box.w : r.box.h), 0);
+    const gap = ((h ? x1 - x0 : y1 - y0) - total) / Math.max(1, sorted.length - 1);
+    let at = h ? x0 : y0;
+    for (const r of sorted) {
+      const b = boxes.get(r.element.id)!;
+      if (h) b.x = at;
+      else b.y = at;
+      at += (h ? b.w : b.h) + gap;
+    }
+  } else {
+    for (const b of boxes.values()) {
+      if (mode === 'left') b.x = x0;
+      if (mode === 'right') b.x = x1 - b.w;
+      if (mode === 'hcenter') b.x = (x0 + x1) / 2 - b.w / 2;
+      if (mode === 'top') b.y = y0;
+      if (mode === 'bottom') b.y = y1 - b.h;
+      if (mode === 'vcenter') b.y = (y0 + y1) / 2 - b.h / 2;
+    }
+  }
+  return [...boxes].map(([elementId, b]) => ({ kind: 'updateElement', slideId, elementId, patch: { x: round4(b.x), y: round4(b.y), w: b.w, h: b.h } }));
+}
+
+/** Copies of elements offset down-right, with fresh ids (connectors are skipped). */
+export function duplicateMutations(slide: SlideNode, rs: ResolvedElement[]): { ms: Mutation[]; ids: string[] } {
+  const taken = slide.elements.map((x) => x.id);
+  const ids: string[] = [];
+  const ms: Mutation[] = [];
+  for (const r of rs) {
+    if (r.element.type === 'connector') continue;
+    const id = uniqueId(r.element.type, [...taken, ...ids]);
+    ids.push(id);
+    const { source: _s, z: _z, ...rest } = r.element as SlideElement & { source?: unknown };
+    ms.push({ kind: 'addElement', slideId: slide.id, element: { ...rest, id, x: round4(r.box.x + 0.2), y: round4(r.box.y + 0.2), w: r.box.w, h: r.box.h } as SlideElement });
+  }
+  return { ms, ids };
 }
 
 const hasParagraphs = (e: SlideElement): e is Extract<SlideElement, { paragraphs?: Paragraph[] }> => (e.type === 'text' || (e.type === 'shape' && e.shape !== 'line'));
@@ -201,14 +256,14 @@ const without = <K extends keyof Paragraph>(p: Paragraph, ...keys: K[]): Paragra
 };
 
 export const BULLETS: { char: string; label: string }[] = [
-  { char: '•', label: 'Puce ronde' },
-  { char: '–', label: 'Tiret' },
-  { char: '■', label: 'Carré plein' },
-  { char: '□', label: 'Carré vide' },
-  { char: '○', label: 'Cercle vide' },
-  { char: '►', label: 'Flèche pleine' },
-  { char: '➢', label: 'Flèche' },
-  { char: '✓', label: 'Coche' },
+  { char: '•', label: tr('Puce ronde', 'Round bullet') },
+  { char: '–', label: tr('Tiret', 'Dash') },
+  { char: '■', label: tr('Carré plein', 'Filled square') },
+  { char: '□', label: tr('Carré vide', 'Hollow square') },
+  { char: '○', label: tr('Cercle vide', 'Hollow circle') },
+  { char: '►', label: tr('Flèche pleine', 'Filled arrow') },
+  { char: '➢', label: tr('Flèche', 'Arrow') },
+  { char: '✓', label: tr('Coche', 'Check mark') },
 ];
 
 export const NUMBERINGS: { id: Numbering; label: string; sample: string }[] = [
@@ -255,7 +310,7 @@ export function ParagraphTools({ disabled: off }: { disabled?: boolean }) {
   return (
     <div className="rb-col">
       <div className="rb-row">
-        <Split icon="bulletList" label="Liste à puces" testId="list-bullet" active={p?.list === 'bullet'} disabled={disabled} onClick={() => toggleList('bullet')}>
+        <Split icon="bulletList" label={tr("Liste à puces", "Bulleted list")} testId="list-bullet" active={p?.list === 'bullet'} disabled={disabled} onClick={() => toggleList('bullet')}>
           {(close) => (
             <div className="bullet-grid">
               {BULLETS.map((b) => (
@@ -264,7 +319,7 @@ export function ParagraphTools({ disabled: off }: { disabled?: boolean }) {
             </div>
           )}
         </Split>
-        <Split icon="numberList" label="Liste numérotée" testId="list-number" active={p?.list === 'number'} disabled={disabled} onClick={() => toggleList('number')}>
+        <Split icon="numberList" label={tr("Liste numérotée", "Numbered list")} testId="list-number" active={p?.list === 'number'} disabled={disabled} onClick={() => toggleList('number')}>
           {(close) =>
             NUMBERINGS.map((n) => (
               <button key={n.id} type="button" role="menuitem" className="menu-item" onMouseDown={keepFocus} onClick={() => (close(), number(n.id))}>
@@ -273,19 +328,19 @@ export function ParagraphTools({ disabled: off }: { disabled?: boolean }) {
             ))
           }
         </Split>
-        <button type="button" className="rb-small icon-only" title="Diminuer le retrait (Maj+Tab)" aria-label="Diminuer le retrait" disabled={disabled} onMouseDown={keepFocus} onClick={() => indent(-1)}><Icon name="outdent" /></button>
-        <button type="button" className="rb-small icon-only" title="Augmenter le retrait (Tab)" aria-label="Augmenter le retrait" disabled={disabled} onMouseDown={keepFocus} onClick={() => indent(1)}><Icon name="indent" /></button>
+        <button type="button" className="rb-small icon-only" title={tr("Diminuer le retrait (Maj+Tab)", "Decrease indent (Shift+Tab)")} aria-label={tr("Diminuer le retrait", "Decrease indent")} disabled={disabled} onMouseDown={keepFocus} onClick={() => indent(-1)}><Icon name="outdent" /></button>
+        <button type="button" className="rb-small icon-only" title={tr("Augmenter le retrait (Tab)", "Increase indent (Tab)")} aria-label={tr("Augmenter le retrait", "Increase indent")} disabled={disabled} onMouseDown={keepFocus} onClick={() => indent(1)}><Icon name="indent" /></button>
       </div>
       <div className="rb-row">
         <Menu testId="heading-menu" trigger={(open) => (
-          <button type="button" className="rb-small" disabled={disabled} onMouseDown={keepFocus} onClick={open} data-testid="heading" title="Niveau de titre du paragraphe">
-            <Icon name="heading" /> <span>{p?.heading ? `Titre ${p.heading - 1}` : 'Normal'}</span> <Icon name="chevronDown" size={10} />
+          <button type="button" className="rb-small" disabled={disabled} onMouseDown={keepFocus} onClick={open} data-testid="heading" title={tr("Niveau de titre du paragraphe", "Paragraph heading level")}>
+            <Icon name="heading" /> <span>{p?.heading ? tr(`Titre ${p.heading - 1}`, `Heading ${p.heading - 1}`) : 'Normal'}</span> <Icon name="chevronDown" size={10} />
           </button>
         )}>
           {(close) =>
             [null, 2, 3, 4].map((h) => (
               <button key={h ?? 0} type="button" role="menuitem" className={`menu-item heading-item h${h ?? 0}`} onMouseDown={keepFocus} onClick={() => (close(), heading(h))}>
-                {h ? `Titre ${h - 1}` : 'Texte normal'}
+                {h ? tr(`Titre ${h - 1}`, `Heading ${h - 1}`) : tr('Texte normal', 'Normal text')}
                 <kbd>{h ? '#'.repeat(h) : '¶'}</kbd>
               </button>
             ))
@@ -301,19 +356,19 @@ export function ParagraphTools({ disabled: off }: { disabled?: boolean }) {
 /* ------------------------------------------------------------------ */
 
 const ARROWS: { id: ArrowHead; label: string }[] = [
-  { id: 'none', label: 'Aucune' },
+  { id: 'none', label: tr('Aucune', 'None') },
   { id: 'triangle', label: 'Triangle' },
-  { id: 'arrow', label: 'Ouverte' },
-  { id: 'stealth', label: 'Furtive' },
-  { id: 'diamond', label: 'Losange' },
-  { id: 'oval', label: 'Rond' },
+  { id: 'arrow', label: tr('Ouverte', 'Open') },
+  { id: 'stealth', label: tr('Furtive', 'Stealth') },
+  { id: 'diamond', label: tr('Losange', 'Diamond') },
+  { id: 'oval', label: tr('Rond', 'Round') },
 ];
 const SIDES: { id: ConnectorSide; label: string }[] = [
   { id: 'auto', label: 'Auto' },
-  { id: 'top', label: 'Haut' },
-  { id: 'right', label: 'Droite' },
-  { id: 'bottom', label: 'Bas' },
-  { id: 'left', label: 'Gauche' },
+  { id: 'top', label: tr('Haut', 'Top') },
+  { id: 'right', label: tr('Droite', 'Right') },
+  { id: 'bottom', label: tr('Bas', 'Bottom') },
+  { id: 'left', label: tr('Gauche', 'Left') },
 ];
 
 /** Range input that previews while dragging and commits once on release. */
@@ -335,7 +390,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
   return (
     <>
       {el.type === 'shape' && (
-        <Section title="Forme">
+        <Section title={tr("Forme", "Shape")}>
           <ShapeGallery
             testId="change-shape-menu"
             onPick={(shape) => upd({ shape })}
@@ -353,7 +408,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
                 min={0}
                 max={Math.round((Math.min(r.box.w, r.box.h) / 2) * 100) / 100}
                 step={0.01}
-                label="Rayon des coins"
+                label={tr("Rayon des coins", "Corner radius")}
                 testId="field-radius"
                 onPreview={(v) => preview({ radius: v })}
                 onCommit={(v) => style('radius', Math.round(v * 1000) / 1000)}
@@ -365,64 +420,69 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
       )}
 
       {el.type === 'connector' && (
-        <Section title="Connecteur">
-          <div className="seg" role="radiogroup" aria-label="Tracé">
+        <Section title={tr("Connecteur", "Connector")}>
+          <div className="seg" role="radiogroup" aria-label={tr("Tracé", "Route")}>
             {(['straight', 'elbow', 'curved'] as const).map((k) => (
               <button key={k} type="button" role="radio" aria-checked={(el.route ?? 'straight') === k} className={`ibtn has-label${(el.route ?? 'straight') === k ? ' is-active' : ''}`} onClick={() => upd({ route: k })} data-testid={`route-${k}`}>
-                {{ straight: 'Droit', elbow: 'Coudé', curved: 'Courbe' }[k]}
+                {{ straight: tr('Droit', 'Straight'), elbow: tr('Coudé', 'Elbow'), curved: tr('Courbe', 'Curved') }[k]}
               </button>
             ))}
           </div>
           <div className="grid2">
             <label className="field">
-              <span>De</span>
+              <span>{tr('De', 'From')}</span>
               <select className="select" value={el.from} onChange={(e) => upd({ from: e.target.value })}>
                 {others.map((o) => <option key={o.id} value={o.id}>{o.id}</option>)}
               </select>
             </label>
             <label className="field">
-              <span>Vers</span>
+              <span>{tr('Vers', 'To')}</span>
               <select className="select" value={el.to} onChange={(e) => upd({ to: e.target.value })}>
                 {others.map((o) => <option key={o.id} value={o.id}>{o.id}</option>)}
               </select>
             </label>
             <label className="field">
-              <span>Côté départ</span>
-              <select className="select" value={el.fromSide ?? 'auto'} onChange={(e) => upd({ fromSide: e.target.value as ConnectorSide })}>
+              <span>{tr('Côté départ', 'Start side')}</span>
+              <select className="select" value={el.fromPoint ? 'free' : (el.fromSide ?? 'auto')} onChange={(e) => upd({ fromSide: e.target.value as ConnectorSide, fromPoint: null })}>
+                {el.fromPoint && <option value="free" disabled>{tr('Libre', 'Free')} ({Math.round(el.fromPoint[0] * 100)} %, {Math.round(el.fromPoint[1] * 100)} %)</option>}
                 {SIDES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </label>
             <label className="field">
-              <span>Côté arrivée</span>
-              <select className="select" value={el.toSide ?? 'auto'} onChange={(e) => upd({ toSide: e.target.value as ConnectorSide })}>
+              <span>{tr('Côté arrivée', 'End side')}</span>
+              <select className="select" value={el.toPoint ? 'free' : (el.toSide ?? 'auto')} onChange={(e) => upd({ toSide: e.target.value as ConnectorSide, toPoint: null })}>
+                {el.toPoint && <option value="free" disabled>{tr('Libre', 'Free')} ({Math.round(el.toPoint[0] * 100)} %, {Math.round(el.toPoint[1] * 100)} %)</option>}
                 {SIDES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </label>
           </div>
-          <button type="button" className="btn" onClick={() => upd({ from: el.to, to: el.from, fromSide: el.toSide ?? 'auto', toSide: el.fromSide ?? 'auto' })}>⇄ Inverser le sens</button>
+          <button type="button" className="btn" onClick={() => upd({ from: el.to, to: el.from, fromSide: el.toSide ?? 'auto', toSide: el.fromSide ?? 'auto', fromPoint: el.toPoint ?? null, toPoint: el.fromPoint ?? null })}>{tr('⇄ Inverser le sens', '⇄ Reverse direction')}</button>
         </Section>
       )}
 
-      {(el.type === 'shape' || el.type === 'connector') && (
-        <Section title={isLine ? 'Trait' : 'Contour'}>
+      {(
+        <Section title={isLine ? tr('Trait', 'Line') : tr('Contour', 'Outline')}>
+          <ColorPicker label={isLine ? tr('Couleur du trait', 'Line color') : tr('Couleur du contour', 'Outline color')} value={el.style?.line} onChange={(v) => style('line', v)} allowNone={!isLine} testId="color-line" />
           <div className="row">
-            <NumField label="Ép." unit="pt" step={0.25} value={r.style.lineWidth} onCommit={(v) => style('lineWidth', Math.max(0, v))} testId="field-line-width" />
-            <select className="select grow" aria-label="Type de trait" value={r.style.dash} onChange={(e) => style('dash', e.target.value === 'solid' ? null : e.target.value)}>
-              <option value="solid">Continu</option>
-              <option value="dash">Tirets</option>
-              <option value="dot">Pointillés</option>
-            </select>
+            <NumField label={tr('Ép.', 'W.')} unit="pt" step={0.25} value={el.type === 'table' ? (el.style?.lineWidth ?? 0.5) : r.style.lineWidth} onCommit={(v) => style('lineWidth', Math.max(0, v))} testId="field-line-width" />
+            <div className="seg" role="radiogroup" aria-label={tr('Type de trait', 'Dash type')}>
+              {(['solid', 'dash', 'dot'] as const).map((d) => (
+                <button key={d} type="button" role="radio" aria-checked={r.style.dash === d} className={`ibtn dash-btn${r.style.dash === d ? ' is-active' : ''}`} title={{ solid: tr('Continu', 'Solid'), dash: tr('Tirets', 'Dashed'), dot: tr('Pointillés', 'Dotted') }[d]} aria-label={{ solid: tr('Continu', 'Solid'), dash: tr('Tirets', 'Dashed'), dot: tr('Pointillés', 'Dotted') }[d]} onClick={() => style('dash', d === 'solid' ? null : d)} data-testid={`dash-${d}`}>
+                  <span className="border-sample" style={{ borderTopStyle: d === 'dash' ? 'dashed' : d === 'dot' ? 'dotted' : 'solid', borderTopWidth: 2 }} />
+                </button>
+              ))}
+            </div>
           </div>
           {isLine && (
             <div className="grid2">
               <label className="field">
-                <span>Début</span>
+                <span>{tr('Début', 'Start')}</span>
                 <select className="select" value={r.style.startArrow} data-testid="start-arrow" onChange={(e) => style('startArrow', e.target.value)}>
                   {ARROWS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
                 </select>
               </label>
               <label className="field">
-                <span>Fin</span>
+                <span>{tr('Fin', 'End')}</span>
                 <select className="select" value={r.style.endArrow} data-testid="end-arrow" onChange={(e) => style('endArrow', e.target.value)}>
                   {ARROWS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
                 </select>
@@ -431,8 +491,8 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
           )}
           {!isLine && (
             <label className="field">
-              <span>Transparence du remplissage</span>
-              <Slider value={r.style.transparency} min={0} max={100} step={5} label="Transparence" onPreview={(v) => preview({ transparency: v })} onCommit={(v) => style('transparency', v || null)} />
+              <span>{tr('Transparence du remplissage', 'Fill transparency')}</span>
+              <Slider value={r.style.transparency} min={0} max={100} step={5} label={tr("Transparence", "Transparency")} onPreview={(v) => preview({ transparency: v })} onCommit={(v) => style('transparency', v || null)} />
             </label>
           )}
         </Section>

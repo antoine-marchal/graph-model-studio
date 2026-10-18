@@ -12,6 +12,9 @@ import {
   type ResolvedElement,
   type SlideNode,
   type StaticObject,
+  type CellStyle,
+  type TableElement,
+  tr
 } from '@corporate-slides/core';
 
 /** px per inch in the unscaled slide space; zoom is applied with a CSS transform. */
@@ -19,6 +22,42 @@ export const PPI = CSS_PX_PER_INCH;
 const px = (inch: number) => inch * PPI;
 const ptPx = (pt: number) => (pt / 72) * PPI;
 const hex = (c: string | null | undefined) => (c ? `#${c}` : 'transparent');
+const cssDash = (d: string | undefined) => (d === 'dash' ? 'dashed' : d === 'dot' ? 'dotted' : 'solid');
+
+/** Literal RRGGBB of a color token (`theme.accent1`, `theme.dk1.lighter60`, `#E50019`), null for none. */
+export function tokenHex(token: string | undefined, master: CorporateMaster): string | null {
+  if (!token || token === 'none') return null;
+  if (!token.startsWith('theme.')) return token.replace('#', '').toUpperCase();
+  const [, slot, variant] = token.split('.');
+  return ((variant ? master.theme.palette[slot!]?.[variant] : master.theme.colors[slot!]) ?? null)?.toUpperCase() ?? null;
+}
+
+/** Cell CSS of a table: grid border (table style), header row, then per-cell overrides. Shared with the table editor. */
+export function tableCellStyle(el: TableElement, ri: number, ci: number, master: CorporateMaster, opts: { header?: boolean; valign?: string; align?: string | null; cell?: CellStyle | null } = {}): CSSProperties {
+  const s = el.style;
+  const gridColor = tokenHex(s?.line, master) ?? master.theme.palette.dk1?.lighter60 ?? 'A8A8A8';
+  const border = (line: string | undefined, width: number | undefined, dash: string | undefined, color: string) =>
+    line === 'none' ? 'none' : `${Math.max(0.5, width ?? 0.5)}pt ${cssDash(dash)} #${color}`;
+  const cs = opts.cell !== undefined ? opts.cell : el.cellStyles?.[ri]?.[ci];
+  const header = opts.header ?? el.header !== false;
+  const out: CSSProperties = {
+    border: border(s?.line, s?.lineWidth, s?.dash, gridColor),
+    padding: '0 8px',
+    verticalAlign: (opts.valign ?? s?.valign ?? 'middle') as CSSProperties['verticalAlign'],
+    textAlign: ((opts.align !== undefined ? opts.align : el.colAlign?.[ci]) ?? undefined) as CSSProperties['textAlign'],
+    ...(ri === 0 && header ? { background: `#${master.theme.colors.accent1 ?? '3E4A83'}`, color: '#fff', fontWeight: 700 } : {}),
+  };
+  if (cs) {
+    const fill = tokenHex(cs.fill, master);
+    if (fill) out.background = `#${fill}`;
+    else if (cs.fill === 'none') out.background = 'transparent';
+    const color = tokenHex(cs.color, master);
+    if (color) out.color = `#${color}`;
+    if (cs.bold !== undefined) out.fontWeight = cs.bold ? 700 : 400;
+    if (cs.line || cs.lineWidth !== undefined || cs.dash) out.border = border(cs.line ?? s?.line, cs.lineWidth ?? s?.lineWidth, cs.dash ?? s?.dash, tokenHex(cs.line, master) ?? gridColor);
+  }
+  return out;
+}
 
 export interface AssetResolver {
   /** URL for a master asset id (preview PNG for EMF/WMF), or null when not displayable. */
@@ -340,7 +379,7 @@ function StaticObjectView({ o, assets, metadata }: { o: StaticObject; assets: As
   }
   if (kind === 'image') {
     const url = o.assetId ? assets.masterAsset(o.assetId) : null;
-    if (!url) return <div style={{ ...box, background: 'repeating-linear-gradient(45deg, #0001 0 6px, #0002 6px 12px)' }} title="Image non prévisualisable" />;
+    if (!url) return <div style={{ ...box, background: 'repeating-linear-gradient(45deg, #0001 0 6px, #0002 6px 12px)' }} title={tr('Image non prévisualisable', 'Picture cannot be previewed')} />;
     const c = o.crop;
     if (!c) return <img src={url} alt="" draggable={false} style={{ ...box, objectFit: 'fill' }} />;
     const W = px(n('w')), H = px(n('h'));
@@ -400,7 +439,7 @@ export function elementBoxStyle(r: ResolvedElement): CSSProperties {
 /** Box decoration of a text element (fill/border), also kept under the inline editor. */
 const textChrome = (r: ResolvedElement): CSSProperties => ({
   background: r.element.style?.fill ? hex(r.style.fill) : undefined,
-  border: r.element.style?.line ? `${ptPx(r.style.lineWidth)}px solid ${hex(r.style.line)}` : undefined,
+  border: r.style.line ? `${ptPx(r.style.lineWidth)}px ${cssDash(r.style.dash)} ${hex(r.style.line)}` : undefined,
 });
 
 /** What stays visible behind the inline text editor: the shape geometry or the text box decoration. */
@@ -433,10 +472,10 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
     case 'image': {
       const url = assets.image(el.src);
       return url ? (
-        <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill' }} />
+        <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'fill', boxSizing: 'border-box', ...textChrome(r), background: undefined }} />
       ) : (
         <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'repeating-linear-gradient(45deg,#8881 0 8px,#8882 8px 16px)', color: '#666', fontSize: 14, fontFamily: 'system-ui' }}>
-          {isDiagramSrc(el.src) ? `Diagramme non rendu : ${el.src}` : `Image introuvable : ${el.src}`}
+          {isDiagramSrc(el.src) ? tr(`Diagramme non rendu : ${el.src}`, `Diagram not rendered: ${el.src}`) : tr(`Image introuvable : ${el.src}`, `Picture not found: ${el.src}`)}
         </div>
       );
     }
@@ -444,7 +483,6 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
       return r.path ? <StrokeSvg r={r} d={connectorD(r)} /> : null;
     case 'table': {
       const cols = Math.max(...el.rows.map((x) => x.length));
-      const head = master.theme.colors.accent1 ?? '3E4A83';
       const rowF = tableWeights(el.rowHeights, el.rows.length);
       return (
         <table style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ptPx(el.style?.fontSize ?? 12), color: hex(s.color) }}>
@@ -457,7 +495,7 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
             {el.rows.map((row, ri) => (
               <tr key={ri} style={el.rowHeights ? { height: `${rowF[ri]! * 100}%` } : undefined}>
                 {Array.from({ length: cols }, (_, ci) => (
-                  <td key={ci} data-cell={`${ri}:${ci}`} style={{ border: `0.5pt solid #${master.theme.palette.dk1?.lighter60 ?? 'A8A8A8'}`, padding: '0 8px', verticalAlign: el.style?.valign ?? 'middle', textAlign: el.colAlign?.[ci] ?? undefined, ...(ri === 0 && el.header !== false ? { background: `#${head}`, color: '#fff', fontWeight: 700 } : {}) }}>
+                  <td key={ci} data-cell={`${ri}:${ci}`} style={tableCellStyle(el, ri, ci, master)}>
                     {row[ci] ?? ''}
                   </td>
                 ))}

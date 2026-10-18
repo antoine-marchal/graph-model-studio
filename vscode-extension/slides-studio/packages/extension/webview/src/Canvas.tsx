@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
+  anchorSide,
   estimateFit,
+  perimeterAnchor,
+  pointSide,
   findPlaceholder,
   isDiagramSrc,
   mergeRuns,
@@ -10,18 +13,18 @@ import {
   round4,
   uniqueId,
   type Box,
-  type ConnectorSide,
   type Mutation,
   type Paragraph,
   type ResolvedElement,
   type SlideElement,
   type TextRun,
+  tr,
 } from '@corporate-slides/core';
 import { PPI, SlideView, textBoxStyle, type AssetResolver } from '@corporate-slides/renderer';
 import { currentSlide, useEditor } from './store';
 import { useAnchors, useDiff } from './Review';
 import { Icon } from './icons';
-import { connectMutation, deleteMutations, inlineEditor } from './Format';
+import { connectMutation, deleteMutations, duplicateMutations, inlineEditor } from './Format';
 import { TableEditor } from './TableEditor';
 import { post } from './host';
 
@@ -100,6 +103,8 @@ export function Canvas() {
   /** Element created by double-clicking a placeholder: removed again if left empty. */
   const fresh = useRef<string | null>(null);
   const connectFrom = useEditor((s) => s.connectFrom);
+  /** Element under a dragged connector end: its outline and snap points are shown. */
+  const [endTarget, setEndTarget] = useState<string | null>(null);
 
   useLayoutEffect(() => {
     const el = wellRef.current;
@@ -259,7 +264,11 @@ export function Canvas() {
     preview(mutations);
   };
 
-  /** Drag a connector end onto a side of any element: re-attaches `from`/`to` and its side. */
+  /**
+   * Drag a connector end anywhere around any element: the end follows the element outline (side
+   * midpoints and corners snap), re-attaching `from`/`to`. Midpoints keep a native side, other
+   * positions store a free point.
+   */
   const startEndDrag = (e: React.PointerEvent, r: ResolvedElement, end: 'from' | 'to') => {
     const el = r.element;
     if (!slide || readOnly || el.type !== 'connector' || el.locked || e.button !== 0) return;
@@ -274,16 +283,23 @@ export function Canvas() {
       const hit = [...(resolved?.elements ?? [])].reverse().find((x) => x.element.type !== 'connector' && !x.element.hidden && x.element.id !== other && px >= x.box.x - pad && px <= x.box.x + x.box.w + pad && py >= x.box.y - pad && py <= x.box.y + x.box.h + pad);
       const target = hit ?? byId.get(end === 'from' ? el.from : el.to);
       if (!target) return;
-      const b = target.box;
-      const nx = (px - (b.x + b.w / 2)) / Math.max(b.w / 2, 0.01), ny = (py - (b.y + b.h / 2)) / Math.max(b.h / 2, 0.01);
-      const side: ConnectorSide = Math.abs(nx) > Math.abs(ny) ? (nx > 0 ? 'right' : 'left') : ny > 0 ? 'bottom' : 'top';
-      last = { kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: end === 'from' ? { from: target.element.id, fromSide: side } : { to: target.element.id, toSide: side } };
+      const point = perimeterAnchor(target.box, px, py, ev.altKey ? 0 : 0.06);
+      const side = pointSide(point);
+      const at = side ? { side, point: null } : { side: anchorSide(point), point };
+      last = {
+        kind: 'updateElement',
+        slideId: slide.id,
+        elementId: el.id,
+        patch: end === 'from' ? { from: target.element.id, fromSide: at.side, fromPoint: at.point } : { to: target.element.id, toSide: at.side, toPoint: at.point },
+      };
+      setEndTarget(target.element.id);
       preview([last]);
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
       document.body.classList.remove('is-dragging-end');
+      setEndTarget(null);
       if (last) mutate([last]);
       else cancelPreview();
     };
@@ -315,6 +331,10 @@ export function Canvas() {
         if (st.connectFrom !== null) return void set({ connectFrom: null });
         return void select(sl.id, []);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        return void select(sl.id, sl.elements.filter((x) => !x.hidden).map((x) => x.id));
+      }
       if (!ids.length) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
@@ -334,17 +354,7 @@ export function Canvas() {
         mutate(ms);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
-        const taken = sl.elements.map((x) => x.id);
-        const ms: Mutation[] = [];
-        const newIds: string[] = [];
-        for (const id of ids) {
-          const r = byId.get(id);
-          if (!r || r.element.type === 'connector') continue;
-          const nid = uniqueId(r.element.type, [...taken, ...newIds]);
-          newIds.push(nid);
-          const { source: _s, z: _z, ...rest } = r.element as SlideElement & { source?: unknown };
-          ms.push({ kind: 'addElement', slideId: sl.id, element: { ...rest, id: nid, x: round4(r.box.x + 0.2), y: round4(r.box.y + 0.2), w: r.box.w, h: r.box.h } as SlideElement });
-        }
+        const { ms, ids: newIds } = duplicateMutations(sl, ids.map((id) => byId.get(id)).filter((r): r is ResolvedElement => !!r));
         mutate(ms);
         select(sl.id, newIds);
       } else if (e.key === 'Enter' && ids.length === 1) {
@@ -376,8 +386,8 @@ export function Canvas() {
       <div ref={wellRef} className="well is-base" onWheel={onWheel}>
         <div className="base-banner" role="status">
           <Icon name="history" />
-          {ghost ? `Diapositive supprimée depuis ${baseLabel}` : baseSlide ? `Version de référence (${baseLabel}) — lecture seule` : `Diapositive absente de ${baseLabel} (ajoutée)`}
-          <button className="btn" onClick={() => set({ ghostSlideId: null, showBase: false })}>Revenir à la version actuelle</button>
+          {ghost ? tr(`Diapositive supprimée depuis ${baseLabel}`, `Slide deleted since ${baseLabel}`) : baseSlide ? tr(`Version de référence (${baseLabel}) — lecture seule`, `Reference version (${baseLabel}) — read-only`) : tr(`Diapositive absente de ${baseLabel} (ajoutée)`, `Slide missing from ${baseLabel} (added)`)}
+          <button className="btn" onClick={() => set({ ghostSlideId: null, showBase: false })}>{tr('Revenir à la version actuelle', 'Back to the current version')}</button>
         </div>
         <div className="stage" style={{ minWidth: W * PPI * zoom + 64, minHeight: H * PPI * zoom + 64 }}>
           {baseSlide ? (
@@ -387,7 +397,7 @@ export function Canvas() {
               </div>
             </div>
           ) : (
-            <p className="hint">Rien à afficher pour cette version.</p>
+            <p className="hint">{tr('Rien à afficher pour cette version.', 'Nothing to show for this version.')}</p>
           )}
         </div>
       </div>
@@ -428,7 +438,7 @@ export function Canvas() {
               key={end}
               className={`connector-end${readOnly || r.element.locked ? '' : ' is-draggable'}`}
               data-testid={`connector-${end}`}
-              title="Glisser pour rattacher l’extrémité à un autre côté ou à une autre forme"
+              title={tr('Glisser pour rattacher l’extrémité n’importe où autour d’une forme (milieux et coins aimantés, Alt pour un placement libre)', 'Drag to attach the end anywhere around a shape (midpoints and corners snap, Alt for free placement)')}
               onPointerDown={(e) => startEndDrag(e, r, end)}
               style={{ left: (x - r.box.x) * PPI, top: (y - r.box.y) * PPI, width: handleSize * 1.4, height: handleSize * 1.4, marginLeft: -handleSize * 0.7, marginTop: -handleSize * 0.7, borderWidth: stroke }}
             />
@@ -471,15 +481,26 @@ export function Canvas() {
                   />
                 );
               })}
-            {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>verrouillé</span>}
+            {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>{tr('verrouillé', 'locked')}</span>}
             {fit?.overflows && (
-              <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title="Estimation : le texte risque de déborder dans PowerPoint">
-                débordement probable
+              <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title={tr("Estimation : le texte risque de déborder dans PowerPoint", "Estimate: the text may overflow in PowerPoint")}>
+                {tr('débordement probable', 'likely overflow')}
               </span>
             )}
           </div>
         );
       })}
+      {endTarget && byId.get(endTarget) && (() => {
+        const b = byId.get(endTarget)!.box;
+        const dots = [[0, 0], [0.5, 0], [1, 0], [1, 0.5], [1, 1], [0.5, 1], [0, 1], [0, 0.5]] as const;
+        return (
+          <div className="anchor-target" style={{ left: b.x * PPI, top: b.y * PPI, width: b.w * PPI, height: b.h * PPI, outlineWidth: stroke }}>
+            {dots.map(([fx, fy]) => (
+              <span key={`${fx}-${fy}`} className="anchor-dot" style={{ left: `${fx * 100}%`, top: `${fy * 100}%`, width: handleSize * 0.8, height: handleSize * 0.8 }} />
+            ))}
+          </div>
+        );
+      })()}
       {showDiff && <DiffMarks slideId={slide.id} byId={byId} diff={diff} zoom={zoom} />}
       {anchors.filter((a) => a.slideId === slide.id).map((a, i) => {
         const r = a.elementId ? byId.get(a.elementId) : undefined;
@@ -491,7 +512,7 @@ export function Canvas() {
             className={`pin${a.thread.resolved ? ' is-resolved' : ''}${focusThread === a.thread.id ? ' is-focused' : ''}`}
             style={{ left: x * PPI, top: y * PPI, transform: `translate(-50%, -50%) scale(${1 / zoom})` }}
             title={`${a.thread.notes[0]?.author ?? ''} : ${a.thread.notes[0]?.body ?? ''}`}
-            aria-label={`Commentaire ${a.n}`}
+            aria-label={tr(`Commentaire ${a.n}`, `Comment ${a.n}`)}
             data-testid={`pin-${a.thread.id}`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={() => set({ focusThread: a.thread.id, pane: 'comments' })}
@@ -519,12 +540,23 @@ export function Canvas() {
       onPointerDown={(e) => {
         if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('stage')) select(slide.id, []);
       }}
+      onContextMenu={(e) => {
+        const t = e.target as HTMLElement;
+        // Text being edited keeps the native menu (spelling, cut / copy / paste of the selection).
+        if (t.closest('[contenteditable], input, textarea, .tbl-toolbar') || connectFrom !== null) return;
+        e.preventDefault();
+        const id = t.closest<HTMLElement>('[data-element-id]')?.dataset.elementId ?? t.closest<HTMLElement>('[data-selection]')?.dataset.selection;
+        const st = useEditor.getState();
+        if (id && !st.selected.includes(id)) select(slide.id, [id]);
+        if (!id) select(slide.id, []);
+        set({ contextMenu: { x: e.clientX, y: e.clientY, target: id ? 'element' : 'slide' } });
+      }}
     >
       {connectFrom !== null && (
         <div className="connect-banner" role="status" data-testid="connect-banner">
           <Icon name="connector" />
-          {connectFrom ? <>Cliquez sur l’élément d’arrivée (départ : <code>{connectFrom}</code>)</> : 'Cliquez sur l’élément de départ du connecteur'}
-          <button className="btn" onClick={() => set({ connectFrom: null })}>Annuler (Échap)</button>
+          {connectFrom ? <>{tr('Cliquez sur l’élément d’arrivée (départ :', 'Click the end element (start:')} <code>{connectFrom}</code>)</> : tr('Cliquez sur l’élément de départ du connecteur', 'Click the start element of the connector')}
+          <button className="btn" onClick={() => set({ connectFrom: null })}>{tr('Annuler (Échap)', 'Cancel (Esc)')}</button>
         </div>
       )}
       <div className="stage" style={{ minWidth: W * PPI * zoom + 64, minHeight: H * PPI * zoom + 64 }}>
@@ -810,7 +842,7 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
 
 /* ------------------------------ visual diff ------------------------------ */
 
-const CHANGE_LABEL = { added: 'Ajouté', modified: 'Modifié' } as const;
+const CHANGE_LABEL = { added: tr('Ajouté', 'Added'), modified: tr('Modifié', 'Changed') } as const;
 
 /** Change outlines over the current slide, plus hatched ghosts where base elements were removed. */
 function DiffMarks({ slideId, byId, diff, zoom }: { slideId: string; byId: Map<string, ResolvedElement>; diff: ReturnType<typeof useDiff>; zoom: number }) {
@@ -834,7 +866,7 @@ function DiffMarks({ slideId, byId, diff, zoom }: { slideId: string; byId: Map<s
       })}
       {removed.map((r) => (
         <div key={`del-${r.element.id}`} className="diff-mark diff-del" style={box(r)} data-diff="removed" data-testid={`diff-mark-${r.element.id}`}>
-          <span className="tag" style={tag}>Supprimé · {r.element.id}</span>
+          <span className="tag" style={tag}>{tr('Supprimé', 'Deleted')} · {r.element.id}</span>
         </div>
       ))}
     </>
