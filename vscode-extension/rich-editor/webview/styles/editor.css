@@ -831,101 +831,159 @@ html, body, #root {
   background: var(--vscode-scrollbarSlider-hoverBackground, rgba(100, 100, 100, 0.7));
 }
 
-/* Search bar — sticky at top of editor scroll area */
+/* Search bar — sticky at top of editor scroll area, styled like VS Code's find widget. */
 .search-bar {
   position: sticky;
   top: 0;
-  z-index: 201;
-  margin-left: auto;
-  width: fit-content;
-  margin-right: 12px;
   z-index: 200;
+  margin-left: auto;
+  margin-right: 18px;
+  width: fit-content;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   background: var(--vscode-editorWidget-background, #252526);
-  border: 1px solid var(--vscode-widget-border, #454545);
+  color: var(--vscode-editorWidget-foreground, var(--vscode-foreground, #ccc));
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, #454545));
   border-top: none;
-  border-radius: 0 0 4px 4px;
-  padding: 4px 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border-radius: 0 0 6px 6px;
+  padding: 5px 6px 5px 8px;
+  box-shadow: 0 4px 14px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
 }
 
 .search-icon {
-  color: var(--vscode-descriptionForeground, #888);
+  color: var(--vscode-descriptionForeground, #8b8b8b);
   flex-shrink: 0;
+  margin-right: 4px;
 }
 
 .search-input {
   background: var(--vscode-input-background, #3c3c3c);
   color: var(--vscode-input-foreground, #ccc);
-  border: 1px solid var(--vscode-input-border, #5a5a5a);
-  border-radius: 2px;
-  padding: 3px 6px;
-  font-size: 12px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  padding: 4px 8px;
+  font-size: 13px;
   font-family: inherit;
-  width: 180px;
+  width: 240px;
   outline: none;
 }
+
+.search-input::placeholder { color: var(--vscode-input-placeholderForeground, #8b8b8b); }
 
 .search-input:focus {
   border-color: var(--vscode-focusBorder, #007fd4);
 }
 
+.search-bar.is-empty .search-input {
+  border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+}
+
 .search-count {
-  font-size: 11px;
-  color: var(--vscode-descriptionForeground, #888);
-  min-width: 50px;
-  text-align: center;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, #8b8b8b);
+  min-width: 72px;
+  padding: 0 6px;
+  text-align: left;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.search-bar.is-empty .search-count {
+  color: var(--vscode-errorForeground, #f48771);
+}
+
+.search-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 4px;
+  background: var(--vscode-widget-border, rgba(128, 128, 128, 0.35));
 }
 
 .search-toggle, .search-nav, .search-close {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
   background: none;
   border: 1px solid transparent;
-  color: var(--vscode-descriptionForeground, #888);
+  border-radius: 4px;
+  color: var(--vscode-icon-foreground, #c5c5c5);
   cursor: pointer;
-  font-size: 11px;
-  padding: 2px 4px;
-  border-radius: 3px;
-  line-height: 1;
 }
 
-.search-toggle:hover, .search-nav:hover, .search-close:hover {
+.search-toggle:hover, .search-nav:hover:not(:disabled), .search-close:hover {
   background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.1));
-  color: var(--vscode-editor-foreground, #d4d4d4);
+}
+
+.search-nav:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.search-toggle:focus-visible, .search-nav:focus-visible, .search-close:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: -1px;
 }
 
 .search-toggle-active {
-  background: var(--vscode-button-background, #0e639c);
-  color: var(--vscode-button-foreground, #fff);
-  border-color: var(--vscode-button-background, #0e639c);
+  background: var(--vscode-inputOption-activeBackground, rgba(0, 127, 212, 0.4));
+  border-color: var(--vscode-inputOption-activeBorder, #007acc);
+  color: var(--vscode-inputOption-activeForeground, #fff);
 }
 
-.search-toggle-active:hover {
-  background: var(--vscode-button-hoverBackground, #1177bb);
-}
-
-/* CSS Custom Highlight API for search matches */
+/* Matches use the theme's find colors; the current one is solid and underlined
+   so it stays findable among many. CSS Custom Highlight API first. */
 ::highlight(search-match) {
-  background-color: rgba(255, 200, 0, 0.3);
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
   color: inherit;
 }
 
 ::highlight(search-match-active) {
-  background-color: rgba(255, 140, 0, 0.6);
+  background-color: var(--vscode-editor-findMatchBackground, rgba(255, 170, 0, 0.62));
   color: inherit;
+  text-decoration: underline 2px;
+  text-decoration-color: var(--vscode-editor-findMatchBorder, #f5a623);
+  text-underline-offset: 3px;
 }
 
 /* Fallback <mark> elements for browsers without Highlight API */
 .search-mark {
-  background-color: rgba(255, 200, 0, 0.3);
+  background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
   color: inherit;
 }
 
 .search-mark-active {
-  background-color: rgba(255, 140, 0, 0.6);
+  background-color: var(--vscode-editor-findMatchBackground, rgba(255, 170, 0, 0.62));
   color: inherit;
+  box-shadow: 0 0 0 1px var(--vscode-editor-findMatchBorder, #f5a623);
+  border-radius: 2px;
+}
+
+/* Match markers on the scrollbar track, like the editor's overview ruler. */
+.search-ruler {
+  position: fixed;
+  z-index: 190;
+  width: 10px;
+  pointer-events: none;
+}
+
+.search-ruler span {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 3px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--vscode-editorOverviewRuler-findMatchForeground, rgba(209, 134, 22, 0.75));
+}
+
+.search-ruler span.is-active {
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--vscode-editor-findMatchBorder, #f5a623);
 }
 
 /* Floating toolbar for table row/column controls */
@@ -1423,28 +1481,45 @@ select.settings-input {
 .diff-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+  min-width: 0;
 }
+.diff-toolbar-left { gap: 16px; }
+.diff-toolbar { flex-wrap: wrap; row-gap: 6px; column-gap: 16px; }
+.diff-toolbar-right { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+.diff-toolbar :is(.diff-title, .settings-segment, .diff-changes-only) { white-space: nowrap; }
 
 .diff-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--vscode-editor-foreground, #d4d4d4);
 }
 
-.diff-close {
-  background: transparent;
-  border: none;
-  color: var(--vscode-descriptionForeground, #888);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 0 6px;
+.diff-file {
+  font-weight: 400;
+  color: var(--vscode-descriptionForeground, #8b8b8b);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.diff-close:hover {
-  color: var(--vscode-editor-foreground, #d4d4d4);
+.diff-stats {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
+.diff-stat.is-ins { color: var(--md-diff-ins-fg); }
+.diff-stat.is-del { color: var(--md-diff-del-fg); }
+.diff-stat.is-mod { color: var(--md-diff-mod-fg); }
+
+.diff-close { margin-left: 4px; }
 
 .diff-body {
   flex: 1;
@@ -1460,88 +1535,71 @@ select.settings-input {
   font-size: 13px;
 }
 
-/* diff2html defaults to a white background; restyle to match our dark theme */
-.diff-html .d2h-wrapper,
-.diff-html .d2h-file-wrapper,
-.diff-html .d2h-file-header,
-.diff-html .d2h-files-diff,
-.diff-html .d2h-code-wrapper,
-.diff-html .d2h-diff-table,
-.diff-html .d2h-code-side-line {
-  background: var(--vscode-editor-background, #1e1e1e) !important;
-  color: var(--vscode-editor-foreground, #d4d4d4) !important;
-  border-color: var(--vscode-widget-border, #333) !important;
+/* ---------- Diff palette ----------
+   One set of colors for every diff surface (source and rendered diff,
+   merge request panes), taken from the VS Code theme's own diff colors so
+   it reads like the diff editor in light, dark and high-contrast themes. */
+:root {
+  --md-diff-ins-fg: var(--vscode-gitDecoration-addedResourceForeground, #3fb950);
+  --md-diff-ins-bg: var(--vscode-diffEditor-insertedLineBackground, rgba(46, 160, 67, 0.13));
+  --md-diff-ins-word: var(--vscode-diffEditor-insertedTextBackground, rgba(46, 160, 67, 0.34));
+  --md-diff-del-fg: var(--vscode-gitDecoration-deletedResourceForeground, #f85149);
+  --md-diff-del-bg: var(--vscode-diffEditor-removedLineBackground, rgba(248, 81, 73, 0.13));
+  --md-diff-del-word: var(--vscode-diffEditor-removedTextBackground, rgba(248, 81, 73, 0.32));
+  --md-diff-mod-fg: var(--vscode-gitDecoration-modifiedResourceForeground, #d29922);
+  --md-diff-pad: var(--vscode-diffEditor-diagonalFill, rgba(128, 128, 128, 0.16));
+  --md-diff-line: var(--vscode-widget-border, rgba(128, 128, 128, 0.28));
 }
 
-.diff-html .d2h-file-header {
-  display: none; /* we show our own title in the toolbar */
+/* Source diff: a single table so both sides stay aligned when lines wrap. */
+.src-diff {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  font-size: var(--vscode-editor-font-size, 12px);
+  line-height: 1.6;
+  color: var(--vscode-editor-foreground, #d4d4d4);
 }
-
-.diff-html .d2h-code-linenumber,
-.diff-html .d2h-code-side-linenumber {
-  background: var(--vscode-editorLineNumber-background, transparent) !important;
-  color: var(--vscode-editorLineNumber-foreground, #858585) !important;
-  border-color: var(--vscode-widget-border, #333) !important;
+.src-col-ln { width: 4.2em; }
+.src-col-sign { width: 1.6em; }
+.src-diff td { padding: 0 8px; vertical-align: top; }
+.src-diff .src-code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  padding-right: 16px;
 }
-
-.diff-html .d2h-ins,
-.diff-html .d2h-ins .d2h-code-side-linenumber,
-.diff-html .d2h-ins.d2h-change {
-  background: rgba(46, 160, 67, 0.15) !important;
-  color: var(--vscode-editor-foreground, #d4d4d4) !important;
+.src-diff.is-sbs .src-code:nth-child(3) { border-right: 1px solid var(--md-diff-line); }
+.src-diff .src-ln {
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, #858585);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  padding-right: 6px;
 }
-
-.diff-html .d2h-ins.d2h-change {
-  /* lines modified on the "new" side → blue tint */
-  background: rgba(0, 122, 204, 0.18) !important;
+.src-diff .src-sign { padding: 0; text-align: center; user-select: none; font-weight: 600; }
+.src-diff .src-sign.is-ins { color: var(--md-diff-ins-fg); background: var(--md-diff-ins-bg); }
+.src-diff .src-sign.is-del { color: var(--md-diff-del-fg); background: var(--md-diff-del-bg); }
+.src-diff .src-code.is-ins { background: var(--md-diff-ins-bg); }
+.src-diff .src-code.is-del { background: var(--md-diff-del-bg); }
+.src-diff .src-code.is-pad {
+  background: repeating-linear-gradient(-45deg, transparent 0 5px, var(--md-diff-pad) 5px 6px);
 }
-
-.diff-html .d2h-del,
-.diff-html .d2h-del .d2h-code-side-linenumber {
-  background: rgba(248, 81, 73, 0.15) !important;
-  color: var(--vscode-editor-foreground, #d4d4d4) !important;
+.src-diff.is-unified .src-row.src-ins .src-ln,
+.src-diff.is-unified .src-row.src-del .src-ln { background: transparent; }
+.src-word-ins { background: var(--md-diff-ins-word); border-radius: 2px; }
+.src-word-del { background: var(--md-diff-del-word); border-radius: 2px; text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--md-diff-del-fg) 70%, transparent); }
+.src-diff .src-hunk td {
+  padding: 14px 8px 6px calc(4.2em + 8px);
+  color: var(--vscode-descriptionForeground, #8b8b8b);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
-
-.diff-html .d2h-del.d2h-change {
-  /* lines modified on the "old" side → blue tint */
-  background: rgba(0, 122, 204, 0.18) !important;
-}
-
-.diff-html .d2h-ins .d2h-change,
-.diff-html .d2h-code-line ins {
-  background: rgba(46, 160, 67, 0.4) !important;
-  color: inherit !important;
-  text-decoration: none !important;
-}
-
-.diff-html .d2h-del .d2h-change,
-.diff-html .d2h-code-line del {
-  background: rgba(248, 81, 73, 0.4) !important;
-  color: inherit !important;
-  text-decoration: none !important;
-}
-
-.diff-html .d2h-info {
-  background: var(--vscode-editorWidget-background, #252526) !important;
-  color: var(--vscode-descriptionForeground, #888) !important;
-  border-color: var(--vscode-widget-border, #333) !important;
-}
-
-.diff-html .d2h-cntx {
-  background: transparent !important;
-  color: var(--vscode-editor-foreground, #d4d4d4) !important;
-}
-
-.diff-html .d2h-code-line,
-.diff-html .d2h-code-side-line {
-  color: var(--vscode-editor-foreground, #d4d4d4) !important;
-  font-family: var(--vscode-editor-font-family, monospace) !important;
-}
-
-.diff-html .d2h-emptyplaceholder {
-  background: var(--vscode-editorWidget-background, #252526) !important;
-  border-color: var(--vscode-widget-border, #333) !important;
-}
+.src-diff tbody:first-of-type .src-hunk td { padding-top: 4px; }
+.src-diff tbody + tbody .src-hunk td { border-top: 1px solid var(--md-diff-line); }
 
 /* Rendered (HTML-level) diff — node-htmldiff output with <ins>/<del> */
 .diff-rendered {
@@ -1718,31 +1776,37 @@ select.settings-input {
 .diff-nav {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-right: 4px;
+  gap: 2px;
 }
 
-.diff-nav-btn {
+.diff-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   background: transparent;
-  border: 1px solid var(--vscode-widget-border, #454545);
-  border-radius: 3px;
-  color: var(--vscode-editor-foreground, #d4d4d4);
-  padding: 2px 8px;
-  font-size: 14px;
-  line-height: 1;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--vscode-icon-foreground, var(--vscode-editor-foreground, #c5c5c5));
   cursor: pointer;
-  transition: background 0.1s, color 0.1s;
+  transition: background 0.1s;
 }
 
-.diff-nav-btn:hover {
-  background: var(--vscode-list-hoverBackground, rgba(255, 255, 255, 0.08));
+.diff-icon-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(255, 255, 255, 0.08));
+}
+
+.diff-icon-btn:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder, #007fd4);
+  outline-offset: 1px;
 }
 
 .diff-nav-counter {
   font-size: 11px;
   color: var(--vscode-descriptionForeground, #888);
   font-variant-numeric: tabular-nums;
-  min-width: 36px;
+  min-width: 40px;
   text-align: center;
 }
 
@@ -3213,14 +3277,9 @@ body.col-resizing { user-select: none; }
   font: inherit;
 }
 
-/* ---------- Rendered diff (read-mode rendering, block diff) ---------- */
-:root {
-  --ms-diff-ins: rgba(46, 160, 67, 0.75);
-  --ms-diff-ins-bg: rgba(46, 160, 67, 0.09);
-  --ms-diff-del: rgba(248, 81, 73, 0.75);
-  --ms-diff-del-bg: rgba(248, 81, 73, 0.08);
-  --ms-diff-mod: rgba(210, 153, 34, 0.8);
-}
+/* ---------- Rendered diff (read-mode rendering, block diff) ----------
+   Changed blocks are tinted and carry a +/− sign in the left gutter; their
+   text stays aligned with the unchanged text and at full contrast. */
 .diff-rendered-doc .tiptap-editor.diff-doc {
   padding-bottom: 4rem;
   min-height: 0;
@@ -3231,79 +3290,117 @@ body.col-resizing { user-select: none; }
   padding: 1px 0;
 }
 .diff-doc .diff-block:is([data-diff="ins"], [data-diff="del"], [data-diff="old"], [data-diff="new"]) {
-  margin: 6px -14px;
-  padding: 2px 14px;
-  border-left: 3px solid transparent;
-  border-radius: 4px;
+  margin: 6px -14px 6px -30px;
+  padding: 3px 14px 3px 30px;
+  border-radius: 6px;
 }
-.diff-doc .diff-block[data-diff="ins"],
-.diff-doc .diff-block[data-diff="new"] {
-  border-left-color: var(--ms-diff-ins);
-  background: var(--ms-diff-ins-bg);
-}
-.diff-doc .diff-block[data-diff="del"],
-.diff-doc .diff-block[data-diff="old"] {
-  border-left-color: var(--ms-diff-del);
-  background: var(--ms-diff-del-bg);
-}
-.diff-doc .diff-block[data-diff="del"] > *,
-.diff-doc .diff-block[data-diff="old"] > * { opacity: 0.78; }
-.diff-doc .diff-block[data-diff="del"] :is(p, li, h1, h2, h3, h4, h5, h6, td, th) {
-  text-decoration: line-through;
-  text-decoration-color: var(--ms-diff-del);
-}
-/* A modified pair reads as one hunk: old directly above new. */
-.diff-doc .diff-block[data-diff="old"] { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.diff-doc .diff-block[data-diff="new"] { margin-top: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
+.diff-doc .diff-block:is([data-diff="ins"], [data-diff="new"]) { background: var(--md-diff-ins-bg); }
+.diff-doc .diff-block:is([data-diff="del"], [data-diff="old"]) { background: var(--md-diff-del-bg); }
 .diff-doc .diff-block:is([data-diff="ins"], [data-diff="del"], [data-diff="old"], [data-diff="new"])::before {
   position: absolute;
-  top: 4px;
-  right: 6px;
-  z-index: 1;
-  font-family: var(--vscode-font-family, sans-serif);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  opacity: 0.7;
+  left: 9px;
+  top: calc(3px + 0.35em);
+  width: 14px;
+  text-align: center;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 1em;
+  font-weight: 700;
+  line-height: var(--ms-line-height, 1.6);
   pointer-events: none;
 }
-.diff-doc .diff-block[data-diff="ins"]::before { content: "added"; color: var(--ms-diff-ins); }
-.diff-doc .diff-block[data-diff="del"]::before { content: "removed"; color: var(--ms-diff-del); }
-.diff-doc .diff-block[data-diff="old"]::before { content: "before"; color: var(--ms-diff-del); }
-.diff-doc .diff-block[data-diff="new"]::before { content: "after"; color: var(--ms-diff-ins); }
+.diff-doc .diff-block:is([data-diff="ins"], [data-diff="new"])::before { content: "+"; color: var(--md-diff-ins-fg); }
+.diff-doc .diff-block:is([data-diff="del"], [data-diff="old"])::before { content: "−"; color: var(--md-diff-del-fg); }
+/* A modified pair reads as one hunk: old directly above new, split by a hairline. */
+.diff-doc .diff-block[data-diff="old"] { margin-bottom: 0; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.diff-doc .diff-block[data-diff="new"] {
+  margin-top: 0;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: inset 0 1px 0 var(--md-diff-line);
+}
+.diff-doc .diff-block > :first-child { margin-top: 0.35em; }
+.diff-doc .diff-block > :last-child { margin-bottom: 0.35em; }
 
 .diff-doc .diff-word-del {
-  background: rgba(248, 81, 73, 0.28);
+  background: var(--md-diff-del-word);
   text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--md-diff-del-fg) 70%, transparent);
   border-radius: 2px;
 }
 .diff-doc .diff-word-ins {
-  background: rgba(46, 160, 67, 0.3);
+  background: var(--md-diff-ins-word);
   border-radius: 2px;
+}
+
+/* Side by side: before on the left, after on the right, one row per change. */
+.diff-rendered-doc.is-sbs .tiptap-editor.diff-doc {
+  width: min(100%, calc(2 * var(--ms-content-width, 760px) + 7rem));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 3rem;
+  align-items: start;
+}
+.diff-rendered-doc.is-sbs .diff-block { grid-column: 1 / -1; }
+.diff-rendered-doc.is-sbs .diff-block:is([data-diff="del"], [data-diff="old"], [data-diff="pad-old"]) { grid-column: 1; }
+.diff-rendered-doc.is-sbs .diff-block:is([data-diff="ins"], [data-diff="new"], [data-diff="pad-new"]) { grid-column: 2; }
+.diff-rendered-doc.is-sbs .diff-block:is([data-diff="ins"], [data-diff="del"], [data-diff="old"], [data-diff="new"]) {
+  margin: 6px 0 6px -30px;
+  border-radius: 6px;
+  box-shadow: none;
+  align-self: stretch;
+}
+.diff-rendered-doc.is-sbs .diff-block:is([data-diff="pad-old"], [data-diff="pad-new"]) {
+  align-self: stretch;
+  margin: 6px 0 6px -30px;
+  border-radius: 6px;
+  background: repeating-linear-gradient(-45deg, transparent 0 6px, var(--md-diff-pad) 6px 7px);
+}
+.diff-rendered-doc.is-sbs .diff-block:is([data-diff="pad-old"], [data-diff="pad-new"]) > * { visibility: hidden; }
+.diff-doc .diff-block:is([data-diff="pad-old"], [data-diff="pad-new"]):not(.is-sbs *) { display: none; }
+.diff-sides {
+  position: sticky;
+  top: -8px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 3rem;
+  width: min(100%, calc(2 * var(--ms-content-width, 760px) + 7rem));
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 8px 2rem 6px;
+  background: var(--vscode-editor-background, #1e1e1e);
+  border-bottom: 1px solid var(--md-diff-line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--vscode-descriptionForeground, #8b8b8b);
 }
 
 /* Folding: gap markers only show in "changes only", far blocks hide there. */
 .diff-doc .diff-block[data-diff="gap"] { display: none; }
 .diff-rendered-doc.changes-only .diff-block[data-far="true"] { display: none; }
 .diff-rendered-doc.changes-only .diff-block[data-diff="gap"] {
-  display: block;
-  margin: 10px 0;
-  text-align: center;
-  color: var(--vscode-descriptionForeground, #888);
-  font-size: 0.8em;
-  border-top: 1px dashed var(--vscode-widget-border, #3c3c3c);
-  border-bottom: 1px dashed var(--vscode-widget-border, #3c3c3c);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: var(--vscode-descriptionForeground, #8b8b8b);
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
 }
-.diff-rendered-doc.changes-only .diff-block[data-diff="gap"] p { margin: 2px 0; }
+.diff-rendered-doc.changes-only .diff-block[data-diff="gap"]::before,
+.diff-rendered-doc.changes-only .diff-block[data-diff="gap"]::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--md-diff-line);
+}
+.diff-rendered-doc.changes-only .diff-block[data-diff="gap"] p { margin: 0; }
 
 .diff-doc .diff-block.diff-hunk-current {
   outline: 2px solid var(--vscode-focusBorder, #007fd4);
   outline-offset: 2px;
-}
-.diff-changes-only {
-  border: 1px solid var(--vscode-widget-border, #454545);
-  border-radius: 4px;
 }
 
 /* GMC block options as fields (id / view / theme / size) */
@@ -3318,26 +3415,26 @@ body.col-resizing { user-select: none; }
 }
 .gmc-block-toolbar .directive-param-input { max-width: 120px; }
 
-/* Diff editor pane (DiffMarks): blocks missing on the other side. */
+/* Diff editor pane (DiffMarks, merge request diff): blocks missing on the other side. */
 .tiptap-editor .ms-diff-ins,
 .tiptap-editor .ms-diff-del {
   border-radius: 4px;
-  box-shadow: -8px 0 0 var(--ms-diff-bar), 8px 0 0 var(--ms-diff-bg);
+  box-shadow: -8px 0 0 var(--ms-diff-bg), 8px 0 0 var(--ms-diff-bg), -11px 0 0 var(--ms-diff-bar);
   background: var(--ms-diff-bg);
 }
 .tiptap-editor .ms-diff-ins {
-  --ms-diff-bg: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
-  --ms-diff-bar: var(--vscode-editorGutter-addedBackground, #587c0c);
+  --ms-diff-bg: var(--md-diff-ins-bg);
+  --ms-diff-bar: var(--md-diff-ins-fg);
 }
 .tiptap-editor .ms-diff-del {
-  --ms-diff-bg: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
-  --ms-diff-bar: var(--vscode-editorGutter-deletedBackground, #94151b);
+  --ms-diff-bg: var(--md-diff-del-bg);
+  --ms-diff-bar: var(--md-diff-del-fg);
 }
 .tiptap-editor .ms-diff-gap {
-  border-top: 2px dashed var(--vscode-editorGutter-deletedBackground, #94151b);
+  border-top: 2px dashed color-mix(in srgb, var(--md-diff-del-fg) 60%, transparent);
 }
 .tiptap-editor .ms-diff-gap-after {
-  border-bottom: 2px dashed var(--vscode-editorGutter-deletedBackground, #94151b);
+  border-bottom: 2px dashed color-mix(in srgb, var(--md-diff-del-fg) 60%, transparent);
 }
 
 /* ---------- GitLab rendered review (ReviewThreads) ----------

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AnchorPoint, CellStyle, ColAlign, TextRun, ConnectorSide, ElementStyle, Id, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
+import { AnchorPoint, CellStyle, ColAlign, TextRun, ConnectorSide, ElementStyle, Id, MasterOverride, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
 import { round4 } from './units.js';
 import { tr } from './i18n.js';
 
@@ -22,6 +22,8 @@ export const ElementPatch = z
     placeholder: z.string().nullable().optional(),
     locked: z.boolean().optional(),
     hidden: z.boolean().optional(),
+    /** `null` takes the element out of its group. */
+    group: Id.nullable().optional(),
     src: z.string().optional(),
     fit: z.enum(['stretch', 'contain', 'cover']).optional(),
     rows: z.array(z.array(z.string())).optional(),
@@ -51,6 +53,8 @@ export const Mutation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('updateElement'), slideId: Id, elementId: Id, patch: ElementPatch }),
   z.object({ kind: z.literal('addElement'), slideId: Id, element: SlideElement }),
   z.object({ kind: z.literal('deleteElement'), slideId: Id, elementId: Id }),
+  /** Change an element's id (connectors pointing at it are updated by separate `updateElement`s). */
+  z.object({ kind: z.literal('renameElement'), slideId: Id, elementId: Id, newId: Id }),
   z.object({ kind: z.literal('reorderElement'), slideId: Id, elementId: Id, direction: z.enum(['front', 'back', 'forward', 'backward']) }),
   z.object({ kind: z.literal('addSlide'), slideId: Id, layout: z.string().min(1), afterSlideId: Id.optional(), title: z.string().optional() }),
   z.object({ kind: z.literal('deleteSlide'), slideId: Id }),
@@ -58,6 +62,8 @@ export const Mutation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('moveSlide'), slideId: Id, toIndex: z.number().int().min(0) }),
   z.object({ kind: z.literal('setSlideLayout'), slideId: Id, layout: z.string().min(1) }),
   z.object({ kind: z.literal('setNotes'), slideId: Id, notes: z.string() }),
+  /** Change (or with `null`, restore) one static object of the layout on this slide only. */
+  z.object({ kind: z.literal('setMasterOverride'), slideId: Id, index: z.number().int().min(0).max(9999), override: MasterOverride.nullable() }),
 ]);
 export type Mutation = z.infer<typeof Mutation>;
 
@@ -86,6 +92,10 @@ export function getSlide(doc: SlideDocument, slideId: string): SlideNode {
   const s = doc.slides.find((x) => x.id === slideId);
   if (!s) throw new MutationError(tr(`Diapositive « ${slideId} » introuvable`, `Slide “${slideId}” not found`));
   return s;
+}
+
+export function assertFreeId(slide: SlideNode, id: string): void {
+  if (slide.elements.some((e) => e.id === id)) throw new MutationError(tr(`Identifiant « ${id} » déjà utilisé`, `Identifier “${id}” already used`));
 }
 
 /** Sorted stacking order after a reorder, as element ids back→front. */
@@ -137,6 +147,14 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         slide.elements = slide.elements.filter((e) => e.id !== m.elementId);
         break;
       }
+      case 'renameElement': {
+        const slide = getSlide(next, m.slideId);
+        const el = slide.elements.find((e) => e.id === m.elementId);
+        if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
+        assertFreeId(slide, m.newId);
+        el.id = m.newId;
+        break;
+      }
       case 'reorderElement': {
         const slide = getSlide(next, m.slideId);
         const order = reorderIds(slide, m.elementId, m.direction);
@@ -177,9 +195,23 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         else delete s.notes;
         break;
       }
+      case 'setMasterOverride': {
+        const s = getSlide(next, m.slideId);
+        s.masterOverrides = withMasterOverride(s.masterOverrides, m.index, m.override);
+        if (!s.masterOverrides) delete s.masterOverrides;
+        break;
+      }
     }
   }
   return next;
+}
+
+/** Overrides map after setting (or clearing, with `null` / an empty override) one object's entry. */
+export function withMasterOverride(cur: SlideNode['masterOverrides'], index: number, override: MasterOverride | null): SlideNode['masterOverrides'] {
+  const out = { ...(cur ?? {}) };
+  if (override && Object.keys(override).length) out[String(index)] = override;
+  else delete out[String(index)];
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Generate an id not present in `taken`, e.g. `shape-3`. */

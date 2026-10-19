@@ -245,6 +245,53 @@ export interface PictureInfo {
   /** `p:cNvPr hidden="1"`: present in the file but not displayed by PowerPoint. */
   hidden?: boolean;
   kind: 'pic' | 'sp' | 'cxnSp';
+  /** Placeholder type / index (`p:ph`), for shapes that are placeholders. */
+  ph?: { type: string; idx?: string };
+  /** Outline of the shape (`a:ln`, or the `p:style` line reference); `none` when explicitly off. */
+  line?: OutlineInfo | 'none';
+}
+
+/** A shape outline as written in the part: literal or scheme color (with luminance modifiers), width in points. */
+export interface OutlineInfo {
+  color: { srgb: string } | { scheme: string; lumMod?: number; lumOff?: number };
+  width: number;
+  dash?: 'dash' | 'dot';
+}
+
+/** Color of a DrawingML color holder (`<a:solidFill>…`, `<a:lnRef>…`). */
+function colorIn(xml: string): OutlineInfo['color'] | undefined {
+  const srgb = /<a:srgbClr val="([0-9A-Fa-f]{6})"/.exec(xml)?.[1];
+  if (srgb) return { srgb: srgb.toUpperCase() };
+  const sys = /<a:sysClr [^>]*lastClr="([0-9A-Fa-f]{6})"/.exec(xml)?.[1];
+  if (sys) return { srgb: sys.toUpperCase() };
+  const sc = /<a:schemeClr val="(\w+)"\s*\/?>([\s\S]*?)(<\/a:schemeClr>|$)/.exec(xml);
+  if (!sc) return undefined;
+  const mod = /<a:lumMod val="(\d+)"/.exec(sc[2] ?? '')?.[1], off = /<a:lumOff val="(\d+)"/.exec(sc[2] ?? '')?.[1];
+  return { scheme: sc[1]!, ...(mod ? { lumMod: Number(mod) / 100000 } : {}), ...(off ? { lumOff: Number(off) / 100000 } : {}) };
+}
+
+/** Outline of a `p:sp` body: explicit `a:ln` in `p:spPr`, else the theme line its `p:style` references. */
+export function outlineIn(body: string): OutlineInfo | 'none' | undefined {
+  const spPr = /<p:spPr\b[^>]*>([\s\S]*?)<\/p:spPr>/.exec(body)?.[1] ?? '';
+  const ln = /<a:ln\b([^>]*?)(?:\/>|>([\s\S]*?)<\/a:ln>)/.exec(spPr);
+  const width = (attrs: string | undefined) => Math.round((Number(/\bw="(\d+)"/.exec(attrs ?? '')?.[1] ?? 9525) / 12700) * 100) / 100;
+  const dashOf = (inner: string) => {
+    const d = /<a:prstDash val="(\w+)"/.exec(inner)?.[1];
+    return !d || d === 'solid' ? {} : { dash: (/dot/i.test(d) && !/dash/i.test(d) ? 'dot' : 'dash') as 'dash' | 'dot' };
+  };
+  if (ln) {
+    const inner = ln[2] ?? '';
+    if (/<a:noFill\s*\/>/.test(inner)) return 'none';
+    const color = /<a:solidFill>/.test(inner) ? colorIn(inner) : undefined;
+    if (color) return { color, width: width(ln[1]), ...dashOf(inner) };
+  }
+  // Theme-styled shapes (inserted with a quick style): the line comes from `p:style/a:lnRef`.
+  const ref = /<p:style>[\s\S]*?<a:lnRef idx="(\d+)"\s*>([\s\S]*?)<\/a:lnRef>/.exec(body);
+  if (ref && ref[1] !== '0') {
+    const color = colorIn(ref[2] ?? '');
+    if (color) return { color, width: ln ? width(ln[1]) : 0.75, ...dashOf(ln?.[2] ?? '') };
+  }
+  return undefined;
 }
 
 /**
@@ -261,16 +308,27 @@ export async function picturesIn(zip: JSZip, part: string): Promise<PictureInfo[
     const rid = /<a:blip [^>]*r:embed="([^"]+)"/.exec(body)?.[1];
     const off = /<a:off x="(-?\d+)" y="(-?\d+)"/.exec(body);
     const ext = /<a:ext cx="(\d+)" cy="(\d+)"/.exec(body);
-    if (!off || !ext || (kind === 'pic' && !rid)) continue;
+    const isPh = kind === 'sp' && /<p:ph\b/.test(body);
+    if ((!off || !ext) && !isPh) continue;
+    if (kind === 'pic' && !rid) continue;
     const info: PictureInfo = {
-      x: Number(off[1]) / 914400,
-      y: Number(off[2]) / 914400,
-      w: Number(ext[1]) / 914400,
-      h: Number(ext[2]) / 914400,
+      x: Number(off?.[1] ?? NaN) / 914400,
+      y: Number(off?.[2] ?? NaN) / 914400,
+      w: Number(ext?.[1] ?? NaN) / 914400,
+      h: Number(ext?.[2] ?? NaN) / 914400,
       media: rid ? (rels.get(rid) ?? '') : '',
       kind,
     };
     if (/<p:cNvPr [^>]*hidden="(1|true)"/.test(body)) info.hidden = true;
+    if (kind === 'sp') {
+      const ph = /<p:ph\b([^>]*)\/?>/.exec(body)?.[1];
+      if (ph !== undefined) {
+        const idx = /\bidx="(\d+)"/.exec(ph)?.[1];
+        info.ph = { type: /\btype="(\w+)"/.exec(ph)?.[1] ?? 'body', ...(idx ? { idx } : {}) };
+      }
+      const line = outlineIn(body);
+      if (line) info.line = line;
+    }
     const sr = /<a:srcRect([^>]*)\/>/.exec(body)?.[1] ?? '';
     const v = (k: string) => Number(new RegExp(`\\b${k}="(-?\\d+)"`).exec(sr)?.[1] ?? 0) / 100000;
     if (/\b[ltrb]="/.test(sr)) info.crop = { l: v('l'), t: v('t'), r: v('r'), b: v('b') };

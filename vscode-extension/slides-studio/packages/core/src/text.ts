@@ -65,7 +65,7 @@ export function mergeRuns(runs: TextRun[]): TextRun[] {
   for (const r of runs) {
     if (!r.text) continue;
     const prev = out[out.length - 1];
-    if (prev && !!prev.bold === !!r.bold && !!prev.italic === !!r.italic && !!prev.underline === !!r.underline && prev.color === r.color && prev.size === r.size) {
+    if (prev && !!prev.bold === !!r.bold && !!prev.italic === !!r.italic && !!prev.underline === !!r.underline && prev.color === r.color && prev.size === r.size && prev.caps === r.caps) {
       prev.text += r.text;
     } else out.push({ ...r });
   }
@@ -151,4 +151,4 @@ export function paragraphsToMarkdown(paragraphs: Paragraph[]): string {
 
 /** True when paragraphs only use what `content` strings can express. */
 export const isPlainRepresentable = (paragraphs: Paragraph[]): boolean =>
-  paragraphs.every((p) => p.runs.every((r) => !r.underline && !r.color && r.size === undefined));
+  paragraphs.every((p) => p.runs.every((r) => !r.underline && !r.color && r.size === undefined && !r.caps));

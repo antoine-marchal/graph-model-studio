@@ -2,7 +2,7 @@
   "name": "graph-model-studio",
   "displayName": "Graph Model Studio",
   "description": "%s001.gmc.graph.modeling.with.live%",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "publisher": "graph-model-studio",
   "license": "UNLICENSED",
   "engines": {

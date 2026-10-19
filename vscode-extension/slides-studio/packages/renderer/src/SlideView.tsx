@@ -1,6 +1,7 @@
 import { memo, type CSSProperties, type ReactNode } from 'react';
 import {
   isDiagramSrc,
+  masterAssetOf,
   imageFit,
   CSS_PX_PER_INCH,
   numberLabel,
@@ -11,6 +12,7 @@ import {
   type LayoutDef,
   type Paragraph,
   type ResolvedElement,
+  type SlideElement,
   type SlideNode,
   type StaticObject,
   type CellStyle,
@@ -26,6 +28,9 @@ const px = (inch: number) => inch * PPI;
 const ptPx = (pt: number) => (pt / 72) * PPI;
 const hex = (c: string | null | undefined) => (c ? `#${c}` : 'transparent');
 const cssDash = (d: string | undefined) => (d === 'dash' ? 'dashed' : d === 'dot' ? 'dotted' : 'solid');
+/** CSS of a render-only capitalization (`caps`); `none` explicitly cancels the element's. */
+export const capsCss = (caps: string | undefined): CSSProperties =>
+  caps === 'small' ? { fontVariant: 'small-caps', textTransform: 'none' } : caps === 'all' ? { textTransform: 'uppercase', fontVariant: 'normal' } : caps === 'none' ? { textTransform: 'none', fontVariant: 'normal' } : {};
 
 /** Literal RRGGBB of a color token (`theme.accent1`, `theme.dk1.lighter60`, `#E50019`), null for none. */
 export function tokenHex(token: string | undefined, master: CorporateMaster): string | null {
@@ -84,6 +89,8 @@ export interface SlideViewProps {
   showPlaceholders?: boolean;
   /** Draw hidden elements ghosted (editor only; never in thumbnails or exports). */
   showHidden?: boolean;
+  /** Draw hidden layout objects ghosted (master editing). */
+  showHiddenMaster?: boolean;
   /** Element currently edited inline: rendered by `renderEditor` instead. */
   editingId?: string | null;
   renderEditor?: (r: ResolvedElement) => ReactNode;
@@ -91,6 +98,8 @@ export interface SlideViewProps {
   overlay?: ReactNode;
   onElementPointerDown?: (e: React.PointerEvent, r: ResolvedElement) => void;
   onElementDoubleClick?: (e: React.MouseEvent, r: ResolvedElement) => void;
+  /** Layout designer: elements standing for layout placeholders get a dashed outline. */
+  designPlaceholders?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -138,6 +147,7 @@ export function ParagraphsView({ r, paragraphs, master }: { r: ResolvedElement; 
                   textDecoration: run.underline || r.style.underline ? 'underline' : undefined,
                   fontSize: run.size ? ptPx(run.size) : undefined,
                   color: run.color ? hex(run.color.startsWith('theme.') ? (resolveRunColor(run.color, master) ?? look.color) : run.color.replace('#', '')) : undefined,
+                  ...capsCss(run.caps),
                 }}
               >
                 {run.text}
@@ -171,6 +181,7 @@ export function textBoxStyle(r: ResolvedElement): CSSProperties {
     lineHeight: 1.2 * r.style.lineSpacing,
     overflowWrap: 'break-word',
     whiteSpace: 'pre-wrap',
+    ...capsCss(r.style.caps === 'none' ? undefined : r.style.caps),
   };
 }
 
@@ -184,7 +195,7 @@ export function cellRunsOf(el: TableElement, ri: number, ci: number): TextRun[] 
 export function RunSpan({ run, master }: { run: TextRun; master: CorporateMaster }) {
   const color = run.color ? tokenHex(run.color, master) : null;
   return (
-    <span style={{ fontWeight: run.bold ? 700 : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined, color: color ? `#${color}` : undefined, fontSize: run.size ? ptPx(run.size) : undefined }}>
+    <span style={{ fontWeight: run.bold ? 700 : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined, color: color ? `#${color}` : undefined, fontSize: run.size ? ptPx(run.size) : undefined, ...capsCss(run.caps) }}>
       {run.text}
     </span>
   );
@@ -421,8 +432,10 @@ function ShapeSvg({ r }: { r: ResolvedElement }) {
 /* Static layout objects (pptx-masters format)                          */
 /* ------------------------------------------------------------------ */
 
-function StaticObjectView({ o, assets, metadata }: { o: StaticObject; assets: AssetResolver; metadata?: SlideViewProps['metadata'] }) {
+export function StaticObjectView({ o, assets, metadata, resolved, master }: { o: StaticObject; assets: AssetResolver; metadata?: SlideViewProps['metadata']; resolved?: ResolvedElement; master?: CorporateMaster }) {
+  if (o.hidden) return null;
   const [kind, raw] = Object.entries(o.object)[0] ?? [];
+  if (kind === 'element') return resolved && master ? <div style={elementBoxStyle(resolved)}><ElementView r={resolved} master={master} assets={assets} /></div> : null;
   const v = (raw ?? {}) as Record<string, unknown>;
   const opts = (kind === 'text' ? (v.options as Record<string, unknown>) : v) ?? {};
   const n = (k: string) => (typeof opts[k] === 'number' ? (opts[k] as number) : 0);
@@ -457,7 +470,8 @@ function StaticObjectView({ o, assets, metadata }: { o: StaticObject; assets: As
     let text = typeof v.text === 'string' ? v.text : Array.isArray(v.text) ? (v.text as { text?: string }[]).map((t) => t.text ?? '').join('') : '';
     if (o.role === 'footer') text = metadata?.footer ?? '';
     if (o.role === 'date') text = metadata?.date ?? '';
-    if (!text) return null;
+    const line = opts.line as { color?: string; width?: number; dashType?: string } | undefined;
+    if (!text && !line?.color && !(opts.fill as { color?: string } | undefined)?.color) return null;
     const m = (Array.isArray(opts.margin) ? opts.margin : [0.05, 0.1, 0.05, 0.1]) as number[];
     return (
       <div
@@ -475,6 +489,8 @@ function StaticObjectView({ o, assets, metadata }: { o: StaticObject; assets: As
           lineHeight: 1.2,
           whiteSpace: 'pre-wrap',
           background: (opts.fill as { color?: string } | undefined)?.color ? hex((opts.fill as { color: string }).color) : undefined,
+          border: line?.color ? `${Math.max(1, ptPx(line.width ?? 0.75))}px ${line.dashType === 'sysDot' ? 'dotted' : line.dashType ? 'dashed' : 'solid'} #${line.color}` : undefined,
+          boxSizing: 'border-box',
         }}
       >
         {text}
@@ -501,7 +517,7 @@ export function elementBoxStyle(r: ResolvedElement): CSSProperties {
 
 /** Box decoration of a text element (fill/border), also kept under the inline editor. */
 const textChrome = (r: ResolvedElement): CSSProperties => ({
-  background: r.element.style?.fill ? hex(r.style.fill) : undefined,
+  background: r.style.fill && (r.element.style?.fill || r.placeholder?.style.fill) ? hex(r.style.fill) : undefined,
   border: r.style.line ? `${ptPx(r.style.lineWidth)}px ${cssDash(r.style.dash)} ${hex(r.style.line)}` : undefined,
 });
 
@@ -533,7 +549,8 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
         </>
       );
     case 'image': {
-      const url = assets.image(el.src);
+      const asset = masterAssetOf(el.src);
+      const url = asset ? assets.masterAsset(asset) : assets.image(el.src);
       return url ? (
         <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: ({ stretch: 'fill', contain: 'contain', cover: 'cover' } as const)[imageFit(el)], boxSizing: 'border-box', ...textChrome(r), background: undefined }} />
       ) : (
@@ -575,16 +592,46 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
 /* Slide                                                               */
 /* ------------------------------------------------------------------ */
 
-export function LayoutBackground({ layout, master, assets, metadata, slideNumber }: { layout: LayoutDef | undefined; master: CorporateMaster; assets: AssetResolver; metadata?: SlideViewProps['metadata']; slideNumber?: number }) {
+/**
+ * Layout objects drawn like slide elements (`{ element }`), resolved together so connectors find
+ * their ends; footer / date texts take the presentation's values. Keyed by object index.
+ */
+function resolveLayoutElements(layout: LayoutDef, master: CorporateMaster, metadata?: SlideViewProps['metadata']): Map<number, ResolvedElement> {
+  const index = new Map<string, number>();
+  const elements: SlideElement[] = [];
+  layout.objects.forEach((o, i) => {
+    let el = o.object.element as SlideElement | undefined;
+    if (!el) return;
+    if ((o.role === 'footer' || o.role === 'date') && (el.type === 'text' || el.type === 'shape')) el = { ...el, paragraphs: [{ runs: [{ text: (o.role === 'footer' ? metadata?.footer : metadata?.date) ?? '' }] }] };
+    index.set(el.id, i);
+    elements.push(el);
+  });
+  const out = new Map<number, ResolvedElement>();
+  if (!elements.length) return out;
+  for (const r of resolveSlide({ id: 'layout', layout: '', elements }, master).elements) out.set(index.get(r.element.id)!, r);
+  return out;
+}
+
+export function LayoutBackground({ layout, master, assets, metadata, slideNumber, showHidden }: { layout: LayoutDef | undefined; master: CorporateMaster; assets: AssetResolver; metadata?: SlideViewProps['metadata']; slideNumber?: number; showHidden?: boolean }) {
   if (!layout) return null;
   const bgAsset = layout.background.assetId ? assets.masterAsset(layout.background.assetId) : null;
   const sn = layout.slideNumber as Record<string, number | string> | null;
+  const resolved = resolveLayoutElements(layout, master, metadata);
   return (
     <>
       <div style={{ position: 'absolute', inset: 0, background: bgAsset ? `center / cover url("${bgAsset}")` : hex(layout.background.color ?? 'FFFFFF') }} />
-      {layout.objects.map((o, i) => (
-        <StaticObjectView key={i} o={o} assets={assets} metadata={metadata} />
-      ))}
+      {layout.objects.map((o, i) =>
+        o.hidden && showHidden ? (
+          <div key={i} data-master-object={i} data-master-ghost="" style={{ position: 'absolute', inset: 0, opacity: 0.35, pointerEvents: 'none' }}>
+            <StaticObjectView o={{ ...o, hidden: false }} assets={assets} metadata={metadata} resolved={resolved.get(i)} master={master} />
+          </div>
+        ) : (
+          // `display: contents` keeps the layout untouched; the index lets the editor pick master objects.
+          <div key={i} data-master-object={i} style={{ display: 'contents' }}>
+            <StaticObjectView o={o} assets={assets} metadata={metadata} resolved={resolved.get(i)} master={master} />
+          </div>
+        ),
+      )}
       {sn && slideNumber !== undefined && (
         <div
           style={{
@@ -617,7 +664,7 @@ export const SlideView = memo(function SlideView(props: SlideViewProps) {
       data-slide-id={slide.id}
       style={{ position: 'relative', width: px(master.dimensions.width), height: px(master.dimensions.height), overflow: 'hidden', background: '#fff', isolation: 'isolate' }}
     >
-      <LayoutBackground layout={rs.layout} master={master} assets={assets} metadata={props.metadata} slideNumber={props.slideNumber} />
+      <LayoutBackground layout={rs.layout} master={master} assets={assets} metadata={props.metadata} slideNumber={props.slideNumber} showHidden={props.showHiddenMaster} />
       {props.showPlaceholders &&
         rs.layout?.placeholders
           .filter((p) => !bound.has(p.key))
@@ -636,7 +683,12 @@ export const SlideView = memo(function SlideView(props: SlideViewProps) {
             key={r.element.id}
             data-element-id={r.element.id}
             data-hidden={r.element.hidden || undefined}
-            style={r.element.hidden ? { ...elementBoxStyle(r), opacity: 0.35, outline: '1.5px dashed #8a8f98', outlineOffset: 2 } : elementBoxStyle(r)}
+            data-placeholder-key={props.designPlaceholders ? r.element.placeholder : undefined}
+            style={{
+              ...elementBoxStyle(r),
+              ...(r.element.hidden ? { opacity: 0.35, outline: '1.5px dashed #8a8f98', outlineOffset: 2 } : {}),
+              ...(props.designPlaceholders && r.element.placeholder ? { outline: '1.5px dashed #8a8f98', outlineOffset: -1 } : {}),
+            }}
             onPointerDown={props.onElementPointerDown ? (e) => props.onElementPointerDown!(e, r) : undefined}
             onDoubleClick={props.onElementDoubleClick ? (e) => props.onElementDoubleClick!(e, r) : undefined}
           >

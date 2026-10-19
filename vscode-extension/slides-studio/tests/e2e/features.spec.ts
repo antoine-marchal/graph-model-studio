@@ -206,3 +206,47 @@ test('table: ribbon font tools on a cell range style only those cells', async ({
   // The table's own style is untouched.
   expect(src).not.toMatch(/style:\s*\n\s+color: theme\.accent2/);
 });
+
+test('small caps / all caps: the whole text of the object, kept in the source', async ({ page }) => {
+  await open(page);
+  await canvasEl(page, 'title').click();
+  await page.getByTestId('all-caps').click();
+  await synced(page);
+  expect(await source(page)).toMatch(/caps: all/);
+  await expect(canvasEl(page, 'title').locator('div').first()).toHaveCSS('text-transform', 'uppercase');
+  await page.getByTestId('small-caps').click();
+  await synced(page);
+  expect(await source(page)).toMatch(/caps: small/);
+});
+
+test('slide show: F5-style full-screen show, keyboard navigation, Esc to end', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('start-slideshow').click();
+  const show = page.getByTestId('slideshow');
+  await expect(show).toBeVisible();
+  const count = page.getByTestId('slideshow-count');
+  await expect(count).toHaveText(/^1 \/ \d+$/);
+  await page.keyboard.press('ArrowRight');
+  await expect(count).toHaveText(/^2 \/ \d+$/);
+  await page.keyboard.press('ArrowLeft');
+  await expect(count).toHaveText(/^1 \/ \d+$/);
+  await page.keyboard.press('Escape');
+  await expect(show).toHaveCount(0);
+});
+
+test('master editing for this slide: a layout object moves on this slide only', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('tab-design').click();
+  await page.getByTestId('toggle-master-edit').click();
+  await page.getByTestId('master-scope-slide').click();
+  await expect(page.getByTestId('master-banner')).toBeVisible();
+  const obj = page.getByTestId('slide-canvas').locator('[data-master-object] > *').first();
+  await obj.click({ force: true });
+  await expect(page.getByTestId('master-selection')).toBeVisible();
+  await page.keyboard.press('Shift+ArrowRight');
+  await synced(page);
+  expect(await source(page)).toContain('masterOverrides:');
+  await page.getByTestId('reset-master-overrides').click();
+  await synced(page);
+  expect(await source(page)).not.toContain('masterOverrides:');
+});

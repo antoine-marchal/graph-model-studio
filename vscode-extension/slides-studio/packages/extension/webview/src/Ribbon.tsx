@@ -4,9 +4,12 @@ import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
 import { AddSlideMenu, Menu, PaletteMenu } from './Panels';
-import { alignMutations, connectMutation, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
+import { alignMutations, connectMutation, groupMutations, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
 import { copyFromRibbon, copyStyle, pasteFromRibbon } from './clipboard';
 import { useAnchors, useDiff } from './Review';
+import { MasterEditToggle, NewLayoutForm } from './MasterEdit';
+import { addPlaceholder, LayoutsGallery, PLACEHOLDER_KINDS } from './LayoutDesigner';
+import { startSlideShow } from './Presentation';
 
 /* ------------------------------------------------------------------ */
 /* Ribbon primitives                                                   */
@@ -138,8 +141,8 @@ function TitleBar() {
     <header className="titlebar" role="toolbar" aria-label={tr("Accès rapide", "Quick access")}>
       <div className="qat">
         <button type="button" className="ibtn" aria-label={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} title={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} disabled={readOnly} onClick={() => post({ type: 'save' })}><Icon name="save" /></button>
-        <button type="button" className="ibtn" aria-label={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} title={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} data-testid="undo" disabled={readOnly} onClick={() => post({ type: 'undo' })}><Icon name="undo" /></button>
-        <button type="button" className="ibtn" aria-label={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} title={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} data-testid="redo" disabled={readOnly} onClick={() => post({ type: 'redo' })}><Icon name="redo" /></button>
+        <button type="button" className="ibtn" aria-label={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} title={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} data-testid="undo" disabled={readOnly} onClick={() => (useEditor.getState().design ? useEditor.getState().designUndo() : post({ type: 'undo' }))}><Icon name="undo" /></button>
+        <button type="button" className="ibtn" aria-label={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} title={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} data-testid="redo" disabled={readOnly} onClick={() => (useEditor.getState().design ? useEditor.getState().designUndo(true) : post({ type: 'redo' }))}><Icon name="redo" /></button>
       </div>
       <div className="title">
         <span className="file-name" title={fileName}>{fileName}</span>
@@ -151,6 +154,9 @@ function TitleBar() {
           <button type="button" className="ibtn is-active" aria-pressed>{tr('Visuel', 'Visual')}</button>
           <button type="button" className="ibtn" title={tr("Ouvrir la source dans l'éditeur de texte", "Open the source in the text editor")} data-testid="open-source" onClick={() => post({ type: 'openSource' })}>Source</button>
         </div>
+        <button type="button" className="ibtn has-label" data-testid="start-slideshow" disabled={!doc} title={tr('Diaporama depuis le début (F5) — Maj+F5 : depuis la diapositive actuelle', 'Slide show from the beginning (F5) — Shift+F5: from the current slide')} onClick={() => startSlideShow(false)}>
+          <Icon name="play" /> {tr('Diaporama', 'Slide show')}
+        </button>
         <button type="button" className="ibtn is-primary has-label" data-testid="export" disabled={!doc || pending > 0} onClick={() => post({ type: 'export' })}>
           <Icon name="download" /> {tr('Exporter .pptx', 'Export .pptx')}
         </button>
@@ -268,6 +274,18 @@ function FontTools() {
     }
     return els.length > 0 && els.every((e) => !!e.style?.[k]);
   };
+  // Small caps / all caps: selected characters while editing, else the whole text of the elements.
+  const selCaps = () => {
+    const n = window.getSelection()?.anchorNode;
+    const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
+    return el?.closest<HTMLElement>('[data-caps]')?.dataset.caps;
+  };
+  const capsOn = (v: 'small' | 'all') => (runs ? (selCaps() ?? first?.caps) === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.caps === v));
+  const setCaps = (v: 'small' | 'all') => {
+    if (runs) return void ed!.format({ caps: capsOn(v) ? (first?.caps === v ? 'none' : null) : v });
+    style({ caps: els.every((e) => e.style?.caps === v) ? null : v });
+  };
+  const capsOff = off || (!runs && !!cells) || els.every((e) => e.type === 'table');
   const fonts = master ? [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])] : [];
   const face = els[0]?.style?.fontFace;
   const faceLabel = face === 'theme.heading' ? master?.theme.fonts.heading : face === 'theme.body' ? master?.theme.fonts.body : face ?? first?.fontFace ?? '—';
@@ -306,6 +324,8 @@ function FontTools() {
         <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={on('bold')} disabled={off} testId="bold" onClick={() => toggle('bold')} />
         <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={on('italic')} disabled={off} testId="italic" onClick={() => toggle('italic')} />
         <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={on('underline')} disabled={off} testId="underline" onClick={() => toggle('underline')} />
+        <Small iconOnly icon="smallCaps" label={tr("Petites majuscules", "Small caps")} title={tr("Petites majuscules : texte sélectionné, sinon tout le texte de l’objet", "Small caps: the selected text, else the whole text of the object")} active={!capsOff && capsOn('small')} disabled={capsOff} testId="small-caps" onClick={() => setCaps('small')} />
+        <Small iconOnly icon="allCaps" label={tr("Tout en majuscules", "All caps")} title={tr("Tout en majuscules : texte sélectionné, sinon tout le texte de l’objet", "All caps: the selected text, else the whole text of the object")} active={!capsOff && capsOn('all')} disabled={capsOff} testId="all-caps" onClick={() => setCaps('all')} />
         <PaletteMenu
           testId="color-text-menu"
           value={runs ? undefined : cells ? (cellLook?.color ?? undefined) : color}
@@ -317,7 +337,7 @@ function FontTools() {
             </button>
           )}
         />
-        <Small iconOnly icon="clearFormat" label={tr("Effacer la mise en forme", "Clear formatting")} disabled={off} testId="clear-format" onClick={() => (runs ? ed!.format('clear') : ed?.formatCells ? ed.formatCells('clear') : style({ bold: null, italic: null, underline: null, color: null, fontSize: null, fontFace: null }))} />
+        <Small iconOnly icon="clearFormat" label={tr("Effacer la mise en forme", "Clear formatting")} disabled={off} testId="clear-format" onClick={() => (runs ? ed!.format('clear') : ed?.formatCells ? ed.formatCells('clear') : style({ bold: null, italic: null, underline: null, caps: null, color: null, fontSize: null, fontFace: null }))} />
       </div>
     </div>
   );
@@ -379,6 +399,14 @@ function ArrangeTools() {
           </>
         )}
       </Menu>
+      <Menu testId="group-menu" trigger={(open) => <Big icon="group" label={tr('Grouper', 'Group')} caret disabled={off} testId="group" onClick={open} />}>
+        {(close) => (
+          <>
+            {rs.length > 1 && item('group', tr('Grouper (Ctrl+G)', 'Group (Ctrl+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), true)), close, 'group-on')}
+            {rs.some((r) => r.element.group) && item('ungroup', tr('Dissocier (Ctrl+Maj+G)', 'Ungroup (Ctrl+Shift+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), false)), close, 'group-off')}
+          </>
+        )}
+      </Menu>
       <Menu testId="align-menu" trigger={(open) => <Big icon="alignCenter" label={rs.length > 1 ? tr('Aligner', 'Align') : tr('Aligner sur la diapositive', 'Align to slide')} caret disabled={off} testId="align" onClick={open} />}>
         {(close) => (
           <>
@@ -401,9 +429,23 @@ function InsertTab() {
   const slide = useEditor(currentSlide);
   const readOnly = useEditor((s) => s.readOnly);
   const { addText, addTable } = useActions();
+  const design = useEditor((s) => !!s.design);
   const off = !slide || readOnly;
   return (
     <>
+      {design && (
+        <Group label={tr('Disposition', 'Layout')}>
+          <Menu testId="placeholder-menu" trigger={(open) => <Big icon="layoutAdd" label={tr('Espace réservé', 'Placeholder')} caret testId="add-placeholder" onClick={open} />}>
+            {(close) =>
+              PLACEHOLDER_KINDS.map((k) => (
+                <button key={k.type} type="button" role="menuitem" className="menu-item" data-testid={`placeholder-${k.type}`} onClick={() => (close(), addPlaceholder(k.type))}>
+                  {k.label}
+                </button>
+              ))
+            }
+          </Menu>
+        </Group>
+      )}
       <Group label={tr("Éléments", "Elements")}>
         <Big icon="text" label={tr("Zone de texte", "Text box")} testId="add-text" disabled={off} onClick={addText} />
         <ShapesMenu big disabled={off} />
@@ -415,6 +457,70 @@ function InsertTab() {
         <Big icon="diagram" label={tr("Diagramme GMC", "GMC diagram")} testId="insert-gmc" disabled={off} title={tr("Créer ou insérer un diagramme Graph Model Studio (.gmc)", "Create or insert a Graph Model Studio diagram (.gmc)")} onClick={() => useEditor.getState().set({ gmcDialog: true })} />
       </Group>
     </>
+  );
+}
+
+/** Design: master editing (this slide / every slide) and new layouts. */
+function DesignTab() {
+  const slide = useEditor(currentSlide);
+  const readOnly = useEditor((s) => s.readOnly);
+  const masterEdit = useEditor((s) => s.masterEdit);
+  const { set, select, mutate } = useEditor.getState();
+  const overrides = Object.keys(slide?.masterOverrides ?? {});
+  const off = !slide || readOnly;
+  return (
+    <>
+      <Group label={tr('Masque', 'Master')}>
+        <Big
+          icon="masterEdit"
+          label={tr('Modifier le masque', 'Edit master')}
+          testId="toggle-master-edit"
+          active={!!masterEdit}
+          disabled={off}
+          title={tr('Concevoir la disposition de la diapositive comme une diapositive (formes, textes, images, espaces réservés…)', 'Design the slide’s layout like a slide (shapes, texts, pictures, placeholders…)')}
+          onClick={() => {
+            const st = useEditor.getState();
+            if (st.design) return st.exitDesign();
+            if (masterEdit) return set({ masterEdit: null, masterSel: null });
+            if (slide) select(slide.id, []);
+            st.enterDesign();
+          }}
+        />
+        <Col>
+          <MasterEditToggle disabled={off || !masterEdit} />
+          <Small
+            icon="refresh"
+            label={`${tr('Rétablir le masque', 'Reset to master')}${overrides.length ? ` (${overrides.length})` : ''}`}
+            testId="reset-master-overrides"
+            disabled={off || !overrides.length}
+            title={tr('Retirer toutes les modifications du masque propres à cette diapositive', 'Remove every master change specific to this slide')}
+            onClick={() => slide && mutate(overrides.map((k) => ({ kind: 'setMasterOverride' as const, slideId: slide.id, index: Number(k), override: null })))}
+          />
+        </Col>
+      </Group>
+      <Group label={tr('Dispositions', 'Layouts')}>
+        <Menu testId="layouts-gallery" trigger={(open) => <Big icon="layout" label={tr('Toutes les dispositions', 'All layouts')} caret testId="all-layouts" disabled={!slide} onClick={open} />}>
+          {(close) => <LayoutsGallery close={close} />}
+        </Menu>
+        <Menu testId="new-layout-menu" trigger={(open) => <Big icon="layoutAdd" label={tr('Nouvelle disposition', 'New layout')} caret testId="new-layout" disabled={off || masterEdit === 'all'} onClick={open} />}>
+          {(close) => <NewLayoutForm close={close} />}
+        </Menu>
+      </Group>
+    </>
+  );
+}
+
+/** Slide Show: start from the beginning or from the current slide. */
+function SlideShowTab() {
+  const doc = useEditor((s) => s.doc);
+  return (
+    <Group label={tr('Démarrage du diaporama', 'Start slide show')}>
+      <Big icon="play" label={tr('À partir du début', 'From beginning')} testId="slideshow-start" disabled={!doc} title={tr('Diaporama depuis la première diapositive (F5)', 'Slide show from the first slide (F5)')} onClick={() => startSlideShow(false)} />
+      <Big icon="slideshow" label={tr('À partir de la diapositive actuelle', 'From current slide')} testId="slideshow-current" disabled={!doc} title={tr('Diaporama depuis la diapositive affichée (Maj+F5)', 'Slide show from the current slide (Shift+F5)')} onClick={() => startSlideShow(true)} />
+      <Col>
+        <span className="rb-note">{tr('→ / Espace : suivante · ← : précédente · B : écran noir · Échap : quitter', '→ / Space: next · ←: previous · B: black screen · Esc: exit')}</span>
+      </Col>
+    </Group>
   );
 }
 
@@ -571,6 +677,8 @@ export function Ribbon() {
   const tabs: { id: RibbonTab; label: string; badge?: number }[] = [
     { id: 'home', label: tr('Accueil', 'Home') },
     { id: 'insert', label: tr('Insertion', 'Insert') },
+    { id: 'design', label: tr('Conception', 'Design') },
+    { id: 'slideshow', label: tr('Diaporama', 'Slide Show') },
     { id: 'review', label: tr('Révision', 'Review'), badge: open || diff?.count || undefined },
     { id: 'view', label: tr('Affichage', 'View') },
   ];
@@ -608,6 +716,8 @@ export function Ribbon() {
         <div className="ribbon" role="tabpanel" aria-label={tabs.find((t) => t.id === active)?.label ?? 'Format'}>
           {active === 'home' && <HomeTab />}
           {active === 'insert' && <InsertTab />}
+          {active === 'design' && <DesignTab />}
+          {active === 'slideshow' && <SlideShowTab />}
           {active === 'review' && <ReviewTab />}
           {active === 'view' && <ViewTab />}
           {active === 'format' && <FormatTab />}

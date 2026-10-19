@@ -113,6 +113,7 @@ test('DSL: numeric geometry edit keeps comments and formatting', async ({ page }
 test('adds a slide from a corporate layout picker', async ({ page }) => {
   await open(page, 'examples/corporate-demo/deck.slides.md');
   await page.getByTestId('add-slide').click();
+  await expect(page.getByTestId('layout-menu').locator('.layout-group').first()).toBeVisible();
   await page.getByTestId('layout-menu').getByRole('textbox').fill('deux contenus');
   await page.getByTestId('layout-menu').locator('.layout-card').first().click();
   await synced(page);

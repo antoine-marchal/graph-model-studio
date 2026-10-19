@@ -3,15 +3,15 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { imageSize } from 'image-size';
-import { isDiagramSrc, MutationError, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
+import { DESIGN_SLIDE_ID, findLayout, isDiagramSrc, masterAssetSrc, MutationError, newLayout, patchMasterObjects, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
 import { applyMutations, parseSource, presentationKind, type SourceKind } from '@corporate-slides/parser';
 import { findMasterDir, fsValidateOptions, projectRootOf, resolveImage } from '@corporate-slides/cli';
-import { convertClipboardDrawing, loadMaster } from '@corporate-slides/master-extractor';
+import { convertClipboardDrawing, loadMaster, slugify } from '@corporate-slides/master-extractor';
 import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
-import { loadDiffBase, localPath, mrRef, reviewRequest } from './review';
+import { loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
 
 const BROWSER_IMAGE = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
@@ -29,6 +29,8 @@ interface PanelState {
   diffBase: DiffBaseKind;
   /** Version after the last edit that did not come from this editor's own transactions. */
   externalVersion: number;
+  /** Zen mode turned on by this editor's slide show. */
+  zen?: boolean;
 }
 
 /**
@@ -53,7 +55,20 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     private readonly context: vscode.ExtensionContext,
     private readonly diagnostics: vscode.DiagnosticCollection,
     private readonly commands: { exportPptx(uri: vscode.Uri): Promise<void>; renderReference(uri: vscode.Uri, slideIndex: number): Promise<vscode.Uri | null>; newFromLayout(layout: string): Promise<void> },
-  ) {}
+  ) {
+    // A merge request revision opened from the companion lends its discussions to the local copy.
+    vscode.workspace.textDocuments.forEach(trackMrRevision);
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument((d) => {
+        if (!trackMrRevision(d)) return;
+        for (const p of this.allPanels()) {
+          if (p.document.uri.scheme !== 'file' || mrTwin(p.document.uri)?.toString() !== d.uri.toString()) continue;
+          void this.pushDocument(p);
+          void this.relayReview(p.document, (m) => p.panel.webview.postMessage(m), { action: 'load' });
+        }
+      }),
+    );
+  }
 
   async getMaster(fileUri: vscode.Uri): Promise<MasterCache | null> {
     const dir = findMasterDir(localPath(fileUri));
@@ -65,6 +80,182 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     const entry = { dir, master: await loadMaster(json), mtime };
     this.masters.set(dir, entry);
     return entry;
+  }
+
+  /** Write the corporate master after a visual edit; every deck using it is refreshed. */
+  private async writeMaster(dir: string, master: CorporateMaster): Promise<void> {
+    await writeFile(join(dir, 'corporate-master.json'), JSON.stringify(master, null, 2) + '\n', 'utf8');
+    await writeFile(join(dir, 'layouts.json'), JSON.stringify(master.layouts, null, 2) + '\n', 'utf8');
+    this.masters.delete(dir);
+    for (const p of this.allPanels()) if (findMasterDir(localPath(p.document.uri)) === dir) void this.pushDocument(p);
+  }
+
+  /** New layout in the corporate master; the slide switches to it (a blank layout gets a new slide). */
+  private async createLayout(state: PanelState, msg: Extract<WebviewMessage, { type: 'createLayout' }>, send: (m: HostMessage) => void): Promise<void> {
+    const { document, kind } = state;
+    const m = await this.getMaster(document.uri);
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    const { doc } = this.parse(document, kind, m.master);
+    const slide = doc.slides.find((s) => s.id === msg.slideId);
+    if (!slide) throw new Error(tr(`Diapositive « ${msg.slideId} » introuvable`, `Slide “${msg.slideId}” not found`));
+    const master = structuredClone(m.master);
+    const id = uniqueId(slugify(msg.name), master.layouts.flatMap((l) => [l.id, ...l.aliases]));
+    const made = newLayout(master, slide, msg.from, id, msg.name);
+    // Slide pictures become master assets (copied next to the master: the layout must not depend on the deck).
+    const local = localPath(document.uri);
+    const root = projectRootOf(m.dir);
+    let n = 0;
+    for (const im of made.images) {
+      const obj = made.layout.objects[im.index]!;
+      const src = resolveImage(dirname(local), renderedImageSrc(im.src), root);
+      if (!src || !existsSync(src)) {
+        obj.hidden = true;
+        continue;
+      }
+      const assetId = `${id}-${++n}`;
+      const file = `assets/${assetId}${extname(src).toLowerCase()}`;
+      await mkdir(join(m.dir, 'assets'), { recursive: true });
+      await copyFile(src, join(m.dir, file));
+      master.assets.push({ id: assetId, file, originalPart: '', format: extname(src).slice(1).toLowerCase() });
+      (obj.object.image as Record<string, unknown>).path = file;
+      obj.assetId = assetId;
+    }
+    master.layouts.push(made.layout);
+    master.masters.find((x) => x.id === made.layout.masterId)?.layoutIds.push(id);
+    await this.writeMaster(m.dir, master);
+    const ms: Mutation[] =
+      msg.from === 'blank'
+        ? [{ kind: 'addSlide', slideId: uniqueId('slide', doc.slides.map((s) => s.id)), layout: id, afterSlideId: slide.id }]
+        : [
+            { kind: 'setSlideLayout', slideId: slide.id, layout: id },
+            // The slide's master overrides are part of the new layout now.
+            ...Object.keys(slide.masterOverrides ?? {}).map((k) => ({ kind: 'setMasterOverride' as const, slideId: slide.id, index: Number(k), override: null })),
+            ...made.converted.map((elementId) => ({ kind: 'deleteElement' as const, slideId: slide.id, elementId })),
+          ];
+    if (document.uri.scheme === 'file') {
+      const error = await this.applyTransaction(document, kind, ms);
+      if (error) throw new Error(error);
+    }
+    send({ type: 'notice', level: 'info', message: tr(`Disposition « ${msg.name} » ajoutée au masque (${id}).`, `Layout “${msg.name}” added to the master (${id}).`) });
+  }
+
+  /** Layout designer save: the layout replaces its master version; this deck's master overrides follow their objects. */
+  private async saveLayout(state: PanelState, msg: Extract<WebviewMessage, { type: 'saveLayout' }>): Promise<void> {
+    const { document, kind } = state;
+    const m = await this.getMaster(document.uri);
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    if (!m.master.layouts.some((l) => l.id === msg.layout.id)) throw new Error(tr(`Disposition « ${msg.layout.id} » introuvable`, `Layout “${msg.layout.id}” not found`));
+    const master = { ...m.master, layouts: m.master.layouts.map((l) => (l.id === msg.layout.id ? msg.layout : l)) };
+    const { doc } = this.parse(document, kind, m.master);
+    await this.writeMaster(m.dir, master);
+    const ms: Mutation[] = [];
+    for (const s of doc.slides) {
+      const ovs = s.masterOverrides;
+      if (!ovs || findLayout(m.master, s.layout)?.id !== msg.layout.id) continue;
+      const moved = Object.entries(ovs).map(([k, ov]) => [k, msg.indexMap[k] ?? null, ov] as const);
+      if (moved.every(([k, to]) => String(to) === k)) continue;
+      for (const [k] of moved) ms.push({ kind: 'setMasterOverride', slideId: s.id, index: Number(k), override: null });
+      for (const [, to, ov] of moved) if (to !== null) ms.push({ kind: 'setMasterOverride', slideId: s.id, index: to, override: ov });
+    }
+    if (ms.length && document.uri.scheme === 'file') {
+      const error = await this.applyTransaction(document, kind, ms);
+      if (error) throw new Error(error);
+    }
+  }
+
+  /** Delete a slide master with all its layouts, after a modal warning and the master's name typed back. */
+  private async deleteMaster(state: PanelState, msg: Extract<WebviewMessage, { type: 'deleteMaster' }>, send: (m: HostMessage) => void): Promise<void> {
+    const { document, kind } = state;
+    const m = await this.getMaster(document.uri);
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    const target = m.master.masters.find((x) => x.id === msg.masterId);
+    if (!target) throw new Error(tr(`Masque « ${msg.masterId} » introuvable`, `Master “${msg.masterId}” not found`));
+    const others = m.master.masters.filter((x) => x !== target);
+    if (!others.length) throw new Error(tr('Impossible de supprimer le seul masque du modèle.', 'Cannot delete the only master of the template.'));
+    const doomed = new Set(m.master.layouts.filter((l) => l.masterId === target.id).map((l) => l.id));
+    const kept = m.master.layouts.filter((l) => !doomed.has(l.id));
+    const { doc } = this.parse(document, kind, m.master);
+    const users = doc.slides.filter((s) => doomed.has(findLayout(m.master, s.layout)?.id ?? ''));
+    const yes = tr('Supprimer définitivement', 'Delete permanently');
+    const ok = await vscode.window.showWarningMessage(
+      tr(`Supprimer le masque « ${target.name} » et ses ${doomed.size} dispositions ?`, `Delete master “${target.name}” and its ${doomed.size} layouts?`),
+      {
+        modal: true,
+        detail: tr(
+          `Cette action modifie le masque corporate partagé (corporate-master.json) et ne peut pas être annulée depuis l’éditeur. ${users.length} diapositive(s) de cette présentation changeront de disposition ; les autres présentations utilisant ces dispositions seront en erreur.`,
+          `This changes the shared corporate master (corporate-master.json) and cannot be undone from the editor. ${users.length} slide(s) of this presentation will change layout; other presentations using these layouts will report errors.`,
+        ),
+      },
+      yes,
+    );
+    if (ok !== yes) return;
+    const typed = await vscode.window.showInputBox({
+      title: tr('Confirmer la suppression du masque', 'Confirm master deletion'),
+      prompt: tr(`Tapez « ${target.name} » pour confirmer`, `Type “${target.name}” to confirm`),
+      ignoreFocusOut: true,
+      validateInput: (v) => (v === target.name ? null : tr('Le nom ne correspond pas', 'The name does not match')),
+    });
+    if (typed !== target.name) return;
+    const master = structuredClone(m.master);
+    master.masters = master.masters.filter((x) => x.id !== target.id);
+    master.layouts = master.layouts.filter((l) => !doomed.has(l.id));
+    if (!master.masters.some((x) => x.primary)) master.masters[0]!.primary = true;
+    // Slides move to the layout of the same name in the remaining masters, else the primary master's first layout.
+    const primary = master.masters.find((x) => x.primary)!;
+    const fallback = kept.find((l) => l.masterId === primary.id) ?? kept[0]!;
+    await this.writeMaster(m.dir, master);
+    const ms: Mutation[] = users.flatMap((s) => {
+      const name = findLayout(m.master, s.layout)?.name;
+      const to = kept.find((l) => l.name === name) ?? fallback;
+      return [{ kind: 'setSlideLayout' as const, slideId: s.id, layout: to.id }, ...Object.keys(s.masterOverrides ?? {}).map((k) => ({ kind: 'setMasterOverride' as const, slideId: s.id, index: Number(k), override: null }))];
+    });
+    if (ms.length && document.uri.scheme === 'file') {
+      const error = await this.applyTransaction(document, kind, ms);
+      if (error) throw new Error(error);
+    }
+    send({ type: 'notice', level: 'info', message: tr(`Masque « ${target.name} » supprimé (${doomed.size} dispositions).`, `Master “${target.name}” deleted (${doomed.size} layouts).`) });
+  }
+
+  /** Rename or (after confirmation) delete a layout; this deck's slides follow. */
+  private async editLayout(state: PanelState, msg: Extract<WebviewMessage, { type: 'renameLayout' | 'deleteLayout' }>, send: (m: HostMessage) => void): Promise<void> {
+    const { document, kind } = state;
+    const m = await this.getMaster(document.uri);
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    const master = structuredClone(m.master);
+    const layout = master.layouts.find((l) => l.id === msg.layoutId);
+    if (!layout) throw new Error(tr(`Disposition « ${msg.layoutId} » introuvable`, `Layout “${msg.layoutId}” not found`));
+    const { doc } = this.parse(document, kind, m.master);
+    const users = doc.slides.filter((s) => findLayout(m.master, s.layout)?.id === msg.layoutId);
+    let target: string;
+    if (msg.type === 'renameLayout') {
+      if (master.layouts.some((l) => l !== layout && (l.id === msg.newId || l.aliases.includes(msg.newId))))
+        throw new Error(tr(`Identifiant « ${msg.newId} » déjà utilisé`, `Identifier “${msg.newId}” already used`));
+      target = msg.newId;
+      layout.aliases = [...new Set([...layout.aliases.filter((a) => a !== msg.newId), layout.id])];
+      layout.id = msg.newId;
+      for (const x of master.masters) x.layoutIds = x.layoutIds.map((id) => (id === msg.layoutId ? msg.newId : id));
+    } else {
+      const others = master.layouts.filter((l) => l !== layout);
+      const fallback = others.find((l) => l.masterId === layout.masterId) ?? others[0];
+      if (!fallback) throw new Error(tr('Impossible de supprimer la dernière disposition du masque.', 'Cannot delete the last layout of the master.'));
+      const yes = tr('Supprimer', 'Delete');
+      const detail = users.length
+        ? tr(`${users.length} diapositive(s) de cette présentation passeront sur « ${fallback.name} ». Les autres présentations utilisant cette disposition seront en erreur.`, `${users.length} slide(s) of this presentation will switch to “${fallback.name}”. Other presentations using this layout will report errors.`)
+        : tr('Les autres présentations utilisant cette disposition seront en erreur.', 'Other presentations using this layout will report errors.');
+      const ok = await vscode.window.showWarningMessage(tr(`Supprimer la disposition « ${layout.name} » (${layout.id}) du masque corporate ?`, `Delete layout “${layout.name}” (${layout.id}) from the corporate master?`), { modal: true, detail }, yes);
+      if (ok !== yes) return;
+      target = fallback.id;
+      master.layouts = others;
+      for (const x of master.masters) x.layoutIds = x.layoutIds.filter((id) => id !== layout.id);
+    }
+    await this.writeMaster(m.dir, master);
+    const ms: Mutation[] = users.map((s) => ({ kind: 'setSlideLayout', slideId: s.id, layout: target }));
+    if (msg.type === 'deleteLayout') for (const s of users) for (const k of Object.keys(s.masterOverrides ?? {})) ms.push({ kind: 'setMasterOverride', slideId: s.id, index: Number(k), override: null });
+    if (ms.length && document.uri.scheme === 'file') {
+      const error = await this.applyTransaction(document, kind, ms);
+      if (error) throw new Error(error);
+    }
+    send({ type: 'notice', level: 'info', message: msg.type === 'renameLayout' ? tr(`Disposition renommée en « ${target} ».`, `Layout renamed to “${target}”.`) : tr(`Disposition « ${layout.id} » supprimée.`, `Layout “${layout.id}” deleted.`) });
   }
 
   private *allPanels(): Iterable<PanelState> {
@@ -219,7 +410,8 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
       diags = validateDocument(doc, m.master, fsValidateOptions(local, root));
       if (document.uri.scheme === 'file') this.publishDiagnostics(document, diags, errors);
     }
-    const mr = mrRef(document.uri);
+    const twin = mrTwin(document.uri);
+    const mr = mrRef(document.uri) ?? (twin ? mrRef(twin) : undefined);
     panel.webview.postMessage({
       type: 'document',
       version: document.version,
@@ -284,7 +476,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'ready': {
           await this.pushDocument(state);
           await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null);
-          if (mrRef(document.uri)) void this.relayReview(document, send, { action: 'load' });
+          if (mrRef(document.uri) || mrTwin(document.uri)) void this.relayReview(document, send, { action: 'load' });
           break;
         }
         case 'mutate': {
@@ -334,6 +526,32 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'openSource':
           await vscode.commands.executeCommand('vscode.openWith', document.uri, 'default', panel.viewColumn);
           break;
+        case 'editMaster': {
+          if (readOnly) break;
+          const m = await this.getMaster(document.uri);
+          if (m) await this.writeMaster(m.dir, patchMasterObjects(m.master, msg.layoutId, msg.index, msg.patch));
+          break;
+        }
+        case 'createLayout':
+          if (!readOnly) await this.createLayout(state, msg, send);
+          break;
+        case 'saveLayout':
+          if (!readOnly) await this.saveLayout(state, msg);
+          break;
+        case 'deleteMaster':
+          if (!readOnly) await this.deleteMaster(state, msg, send);
+          break;
+        case 'renameLayout':
+        case 'deleteLayout':
+          if (!readOnly) await this.editLayout(state, msg, send);
+          break;
+        case 'presentation':
+          // Zen mode is full screen with the editor alone; toggled back when the show ends.
+          if (msg.active !== state.zen) {
+            state.zen = msg.active;
+            await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+          }
+          break;
         case 'reveal': {
           const m = await this.getMaster(document.uri);
           const { doc } = this.parse(document, kind, m?.master ?? null);
@@ -353,6 +571,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'pasteImage': {
           if (readOnly) break;
           const ext = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg' }[msg.mime];
+          if (msg.slideId === DESIGN_SLIDE_ID) {
+            await this.designImages(document, [{ name: `colle.${ext}`, data: Buffer.from(msg.data, 'base64') }], send);
+            break;
+          }
           const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
           const file = join(dirname(document.uri.fsPath), 'images', `colle-${stamp}.${ext}`);
           await mkdir(dirname(file), { recursive: true });
@@ -369,9 +591,14 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
             send({ type: 'pasteFallback' });
             break;
           }
-          // Pictures go to images/ next to the deck, like pasted images.
+          // Pictures go to images/ next to the deck, like pasted images (to the master's assets in the layout designer).
           const stamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
           const names = new Map<string, string>();
+          if (msg.slideId === DESIGN_SLIDE_ID) {
+            const srcs = await this.addMasterAssets(document, conv.media.map((md) => ({ name: md.name, data: md.data })));
+            conv.media.forEach((md, i) => names.set(`media/${md.name}`, srcs[i]!));
+            conv.media.length = 0;
+          }
           for (const md of conv.media) {
             const name = `ppt-${stamp}-${md.name}`;
             await mkdir(join(dirname(document.uri.fsPath), 'images'), { recursive: true });
@@ -487,11 +714,17 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     const { document, kind } = state;
     const file = this.diagramPath(document, msg.path);
     const title = basename(file, '.gmc').replace(/[-_]+/g, ' ');
-    if (msg.create) await createGmc(file, msg.template ?? 'context', title.charAt(0).toUpperCase() + title.slice(1));
+    if (msg.create) await createGmc(file, title.charAt(0).toUpperCase() + title.slice(1));
     else if (!existsSync(file)) throw new Error(tr(`Diagramme introuvable : ${msg.path}`, `Diagram not found: ${msg.path}`));
 
     const m = await this.getMaster(document.uri);
     if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    if (msg.slideId === DESIGN_SLIDE_ID) {
+      // A layout cannot depend on the deck: the diagram's current rendering is copied into the master.
+      await renderGmc(file);
+      const png = renderedImageSrc(file);
+      return this.designImages(document, [{ name: basename(png), data: readFileSync(png), alt: title }], send);
+    }
     const { doc } = this.parse(document, kind, m.master);
     const slide = doc.slides.find((s) => s.id === msg.slideId);
     if (!slide) throw new Error(tr('Diapositive introuvable.', 'Slide not found.'));
@@ -536,9 +769,49 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     }
   }
 
+  /** Files copied into the corporate master's assets; returns their `@master/<id>` sources. */
+  private async addMasterAssets(document: vscode.TextDocument, files: { name: string; data: Uint8Array }[]): Promise<string[]> {
+    const m = await this.getMaster(document.uri);
+    if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+    if (!files.length) return [];
+    const master = structuredClone(m.master);
+    await mkdir(join(m.dir, 'assets'), { recursive: true });
+    const out: string[] = [];
+    for (const f of files) {
+      const ext = extname(f.name).toLowerCase();
+      const id = uniqueId(slugify(basename(f.name, ext)) || 'image', master.assets.map((a) => a.id));
+      const file = `assets/${id}${ext}`;
+      await writeFile(join(m.dir, file), f.data);
+      master.assets.push({ id, file, originalPart: '', format: ext.slice(1) });
+      out.push(masterAssetSrc(id));
+    }
+    await this.writeMaster(m.dir, master);
+    return out;
+  }
+
+  /** Layout designer: pictures become master assets, then elements the webview adds to the layout. */
+  private async designImages(document: vscode.TextDocument, files: { name: string; data: Uint8Array; alt?: string }[], send: (m: HostMessage) => void): Promise<void> {
+    const m = await this.getMaster(document.uri);
+    if (!m) return;
+    const srcs = await this.addMasterAssets(document, files);
+    const W = m.master.dimensions.width, H = m.master.dimensions.height;
+    const elements = files.map((f, i) => {
+      let w = 4, h = 3;
+      try {
+        const d = imageSize(f.data);
+        if (d.width && d.height) h = round(w * (d.height / d.width));
+      } catch {
+        /* keep default box */
+      }
+      return { id: 'image', type: 'image' as const, src: srcs[i]!, x: round((W - w) / 2), y: round((H - h) / 2), w, h, ...(f.alt ? { alt: f.alt } : {}) };
+    });
+    send({ type: 'pasteElements', elements, warnings: [] });
+  }
+
   private async insertImage(document: vscode.TextDocument, kind: SourceKind, slideId: string, send: (m: HostMessage) => void) {
     const picked = await vscode.window.showOpenDialog({ canSelectMany: false, filters: { Images: ['png', 'jpg', 'jpeg', 'gif', 'svg'] }, title: tr('Insérer une image', 'Insert a picture') });
     if (!picked?.[0]) return;
+    if (slideId === DESIGN_SLIDE_ID) return this.designImages(document, [{ name: basename(picked[0].fsPath), data: readFileSync(picked[0].fsPath), alt: basename(picked[0].fsPath, extname(picked[0].fsPath)) }], send);
     const srcDir = dirname(document.uri.fsPath);
     let file = picked[0].fsPath;
     // Images outside the presentation folder are copied next to it so the deck stays self-contained.

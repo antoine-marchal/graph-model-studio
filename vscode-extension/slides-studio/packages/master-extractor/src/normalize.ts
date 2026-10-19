@@ -1,6 +1,6 @@
 import type { AssetDef, Constraints, CorporateMaster, LayoutDef, LevelStyle, PlaceholderDef, StaticObject } from '@corporate-slides/core';
 import { PALETTE_VARIANTS, RULES, THEME_SLOTS, staticObjectBox, type Box } from '@corporate-slides/core';
-import type { PackageInventory, PictureInfo } from './ooxml.js';
+import type { OutlineInfo, PackageInventory, PictureInfo } from './ooxml.js';
 import { tr } from '@corporate-slides/core';
 
 /** Shape of `pptx-masters` `extract()` output that we rely on (verified against v0.1.1). */
@@ -87,6 +87,25 @@ const PH_TYPE: Record<string, PlaceholderDef['type']> = {
   dgm: 'other',
 };
 const FOOTER_TYPES = new Set(['dt', 'ftr', 'sldNum', 'hdr']);
+const SCHEME_SLOT: Record<string, string> = { tx1: 'dk1', bg1: 'lt1', tx2: 'dk2', bg2: 'lt2' };
+
+/** Literal RRGGBB of an outline color, applying the scheme luminance modifiers (HSL, as PowerPoint). */
+export function outlineHex(c: OutlineInfo['color'], theme: Record<string, string>): string | undefined {
+  if ('srgb' in c) return c.srgb;
+  const base = theme[SCHEME_SLOT[c.scheme] ?? c.scheme];
+  if (!base) return undefined;
+  if (c.lumMod === undefined && c.lumOff === undefined) return base.toUpperCase();
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(base.slice(i, i + 2), 16) / 255) as [number, number, number];
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let l = (max + min) / 2;
+  const d = max - min;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  const hue = d === 0 ? 0 : max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  l = Math.min(1, Math.max(0, l * (c.lumMod ?? 1) + (c.lumOff ?? 0)));
+  const C = (1 - Math.abs(2 * l - 1)) * sat, X = C * (1 - Math.abs((hue % 2) - 1)), m = l - C / 2;
+  const [r1, g1, b1] = hue < 1 ? [C, X, 0] : hue < 2 ? [X, C, 0] : hue < 3 ? [0, C, X] : hue < 4 ? [0, X, C] : hue < 5 ? [X, 0, C] : [C, 0, X];
+  return [r1, g1, b1].map((v) => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
 
 interface BuildInput {
   r: PptxMastersResult;
@@ -151,6 +170,12 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
       // match by name + geometry because names are not unique (e.g. two "Espace réservé du contenu 2").
       const opt = phOptions.find((o) => o.name === p.name && Math.abs((o.x as number) - p.position!.x) < 0.001 && Math.abs((o.y as number) - p.position!.y) < 0.001) ?? {};
       const titleLvl = ts.title?.[1]?.defaultRunProps;
+      // Outline drawn on the layout placeholder, else on the master placeholder of the same type.
+      const nearPh = (q: PictureInfo) => q.ph && Math.abs(q.x - p.position!.x) < 0.01 && Math.abs(q.y - p.position!.y) < 0.01;
+      const samePh = (q: PictureInfo) => q.ph && q.ph.type === (p.type ?? 'body') && (q.ph.idx === p.idx || !p.idx || p.type === 'title' || p.type === 'ctrTitle');
+      const masterType = ({ ctrTitle: 'title', subTitle: 'body', obj: 'body' } as Record<string, string>)[p.type ?? ''] ?? p.type ?? 'body';
+      const phLine = (pictures.get(l._file) ?? []).find((q) => q.line && (nearPh(q) || samePh(q)))?.line ?? (pictures.get(mPart) ?? []).find((q) => q.line && q.ph?.type === masterType)?.line;
+      const outline = phLine && phLine !== 'none' ? outlineHex(phLine.color, r.themeColors) : undefined;
       const bodyLevels = toLevels(type === 'title' ? null : ts.body, p.textProps?.lstStyleProps);
       return {
         key,
@@ -169,6 +194,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
           align: opt.align as PlaceholderDef['style']['align'],
           valign: opt.valign === 'middle' || opt.valign === 'bottom' || opt.valign === 'top' ? opt.valign : undefined,
           margin: Array.isArray(opt.margin) && opt.margin.length === 4 ? (opt.margin as number[]) : undefined,
+          ...(outline && phLine !== 'none' ? { line: outline, lineWidth: phLine!.width, ...(phLine!.dash ? { dash: phLine!.dash } : {}) } : {}),
         },
         levels: type === 'title' ? undefined : bodyLevels,
       };
@@ -209,6 +235,14 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
         if (box && box.w * box.h < 6 && (box.x < 2 || box.x + box.w > W - 3) && (box.y < 1.8 || box.y + box.h > H - 1)) role = 'logo';
       }
       if (kind === 'text' && box) {
+        // pptx-masters drops text box outlines: recover them from the part (matched by geometry).
+        const ln = partShapes.find((q) => q.kind === 'sp' && q.line && q.line !== 'none' && same(q))?.line;
+        const hexLine = ln && ln !== 'none' ? outlineHex(ln.color, r.themeColors) : undefined;
+        if (ln && ln !== 'none' && hexLine) {
+          const opts = (obj.text!.options ?? {}) as Record<string, unknown>;
+          opts.line = { color: hexLine, width: ln.width, ...(ln.dash ? { dashType: ln.dash === 'dot' ? 'sysDot' : 'dash' } : {}) };
+          obj.text!.options = opts;
+        }
         const ph = footerPhs.find((p) => p.position && Math.abs(p.position.x - box.x) < 0.01 && Math.abs(p.position.y - box.y) < 0.01);
         if (ph) {
           role = ph.type === 'dt' ? 'date' : 'footer';

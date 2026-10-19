@@ -5,6 +5,7 @@ import { Document, isMap, isSeq, parseDocument, YAMLMap, YAMLSeq } from 'yaml';
 import type { Root, RootContent, PhrasingContent, Table } from 'mdast';
 import {
   applyToDocument,
+  assertFreeId,
   formatInline,
   isPlainRepresentable,
   MutationError,
@@ -12,6 +13,7 @@ import {
   paragraphsToContent,
   paragraphsToMarkdown,
   reorderIds,
+  withMasterOverride,
   SlideDocument,
   SlideElement,
   type Mutation,
@@ -61,7 +63,7 @@ export interface MdModel {
   slides: MdSlide[];
 }
 
-const SLIDE_FM_KEYS = new Set(['id', 'layout', 'notes', 'hidden', 'elements']);
+const SLIDE_FM_KEYS = new Set(['id', 'layout', 'notes', 'hidden', 'masterOverrides', 'elements']);
 const DOC_FM_KEYS = new Set(['title', 'author', 'subject', 'footer', 'date', 'master', 'theme', 'constraints']);
 const SEP_RE = /^---[ \t]*$/;
 const FENCE_RE = /^\s*(```|~~~)/;
@@ -417,6 +419,7 @@ export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResul
       layout: String(s.fm?.data.layout ?? 'content'),
       ...(d.notes ? { notes: d.notes } : {}),
       ...(s.fm?.data.hidden ? { hidden: true } : {}),
+      ...(s.fm?.data.masterOverrides ? { masterOverrides: s.fm.data.masterOverrides as SlideNode['masterOverrides'] } : {}),
       elements: d.elements,
       source: { kind: 'markdown', startLine, endLine: lineOf(Math.max(s.bodyStart, s.end - 1)) },
     };
@@ -659,6 +662,37 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       }
       return out;
     }
+    case 'renameElement': {
+      const si = slideIndex(model, m.slideId);
+      assertFreeId(current.slides[si]!, m.newId);
+      const block = parsedModel.slides[si]!.blocks.find((b) => b.elementId === m.elementId);
+      // Frontmatter entry (override or full definition) follows the new id.
+      const renameFm = (t: string) =>
+        Array.isArray(buildMdModel(t).slides[si]?.fm?.data.elements) ? editSlideFm(t, si, (d) => fmEntry(d, m.elementId, false)?.set('id', m.newId)) : t;
+      if (!block) return renameFm(text);
+      const r = block.ranges[0]!;
+      if (block.kind === 'title' || block.kind === 'image') return renameFm(splice(text, r, `${text.slice(r.start, r.end).replace(ID_SUFFIX_RE, '')} {#${m.newId}}`));
+      if (block.kind === 'slot') {
+        const eol = text.indexOf('\n', r.start);
+        const end = eol < 0 ? r.end : text[eol - 1] === '\r' ? eol - 1 : eol;
+        const name = SLOT_OPEN_RE.exec(text.slice(r.start, end))?.[1] ?? m.elementId;
+        return renameFm(splice(text, { start: r.start, end }, `::: ${name} {#${m.newId}}`));
+      }
+      // Subtitle, body, table: no id syntax in Markdown → full definition in the slide frontmatter.
+      const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
+      if (!cur) throw new MutationError(`${tr('Élément introuvable', 'Element not found')} : ${m.elementId}`);
+      const { source: _s, ...el } = cur as SlideElement & { source?: unknown };
+      let out = text;
+      for (const rr of [...block.ranges].sort((a, b) => b.start - a.start)) {
+        const after = /^[ \t]*\r?\n?[ \t]*\r?\n?/.exec(out.slice(rr.end))![0];
+        out = splice(out, { start: rr.start, end: rr.end + after.length }, '');
+      }
+      return editSlideFm(out, si, (d) => {
+        const seq = fmElementsSeq(d);
+        seq.items = seq.items.filter((n) => !(isMap(n) && String(n.get('id')) === m.elementId));
+        seq.add(d.createNode(elementToDsl({ ...(el as SlideElement), id: m.newId })));
+      });
+    }
     case 'reorderElement': {
       const si = slideIndex(model, m.slideId);
       const order = reorderIds(current.slides[si]!, m.elementId, m.direction);
@@ -708,6 +742,11 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       if (slot) return splice(text, slot.inner!, m.notes ? m.notes.replace(/\n*$/, '\n') : '');
       return editSlideFm(text, si, (d) => (m.notes ? d.set('notes', m.notes) : d.delete('notes')));
     }
+    case 'setMasterOverride': {
+      const si = slideIndex(model, m.slideId);
+      const next = withMasterOverride(current.slides[si]?.masterOverrides, m.index, m.override);
+      return editSlideFm(text, si, (d) => (next ? d.set('masterOverrides', d.createNode(next)) : d.delete('masterOverrides')));
+    }
   }
 }
 
@@ -744,6 +783,7 @@ export function documentToDeck(doc: SlideDocument): string {
     const head: Record<string, unknown> = { id: s.id, layout: s.layout };
     if (s.hidden) head.hidden = true;
     if (s.notes) head.notes = s.notes;
+    if (s.masterOverrides) head.masterOverrides = s.masterOverrides;
     const title = s.elements.find((e) => e.id === 'title' && e.type === 'text' && e.placeholder === 'title' && e.paragraphs.length === 1 && isPlainRepresentable(e.paragraphs) && !e.paragraphs[0]!.list);
     const rest: Record<string, unknown>[] = [];
     const slots: string[] = [];

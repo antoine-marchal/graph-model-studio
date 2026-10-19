@@ -12,10 +12,38 @@ import { anchorOf } from './Review';
 import { installClipboard, pasteHostText, pastePowerPointElements, pastePowerPointFallback } from './clipboard';
 import { Icon } from './icons';
 import { ContextMenu } from './ContextMenu';
+import { Presentation, startSlideShow } from './Presentation';
 import { tr } from '@corporate-slides/core';
 
 export function App({ mode }: { mode: 'editor' | 'masters' }) {
   const [masters, setMasters] = useState<Extract<HostMessage, { type: 'masters' }> | null>(null);
+
+  // Pointer handlers (canvas drags…) often preventDefault, which keeps the focus in a panel field:
+  // any press outside the focused field blurs it, so its edit is committed without Enter.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      const a = document.activeElement;
+      if (!(a instanceof HTMLInputElement || a instanceof HTMLTextAreaElement || a instanceof HTMLSelectElement)) return;
+      if (!(a.closest('.numfield') ?? a).contains(e.target as Node)) a.blur();
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    // Layout designer: undo / redo are the designer's own (VS Code's would undo the presentation).
+    const onKey = (e: KeyboardEvent) => {
+      const st = useEditor.getState();
+      if (!st.design || !(e.ctrlKey || e.metaKey) || st.editingId) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'z' && k !== 'y') return;
+      if ((e.target as HTMLElement).closest?.('input, textarea, [contenteditable="true"]')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      st.designUndo(k === 'y' || e.shiftKey);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, []);
 
   useEffect(() => {
     const off = onHostMessage((m) => {
@@ -86,7 +114,14 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
     // Keep the other side of a diff view on the same slide.
     const offSync = useEditor.subscribe((s, prev) => s.slideId && s.slideId !== prev.slideId && post({ type: 'slideShown', slideId: s.slideId }));
     const offClipboard = installClipboard();
-    return () => (off(), offClipboard(), offSync());
+    // F5: slide show from the beginning, Shift+F5: from the current slide (as in PowerPoint).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'F5' || useEditor.getState().presenting || !useEditor.getState().doc) return;
+      e.preventDefault();
+      startSlideShow(e.shiftKey);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => (off(), offClipboard(), offSync(), window.removeEventListener('keydown', onKey));
   }, []);
 
   if (mode === 'masters') return masters ? <MasterBrowser data={masters} /> : <div className="loading">{tr('Chargement des masques…', 'Loading masters…')}</div>;
@@ -138,6 +173,7 @@ function Editor() {
         <main className={`center${notesOpen ? ' with-notes' : ''}`}>
           <div className="canvas-area">
             <Canvas />
+            <MasterBanner />
             <Notices />
             <Reference />
           </div>
@@ -149,6 +185,37 @@ function Editor() {
       <GmcDialog />
       <GmcEditor />
       <ContextMenu />
+      <Presentation />
+    </div>
+  );
+}
+
+/** Reminder of the master editing mode and its scope, with a way out. */
+function MasterBanner() {
+  const mode = useEditor((s) => s.masterEdit);
+  const design = useEditor((s) => s.design);
+  if (!mode) return null;
+  if (design)
+    return (
+      <div className="master-banner" role="status" data-testid="master-banner">
+        <Icon name="masterEdit" />
+        <span>
+          {tr('Conception de la disposition', 'Designing layout')} <code>{design.base.name}</code> — {tr('toutes les diapositives qui l’utilisent sont modifiées.', 'every slide using it changes.')}
+        </span>
+        <span className="grow" />
+        <button type="button" className="btn" data-testid="close-master-edit" onClick={() => useEditor.getState().exitDesign()}>{tr('Fermer le mode masque', 'Close master view')}</button>
+      </div>
+    );
+  return (
+    <div className="master-banner" role="status" data-testid="master-banner">
+      <Icon name="masterEdit" />
+      <span>
+        {mode === 'all'
+          ? tr('Modification du masque — toutes les diapositives utilisant ce masque sont modifiées.', 'Editing the master — every slide using this master changes.')
+          : tr('Modification du masque — pour cette diapositive uniquement.', 'Editing the master — for this slide only.')}
+      </span>
+      <span className="grow" />
+      <button type="button" className="btn" data-testid="close-master-edit" onClick={() => useEditor.getState().set({ masterEdit: null, masterSel: null })}>{tr('Fermer le mode masque', 'Close master view')}</button>
     </div>
   );
 }

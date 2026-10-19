@@ -1,11 +1,13 @@
 import { Document, isMap, isSeq, LineCounter, parseDocument, Scalar, YAMLMap, YAMLSeq, stringify, type Node } from 'yaml';
 import {
+  assertFreeId,
   contentToParagraphs,
   isPlainRepresentable,
   MutationError,
   normalizePatch,
   paragraphsToContent,
   reorderIds,
+  withMasterOverride,
   SlideDocument,
   SlideElement,
   type Mutation,
@@ -20,7 +22,7 @@ import { formatZodError } from './types.js';
 /* DSL ⇄ canonical element conversion                                 */
 /* ------------------------------------------------------------------ */
 
-const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'content', 'paragraphs', 'src', 'alt', 'fit', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'cellRuns', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'adjust', 'style'];
+const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'group', 'content', 'paragraphs', 'src', 'alt', 'fit', 'rows', 'header', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'cellRuns', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'adjust', 'style'];
 
 /** Canonical element → plain DSL object (deterministic key order, `content` sugar when lossless). */
 export function elementToDsl(el: SlideElement): Record<string, unknown> {
@@ -62,6 +64,7 @@ export function documentToDsl(doc: SlideDocument): string {
     const o: Record<string, unknown> = { id: s.id, layout: s.layout };
     if (s.hidden) o.hidden = true;
     if (s.notes) o.notes = s.notes;
+    if (s.masterOverrides) o.masterOverrides = s.masterOverrides;
     o.elements = s.elements.map(elementToDsl);
     return o;
   });
@@ -119,6 +122,7 @@ export function parseDsl(text: string, opts: ParseOptions = {}): ParseResult {
         layout: String(raw.layout ?? 'content'),
         ...(raw.notes ? { notes: String(raw.notes) } : {}),
         ...(raw.hidden ? { hidden: true } : {}),
+        ...(raw.masterOverrides ? { masterOverrides: raw.masterOverrides as SlideNode['masterOverrides'] } : {}),
         elements,
         source: { kind: 'dsl', startLine: line(item.range?.[0]), endLine: line(item.range?.[1]) },
       });
@@ -248,6 +252,12 @@ export function applyDslMutations(text: string, model: SlideDocument, mutations:
         seq.delete(index);
         break;
       }
+      case 'renameElement': {
+        const { node: sn, index } = findSlide(d, m.slideId, current);
+        assertFreeId(current.slides[index]!, m.newId);
+        findElement(sn, m.elementId).node.set('id', m.newId);
+        break;
+      }
       case 'reorderElement': {
         const { node: sn, index } = findSlide(d, m.slideId, current);
         const order = reorderIds(current.slides[index]!, m.elementId, m.direction);
@@ -290,6 +300,13 @@ export function applyDslMutations(text: string, model: SlideDocument, mutations:
         const { node } = findSlide(d, m.slideId, current);
         if (m.notes) node.set('notes', textNode(d, m.notes));
         else node.delete('notes');
+        break;
+      }
+      case 'setMasterOverride': {
+        const { node, index } = findSlide(d, m.slideId, current);
+        const next = withMasterOverride(current.slides[index]!.masterOverrides, m.index, m.override);
+        if (next) node.set('masterOverrides', d.createNode(next));
+        else node.delete('masterOverrides');
         break;
       }
     }

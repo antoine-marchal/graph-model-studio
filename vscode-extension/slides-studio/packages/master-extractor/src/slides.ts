@@ -351,6 +351,12 @@ async function convertTree(tree: X | undefined, ctx: TreeContext): Promise<Slide
         const prst = attr(child(spPr, 'a:prstGeom'), 'prst');
         const fill = colorOf(spPr && (child(spPr, 'a:solidFill') || child(spPr, 'a:noFill')) ? spPr : undefined, master);
         const line = outline(child(spPr, 'a:ln'), master);
+        // Quick-styled shapes take their outline from the theme line the `p:style` references.
+        const lnRef = path(n, 'p:style', 'a:lnRef');
+        if (!line.line && lnRef && attr(lnRef, 'idx') !== '0' && !child(child(spPr, 'a:ln'), 'a:noFill')) {
+          const c = colorOf(lnRef, master);
+          if (c && c !== 'none') Object.assign(line, { line: c, ...(line.lineWidth ? {} : { lineWidth: 0.75 }) });
+        }
         if (child(spPr, 'a:custGeom')) warnings.push(`${where} : ${tr('forme libre', 'freeform shape')} « ${name} » ${tr('convertie en rectangle', 'converted to a rectangle')}`);
         if (child(spPr, 'a:gradFill')) warnings.push(`${where} : ${tr('dégradé de', 'gradient of')} « ${name} » ${tr('non repris', 'not kept')}`);
         if (ph) {

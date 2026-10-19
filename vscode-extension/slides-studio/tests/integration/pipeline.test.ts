@@ -196,6 +196,35 @@ describe('PPTX export of the example presentations', () => {
     expect(xml).toContain('<a:tailEnd type="triangle"');
   });
 
+  it('exports a layout designed like a slide: shapes, tables, master pictures and new placeholders in the slide layout', async () => {
+    const base = master.layouts.find((l) => l.placeholders.some((p) => p.type === 'title'))!;
+    const logo = master.assets.find((a) => /\.(png|jpe?g)$/i.test(a.file)) ?? master.assets[0]!;
+    const designed = {
+      ...base,
+      objects: [
+        ...base.objects,
+        { role: 'decoration' as const, object: { element: { id: 'star', type: 'shape', shape: 'star5', x: 11, y: 0.3, w: 1, h: 1, style: { fill: 'theme.accent2' } } } },
+        { role: 'text' as const, object: { element: { id: 'kpis', type: 'table', x: 8, y: 5, w: 4, h: 1, rows: [['KPI', 'Valeur'], ['Délai', '3 j']] } } },
+        { role: 'logo' as const, object: { element: { id: 'brand', type: 'image', src: `@master/${logo.id}`, x: 0.3, y: 6.5, w: 1, h: 0.5 } } },
+      ],
+      placeholders: [...base.placeholders, { key: 'body-9', name: 'body-9', type: 'body' as const, x: 1, y: 2, w: 5, h: 3, style: {}, prompt: 'Cliquez ici' }],
+    };
+    const m2 = { ...master, layouts: master.layouts.map((l) => (l.id === base.id ? designed : l)) };
+    const { doc } = parseSource(`slides:\n  - id: a\n    layout: ${base.id}\n    elements: []\n`, 'dsl', { dimensions: master.dimensions });
+    const output = join(ws, 'designed-layout.pptx');
+    await exportPptx(doc, m2, { output, masterDir: masterDir(), sourceDir: ws, force: true });
+    const buffer = readFileSync(output);
+    expect((await validatePackage(buffer)).ok).toBe(true);
+    const zip = await JSZip.loadAsync(buffer);
+    const layouts = await Promise.all(Object.keys(zip.files).filter((f) => /^ppt\/slideLayouts\/slideLayout\d+\.xml$/.test(f)).map((f) => zip.file(f)!.async('string')));
+    const xml = layouts.find((x) => x.includes(`name="${base.id}"`))!;
+    expect(xml).toContain('prst="star5"');
+    expect(xml).toContain('<a:tbl>');
+    expect(xml).toContain('Délai');
+    expect(xml).toMatch(/<p:pic>/);
+    expect(xml).toContain('Cliquez ici');
+  });
+
   it('blocks export on corporate errors unless forced', async () => {
     const { doc } = parseSource('slides:\n  - id: a\n    layout: does-not-exist\n    elements: []\n', 'dsl', { dimensions: master.dimensions });
     await expect(exportPptx(doc, master, { output: join(ws, 'x.pptx'), masterDir: masterDir(), sourceDir: ws })).rejects.toBeInstanceOf(BlockingDiagnosticsError);

@@ -88,6 +88,14 @@ const P: Record<string, string> = {
   clearFormat: 'M4 3.5h8M8 3.5l-2 9M10 10l4 4M14 10l-4 4',
   edit: 'M10.5 2.8l2.7 2.7-7.7 7.7H2.8v-2.7zM9 4.3l2.7 2.7',
   duplicate: 'M5.5 5.5h7v7h-7zM3.5 10.5v-7h7M9 7.5v3M7.5 9h3',
+  allCaps: 'M1 12.5l3-9 3 9M2 9.5h4M8.5 12.5l3-9 3 9M9.5 9.5h4',
+  smallCaps: 'M1 12.5l3.2-9 3.2 9M2.1 9.5h4.2M9 12.5l2.4-6.5 2.4 6.5M9.8 10.5h3.2',
+  play: 'M5 3.5v9l7.5-4.5z',
+  slideshow: 'M2 2.5h12v8.5H2zM8 11v2.5M5.5 13.5h5M6.8 4.8v3.9L10 6.75z',
+  masterEdit: 'M2.5 2.5h11v11h-11zM2.5 5.5h11M5 8.5h2.5M5 10.5h1.5M9 12l3.5-3.5 1 1L10 13H9z',
+  layoutAdd: 'M2.5 2.5h8v8h-8zM2.5 5h8M12.5 9.5v5M10 12h5',
+  group: 'M1.5 1.5h13v13h-13zM3.5 3.5h5v4h-5zM7.5 8.5h5v4h-5z',
+  ungroup: 'M2.5 2.5h6v5h-6zM7.5 8.5h6v5h-6z',
   selectAll: 'M2.5 2.5h2M6.5 2.5h3M11.5 2.5h2v2M13.5 6.5v3M13.5 11.5v2h-2M9.5 13.5h-3M4.5 13.5h-2v-2M2.5 9.5v-3M2.5 4.5v-2M5.5 5.5h5v5h-5z',
 };
 

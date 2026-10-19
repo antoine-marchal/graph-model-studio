@@ -41,6 +41,9 @@ export const ShapeKind = z.enum([
   'flowChartTerminator', 'flowChartDocument', 'wedgeRectCallout', 'circularArrow', 'line',
 ]);
 export type ShapeKind = z.infer<typeof ShapeKind>;
+/** Render-only capitalization (OOXML `cap`): small capitals or all capitals; the text keeps its case. */
+export const Caps = z.enum(['none', 'small', 'all']);
+export type Caps = z.infer<typeof Caps>;
 
 /* ------------------------------------------------------------------ */
 /* Rich text                                                           */
@@ -54,6 +57,7 @@ export const TextRun = z.object({
   color: ColorValue.optional(),
   /** Font size of the run in points (overrides the element / placeholder size). */
   size: z.number().min(4).max(400).optional(),
+  caps: Caps.optional(),
 });
 export type TextRun = z.infer<typeof TextRun>;
 
@@ -88,6 +92,7 @@ export const ElementStyle = z
     bold: z.boolean().optional(),
     italic: z.boolean().optional(),
     underline: z.boolean().optional(),
+    caps: Caps.optional(),
     align: HAlign.optional(),
     valign: VAlign.optional(),
     /** Line spacing multiple (1 = single). */
@@ -133,6 +138,8 @@ const ElementBase = {
   locked: z.boolean().optional(),
   hidden: z.boolean().optional(),
   name: z.string().max(120).optional(),
+  /** Group the element belongs to: grouped elements are selected, moved and styled together. */
+  group: Id.optional(),
   style: ElementStyle.optional(),
   source: SourceRef.optional(),
 };
@@ -234,12 +241,34 @@ export type ElementType = SlideElement['type'];
 /* Slides and document                                                 */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Change of one static object of the layout (logo, band, footer text…) on a single slide.
+ * Colors are literal RRGGBB (static objects carry literal colors) or `none`.
+ */
+export const MasterOverride = z
+  .object({
+    hidden: z.boolean().optional(),
+    x: z.number().min(-50).max(100).optional(),
+    y: z.number().min(-50).max(100).optional(),
+    w: z.number().min(0).max(100).optional(),
+    h: z.number().min(0).max(100).optional(),
+    fill: z.string().regex(/^(none|[0-9A-Fa-f]{6})$/).optional(),
+    line: z.string().regex(/^(none|[0-9A-Fa-f]{6})$/).optional(),
+    color: z.string().regex(/^[0-9A-Fa-f]{6}$/).optional(),
+    fontSize: z.number().min(4).max(400).optional(),
+    text: z.string().max(2000).optional(),
+  })
+  .strict();
+export type MasterOverride = z.infer<typeof MasterOverride>;
+
 export const SlideNode = z.object({
   id: Id,
   /** Layout id (or alias) from the corporate master. */
   layout: z.string().min(1),
   notes: z.string().optional(),
   hidden: z.boolean().optional(),
+  /** Per-slide changes of the layout's static objects, keyed by object index in `layout.objects`. */
+  masterOverrides: z.record(z.string().regex(/^\d{1,4}$/), MasterOverride).optional(),
   elements: z.array(SlideElement),
   source: SourceRef.optional(),
 });
@@ -311,6 +340,11 @@ export const PlaceholderDef = z.object({
     align: HAlign.optional(),
     valign: VAlign.optional(),
     margin: z.array(z.number()).length(4).optional(),
+    /** Outline of the placeholder box (RRGGBB), inherited by the text bound to it. */
+    line: z.string().optional(),
+    lineWidth: z.number().optional(),
+    dash: z.enum(['solid', 'dash', 'dot']).optional(),
+    fill: z.string().optional(),
   }),
   levels: z.array(LevelStyle).optional(),
   prompt: z.string().optional(),
@@ -325,6 +359,8 @@ export const StaticObject = z.object({
   assetId: z.string().optional(),
   /** Image crop as fractions of the source (from a:srcRect), when the template crops the picture. */
   crop: z.object({ l: z.number(), t: z.number(), r: z.number(), b: z.number() }).optional(),
+  /** Not drawn (removed on one slide by a master override). */
+  hidden: z.boolean().optional(),
 });
 export type StaticObject = z.infer<typeof StaticObject>;
 

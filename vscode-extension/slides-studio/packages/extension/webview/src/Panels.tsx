@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { LayoutInspector, PlaceholderSection } from './LayoutDesigner';
 import {
   findLayout,
   paletteTokens,
@@ -24,6 +25,7 @@ import { post } from './host';
 import { currentSlide, useEditor } from './store';
 import { useAssets } from './Canvas';
 import { CommentsPane, useAnchors, useDiff } from './Review';
+import { MasterInspector } from './MasterEdit';
 import { deleteMutations, ShapeSections, stepFontSize } from './Format';
 
 /* ------------------------------------------------------------------ */
@@ -96,14 +98,19 @@ export function Menu({ trigger, children, testId }: { trigger: (open: () => void
   );
 }
 
-/** Numeric field that commits on Enter/blur and accepts arrow-key stepping. */
+/** Numeric field that commits on Enter/blur, with −/+ buttons and arrow-key stepping. */
 export function NumField({ label, value, onCommit, step = 0.05, unit, testId, disabled }: { label: string; value: number | undefined; onCommit: (v: number) => void; step?: number; unit?: string; testId?: string; disabled?: boolean }) {
   const [text, setText] = useState(value === undefined ? '' : String(round4(value)));
   useEffect(() => setText(value === undefined ? '' : String(round4(value))), [value]);
+  const parsed = Number(text.replace(',', '.'));
   const commit = () => {
-    const v = Number(text.replace(',', '.'));
-    if (Number.isFinite(v) && v !== value) onCommit(v);
+    if (text.trim() && Number.isFinite(parsed) && parsed !== value) onCommit(parsed);
     else setText(value === undefined ? '' : String(round4(value)));
+  };
+  const bump = (dir: 1 | -1, big = false) => {
+    const v = round4((Number.isFinite(parsed) ? parsed : (value ?? 0)) + dir * (big ? step * 10 : step));
+    setText(String(v));
+    onCommit(v);
   };
   return (
     <label className="numfield">
@@ -119,13 +126,57 @@ export function NumField({ label, value, onCommit, step = 0.05, unit, testId, di
           if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
           if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
             e.preventDefault();
-            const v = (Number(text) || 0) + (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? step * 10 : step);
-            onCommit(round4(v));
+            bump(e.key === 'ArrowUp' ? 1 : -1, e.shiftKey);
           }
         }}
       />
       {unit && <span className="numfield-unit">{unit}</span>}
+      {!disabled && (
+        <span className="numfield-steps">
+          {([-1, 1] as const).map((d) => (
+            <button key={d} type="button" tabIndex={-1} aria-label={d < 0 ? tr('Diminuer', 'Decrease') : tr('Augmenter', 'Increase')} data-testid={testId && `${testId}-${d < 0 ? 'dec' : 'inc'}`} onMouseDown={(e) => e.preventDefault()} onClick={(e) => (e.preventDefault(), bump(d, e.shiftKey))}>
+              {d < 0 ? '−' : '+'}
+            </button>
+          ))}
+        </span>
+      )}
     </label>
+  );
+}
+
+const ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+
+/** Identifier shown in an inspector head; double-click to rename (Enter / blur commits, Escape cancels). */
+export function EditableId({ value, onRename, title, testId }: { value: string; onRename?: (id: string) => void; title?: string; testId?: string }) {
+  const [text, setText] = useState<string | null>(null);
+  if (text === null || !onRename)
+    return (
+      <code className="insp-id" title={onRename ? `${title ?? ''}${title ? ' · ' : ''}${tr('double-clic pour renommer', 'double-click to rename')}` : title} data-testid={testId} onDoubleClick={() => onRename && setText(value)}>
+        {value}
+      </code>
+    );
+  const ok = ID_RE.test(text);
+  const commit = () => {
+    setText(null);
+    if (ok && text !== value) onRename(text);
+  };
+  return (
+    <input
+      className={`input insp-id-input${ok ? '' : ' is-invalid'}`}
+      value={text}
+      autoFocus
+      spellCheck={false}
+      data-testid={testId && `${testId}-input`}
+      title={ok ? undefined : tr('Lettres, chiffres, _ et - (64 max)', 'Letters, digits, _ and - (64 max)')}
+      onFocus={(e) => e.target.select()}
+      onChange={(e) => setText(e.target.value.replace(/\s/g, '-'))}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') setText(null);
+      }}
+    />
   );
 }
 
@@ -154,10 +205,11 @@ export function AddSlideMenu({ trigger }: { trigger: (open: () => void) => React
   const { mutate, select } = useEditor.getState();
   const [query, setQuery] = useState('');
   if (!master || !doc) return null;
-  const primary = master.masters.find((m) => m.primary)?.id;
   const layouts = master.layouts
     .filter((l) => !query || `${l.name} ${l.id} ${l.aliases.join(' ')}`.toLowerCase().includes(query.toLowerCase()))
-    .sort((a, b) => (b.aliases.length ? 1 : 0) - (a.aliases.length ? 1 : 0) || (a.masterId === primary ? -1 : 1) - (b.masterId === primary ? -1 : 1));
+    .sort((a, b) => (b.aliases.length ? 1 : 0) - (a.aliases.length ? 1 : 0));
+  // Primary master first, like Design › All layouts.
+  const masters = [...master.masters].sort((a, b) => Number(b.primary) - Number(a.primary));
   return (
     <Menu
       testId="layout-menu"
@@ -166,8 +218,13 @@ export function AddSlideMenu({ trigger }: { trigger: (open: () => void) => React
       {(close) => (
         <div className="layout-picker">
           <input className="search" placeholder={tr("Rechercher une disposition…", "Search layouts…")} value={query} onChange={(e) => setQuery(e.target.value)} autoFocus aria-label={tr("Rechercher une disposition", "Search layouts")} />
+          {masters.map((m) => {
+            const group = layouts.filter((l) => l.masterId === m.id);
+            return group.length ? (
+          <section key={m.id}>
+          <h4 className="layout-group">{m.name}{m.primary ? ` · ${tr('principal', 'primary')}` : ''} <span className="hint">({group.length})</span></h4>
           <div className="layout-grid">
-            {layouts.map((l) => (
+            {group.map((l) => (
               <button
                 key={l.id}
                 className="layout-card"
@@ -189,6 +246,9 @@ export function AddSlideMenu({ trigger }: { trigger: (open: () => void) => React
               </button>
             ))}
           </div>
+          </section>
+            ) : null;
+          })}
         </div>
       )}
     </Menu>
@@ -439,17 +499,31 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
   const el = r.element;
   const layout = findLayout(master, slide.layout);
   const upd = (patch: ElementPatch) => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch }]);
+  const rename = (newId: string) => {
+    if (slide.elements.some((e) => e.id === newId)) return useEditor.getState().notify('error', tr(`Identifiant « ${newId} » déjà utilisé`, `Identifier “${newId}” already used`));
+    // Connectors attached to the element follow it.
+    const refs: Mutation[] = slide.elements.flatMap((e) =>
+      e.type === 'connector' && (e.from === el.id || e.to === el.id)
+        ? [{ kind: 'updateElement' as const, slideId: slide.id, elementId: e.id, patch: { ...(e.from === el.id ? { from: newId } : {}), ...(e.to === el.id ? { to: newId } : {}) } }]
+        : [],
+    );
+    // Layout designer: a placeholder named after its key keeps the two in step.
+    if (useEditor.getState().design && el.placeholder === el.id) refs.push({ kind: 'updateElement', slideId: slide.id, elementId: newId, patch: { placeholder: newId } });
+    mutate([{ kind: 'renameElement', slideId: slide.id, elementId: el.id, newId }, ...refs]);
+    useEditor.getState().select(slide.id, [newId]);
+  };
   const geom = (k: 'x' | 'y' | 'w' | 'h', v: number) => upd({ x: r.box.x, y: r.box.y, w: r.box.w, h: r.box.h, [k]: v });
   const TYPE_LABEL: Record<string, string> = { text: tr('Texte', 'Text'), shape: tr('Forme', 'Shape'), image: el.type === 'image' && isDiagramSrc(el.src) ? tr('Diagramme GMC', 'GMC diagram') : 'Image', table: tr('Tableau', 'Table'), connector: tr('Connecteur', 'Connector') };
   return (
     <>
       <div className="insp-head">
         <span className="insp-kind">{TYPE_LABEL[el.type]}</span>
-        <code className="insp-id" title={tr("Identifiant stable", "Stable identifier")}>{el.id}</code>
+        <EditableId value={el.id} title={tr('Identifiant stable', 'Stable identifier')} testId="element-id" onRename={rename} />
         <span className="grow" />
         <IconButton icon={el.locked ? 'lock' : 'unlock'} label={el.locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock')} active={el.locked} onClick={() => upd({ locked: !el.locked })} />
         <IconButton icon={el.hidden ? 'eyeOff' : 'eye'} label={el.hidden ? tr('Afficher', 'Show') : tr('Masquer', 'Hide')} active={el.hidden} onClick={() => upd({ hidden: !el.hidden })} />
       </div>
+      <PlaceholderSection el={el} />
 
       {el.type === 'image' && isDiagramSrc(el.src) && (
         <Section title="Graph Model Studio">
@@ -470,7 +544,7 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
 
       <ShapeSections r={r} upd={upd} />
 
-      {(el.type === 'text' || el.type === 'image') && layout && (
+      {(el.type === 'text' || el.type === 'image') && layout && !useEditor.getState().design && (
         <Section title={tr("Espace réservé", "Placeholder")}>
           <select
             className="select"
@@ -596,13 +670,16 @@ export function Inspector() {
   const master = useEditor((s) => s.master);
   const selected = useEditor((s) => s.selected);
   const pane = useEditor((s) => s.pane);
+  const masterEdit = useEditor((s) => s.masterEdit);
+  const design = useEditor((s) => !!s.design);
   if (pane === 'comments') return <CommentsPane />;
   if (!slide || !master) return <aside className="inspector" />;
+  if (masterEdit && !design) return <aside className="inspector" aria-label={tr('Masque', 'Master')}><MasterInspector /></aside>;
   const rs = resolveSlide(slide, master);
   const sel = rs.elements.filter((r) => selected.includes(r.element.id));
   return (
     <aside className="inspector" aria-label="Format">
-      {sel.length === 1 ? <ElementInspector r={sel[0]!} /> : sel.length > 1 ? <MultiInspector rs={sel} /> : <SlideInspector />}
+      {sel.length === 1 ? <ElementInspector r={sel[0]!} /> : sel.length > 1 ? <MultiInspector rs={sel} /> : design ? <LayoutInspector /> : <SlideInspector />}
     </aside>
   );
 }

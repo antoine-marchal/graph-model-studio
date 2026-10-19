@@ -128,6 +128,14 @@ export function deleteMutations(slide: SlideNode, ids: string[]): Mutation[] {
   return [...gone].map((elementId) => ({ kind: 'deleteElement', slideId: slide.id, elementId }));
 }
 
+/** Group the elements (a new group id), or with `on` false take them out of their group. */
+export function groupMutations(slide: SlideNode, ids: string[], on: boolean): Mutation[] {
+  const group = on ? uniqueId('group', slide.elements.map((e) => e.group ?? '')) : null;
+  return ids
+    .filter((id) => on || slide.elements.find((e) => e.id === id)?.group)
+    .map((elementId) => ({ kind: 'updateElement', slideId: slide.id, elementId, patch: { group } }));
+}
+
 /** New connector between two elements (straight, arrow at the end). */
 export function connectMutation(slide: SlideNode, from: string, to: string, route: 'straight' | 'elbow' | 'curved' = 'elbow'): { m: Mutation; id: string } {
   const id = uniqueId('connector', slide.elements.map((e) => e.id));
@@ -173,8 +181,20 @@ export function alignMutations(slideId: string, rs: ResolvedElement[], mode: Ali
 }
 
 /** Copies of elements offset down-right, with fresh ids (connectors are skipped). */
+/** Copied elements form new groups (a copy never joins the original's group). */
+export function freshGroups(slide: SlideNode): (group: string | undefined) => string | undefined {
+  const taken = slide.elements.map((e) => e.group ?? '');
+  const map = new Map<string, string>();
+  return (g) => {
+    if (!g) return undefined;
+    if (!map.has(g)) map.set(g, uniqueId('group', [...taken, ...map.values()]));
+    return map.get(g);
+  };
+}
+
 export function duplicateMutations(slide: SlideNode, rs: ResolvedElement[]): { ms: Mutation[]; ids: string[] } {
   const taken = slide.elements.map((x) => x.id);
+  const regroup = freshGroups(slide);
   const ids: string[] = [];
   const ms: Mutation[] = [];
   for (const r of rs) {
@@ -182,7 +202,8 @@ export function duplicateMutations(slide: SlideNode, rs: ResolvedElement[]): { m
     const id = uniqueId(r.element.type, [...taken, ...ids]);
     ids.push(id);
     const { source: _s, z: _z, ...rest } = r.element as SlideElement & { source?: unknown };
-    ms.push({ kind: 'addElement', slideId: slide.id, element: { ...rest, id, x: round4(r.box.x + 0.2), y: round4(r.box.y + 0.2), w: r.box.w, h: r.box.h } as SlideElement });
+    const group = regroup(rest.group);
+    ms.push({ kind: 'addElement', slideId: slide.id, element: { ...rest, id, ...(group ? { group } : {}), x: round4(r.box.x + 0.2), y: round4(r.box.y + 0.2), w: r.box.w, h: r.box.h } as SlideElement });
   }
   return { ms, ids };
 }
@@ -214,7 +235,7 @@ export const inlineEditor: {
 } = { current: null };
 
 /** Text-run marks the ribbon and the text context menu apply to the selection of the inline editor. */
-export type RunFormat = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string | null; size?: number | null } | 'clear';
+export type RunFormat = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string | null; size?: number | null; caps?: 'none' | 'small' | 'all' | null } | 'clear';
 
 export const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
 

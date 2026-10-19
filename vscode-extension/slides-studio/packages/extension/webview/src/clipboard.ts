@@ -1,6 +1,7 @@
 import { resolveSlide, round4, tr, uniqueId, type CellStyle, type ElementStyle, type Mutation, type SlideElement } from '@corporate-slides/core';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
+import { freshGroups } from './Format';
 
 /*
  * Clipboard: copy / cut / paste of slide elements (between slides and decks), plus paste of
@@ -82,8 +83,11 @@ function pasteElements(elements: SlideElement[], fromSlide: string, clip?: Clip)
   // Same slide: each paste steps down-right so copies do not stack invisibly.
   const n = clip ? ++clip.pastes - (fromSlide === slide.id ? 0 : 1) : fromSlide === slide.id ? 1 : 0;
   const d = 0.2 * n;
+  const regroup = freshGroups(slide);
   const ms: Mutation[] = elements.map((e) => {
     const el = { ...e, id: remap.get(e.id)! } as SlideElement & { x?: number; y?: number };
+    el.group = regroup(e.group);
+    if (!el.group) delete el.group;
     if (el.type === 'connector') return { kind: 'addElement', slideId: slide.id, element: { ...el, from: remap.get(el.from) ?? el.from, to: remap.get(el.to) ?? el.to } };
     if (el.x !== undefined) el.x = round4(el.x + d);
     if (el.y !== undefined) el.y = round4(el.y + d);

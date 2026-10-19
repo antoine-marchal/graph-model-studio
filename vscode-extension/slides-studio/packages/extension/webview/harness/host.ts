@@ -143,6 +143,10 @@ window.acquireVsCodeApi = () => ({
         return;
       case 'pastePowerPoint':
         return void toWebview({ type: 'pasteFallback' });
+      case 'saveLayout':
+        // Layout designer: the master is kept in memory (the shared test master is never written).
+        master = { ...master, layouts: master.layouts.map((l) => (l.id === msg.layout.id ? msg.layout : l)) };
+        return pushDocument();
       default:
         toWebview({ type: 'notice', level: 'info', message: `« ${msg.type} » est géré par l'extension VS Code (indisponible dans le harnais).` });
     }
@@ -151,10 +155,10 @@ window.acquireVsCodeApi = () => ({
 
 declare global {
   interface Window {
-    __harness: { text(): string; dirty(): boolean; save(): Promise<void>; version(): number; setExternal(t: string): void };
+    __harness: { text(): string; dirty(): boolean; save(): Promise<void>; version(): number; setExternal(t: string): void; master(): CorporateMaster };
   }
 }
-window.__harness = { text: () => text, dirty: () => text !== saved, save, version: () => version, setExternal: (t) => (setText(t), (externalVersion = version)) };
+window.__harness = { text: () => text, dirty: () => text !== saved, save, version: () => version, setExternal: (t) => (setText(t), (externalVersion = version)), master: () => master };
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {

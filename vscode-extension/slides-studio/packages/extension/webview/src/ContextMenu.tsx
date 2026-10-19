@@ -4,7 +4,7 @@ import { isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type Mutation,
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
-import { alignMutations, deleteMutations, duplicateMutations, FONT_SIZES, inlineEditor, stepFontSize, type AlignMode, type RunFormat } from './Format';
+import { alignMutations, deleteMutations, groupMutations, duplicateMutations, FONT_SIZES, inlineEditor, stepFontSize, type AlignMode, type RunFormat } from './Format';
 import { copyFormat, copyFromRibbon, hasCopiedFormat, pasteFormat, pasteFromRibbon } from './clipboard';
 
 /*
@@ -115,6 +115,13 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
           : []),
       ],
     },
+    ...(rs.length > 1 || rs.some((r) => r.element.group)
+      ? [
+          rs.length > 1 && !rs.every((r) => r.element.group && r.element.group === rs[0]!.element.group)
+            ? { id: 'group', label: tr('Grouper', 'Group'), icon: 'group' as const, kbd: key('Ctrl+G'), disabled: ro, run: () => mutate(groupMutations(slide, rs.map((r) => r.element.id), true)) }
+            : { id: 'ungroup', label: tr('Dissocier', 'Ungroup'), icon: 'ungroup' as const, kbd: key('Ctrl+Shift+G'), disabled: ro, run: () => mutate(groupMutations(slide, rs.map((r) => r.element.id), false)) },
+        ]
+      : []),
     ...(el?.type === 'connector'
       ? [
           {
@@ -178,6 +185,8 @@ function textCommands(master: NonNullable<ReturnType<typeof useEditor.getState>[
       { id: 'bold', label: tr('Gras', 'Bold'), icon: 'bold', kbd: key('Ctrl+B'), checked: state('bold') || undefined, run: fmt({ bold: true }) },
       { id: 'italic', label: tr('Italique', 'Italic'), icon: 'italic', kbd: key('Ctrl+I'), checked: state('italic') || undefined, run: fmt({ italic: true }) },
       { id: 'underline', label: tr('Souligné', 'Underline'), icon: 'underline', kbd: key('Ctrl+U'), checked: state('underline') || undefined, run: fmt({ underline: true }) },
+      { id: 'small-caps', label: tr('Petites majuscules', 'Small caps'), icon: 'smallCaps', run: fmt({ caps: 'small' }) },
+      { id: 'all-caps', label: tr('Tout en majuscules', 'All caps'), icon: 'allCaps', run: fmt({ caps: 'all' }) },
       'sep',
       {
         id: 'size', label: size ? `${tr('Taille', 'Size')} · ${size} pt` : tr('Taille', 'Size'), icon: 'heading',

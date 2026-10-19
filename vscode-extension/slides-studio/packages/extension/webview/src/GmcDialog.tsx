@@ -4,14 +4,6 @@ import { onHostMessage, post } from './host';
 import { currentSlide, useEditor } from './store';
 import { tr } from '@corporate-slides/core';
 
-type Template = 'context' | 'flow' | 'blank';
-
-const TEMPLATES: { id: Template; label: string; hint: string; art: string }[] = [
-  { id: 'context', label: tr('Contexte', 'Context'), hint: tr('Acteur, système, système externe (C4)', 'Actor, system, external system (C4)'), art: 'M4 14h12v8H4zM24 14h12v8H24zM44 14h12v8H44zM16 18h8M36 18h8' },
-  { id: 'flow', label: tr('Processus', 'Process'), hint: tr('Événement → étapes → résultat', 'Event → steps → outcome'), art: 'M6 18a3 3 0 1 0 0.1 0M14 14h10v8H14zM30 14h10v8H30zM50 18a3 3 0 1 0 0.1 0M9 18h5M24 18h6M40 18h7' },
-  { id: 'blank', label: tr('Vierge', 'Blank'), hint: tr('Modèle et vue vides', 'Empty model and view'), art: 'M6 8h48v20H6z' },
-];
-
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 /** Insert → Diagramme GMC: create a Graph Model Studio source (or pick one) rendered as a PNG on the slide. */
@@ -23,7 +15,6 @@ export function GmcDialog() {
   const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [name, setName] = useState('architecture');
   const [folder, setFolder] = useState('diagrams');
-  const [template, setTemplate] = useState<Template>('context');
   const [files, setFiles] = useState<string[] | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -52,7 +43,7 @@ export function GmcDialog() {
   const close = () => set({ gmcDialog: false });
   const submit = (pick = picked) => {
     if (!slide || (mode === 'new' ? !ready : !pick)) return;
-    post(mode === 'new' ? { type: 'insertGmc', slideId: slide.id, path: file, create: true, template } : { type: 'insertGmc', slideId: slide.id, path: pick!, create: false });
+    post(mode === 'new' ? { type: 'insertGmc', slideId: slide.id, path: file, create: true } : { type: 'insertGmc', slideId: slide.id, path: pick!, create: false });
     close();
   };
   const list = (files ?? []).filter((f) => f.toLowerCase().includes(query.toLowerCase()));
@@ -85,17 +76,6 @@ export function GmcDialog() {
                 <input className="input" value={folder} onChange={(e) => setFolder(e.target.value)} />
               </label>
             </div>
-            <fieldset className="templates">
-              <legend>{tr('Modèle de départ', 'Starting template')}</legend>
-              {TEMPLATES.map((t) => (
-                <label key={t.id} className={`template${template === t.id ? ' is-selected' : ''}`}>
-                  <input type="radio" name="tpl" value={t.id} checked={template === t.id} onChange={() => setTemplate(t.id)} />
-                  <svg viewBox="0 0 60 36" aria-hidden><path d={t.art} /></svg>
-                  <strong>{t.label}</strong>
-                  <span className="hint">{t.hint}</span>
-                </label>
-              ))}
-            </fieldset>
             <p className={`path-preview${exists ? ' is-error' : ''}`}>
               <code>{file}</code> <Icon name="next" /> <code>{file.replace(/\.gmc$/, '.png')}</code>
               {exists && <span> {tr('— ce fichier existe déjà, choisissez « Fichier existant ».', '— this file already exists, choose “Existing file”.')}</span>}

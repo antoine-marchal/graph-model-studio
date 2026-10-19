@@ -11,6 +11,7 @@ import {
   paragraphLook,
   resolveSlide,
   round4,
+  staticObjectBox,
   uniqueId,
   type Box,
   type Mutation,
@@ -20,14 +21,15 @@ import {
   type TextRun,
   tr,
 } from '@corporate-slides/core';
-import { PPI, SlideView, textBoxStyle, tokenHex, type AssetResolver } from '@corporate-slides/renderer';
+import { capsCss, PPI, SlideView, textBoxStyle, tokenHex, type AssetResolver } from '@corporate-slides/renderer';
 import { currentSlide, useEditor } from './store';
 import { useAnchors, useDiff } from './Review';
 import { Icon } from './icons';
-import { connectMutation, deleteMutations, duplicateMutations, inlineEditor, type RunFormat } from './Format';
+import { connectMutation, deleteMutations, duplicateMutations, groupMutations, inlineEditor, type RunFormat } from './Format';
 import { TableEditor } from './TableEditor';
 import { AdjustHandles } from './Adjust';
 import { post } from './host';
+import { applyMaster, MasterSelection, MasterTextEditor, masterContext, masterTextEditable, startMasterDrag } from './MasterEdit';
 
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
@@ -93,6 +95,12 @@ export function Canvas() {
   const baseDoc = useEditor((s) => s.diff.doc);
   const baseLabel = useEditor((s) => s.diff.label);
   const focusThread = useEditor((s) => s.focusThread);
+  // Layout designer: the layout is the slide being edited, nothing master-specific on the canvas.
+  const masterEdit = useEditor((s) => (s.design ? null : s.masterEdit));
+  const design = useEditor((s) => !!s.design);
+  /** Master text object being typed into (master editing mode). */
+  const [masterText, setMasterText] = useState<number | null>(null);
+  useEffect(() => setMasterText(null), [masterEdit, slide?.id]);
   const { select, setEditing, mutate, preview, cancelPreview, setZoom, set } = useEditor.getState();
   const assets = useAssets();
   const diff = useDiff();
@@ -369,6 +377,19 @@ export function Canvas() {
       if (st.editingId || target.closest('input, textarea, select, [contenteditable="true"]')) return;
       const sl = currentSlide(st);
       if (!sl) return;
+      if (st.masterEdit && !st.design) {
+        // Master editing: Esc deselects (then leaves the mode), arrows move the selected object.
+        const i = st.masterSel;
+        if (e.key === 'Escape') return void set(i !== null ? { masterSel: null } : { masterEdit: null });
+        const o = i !== null ? masterContext(st).layout?.objects[i] : undefined;
+        const b = o ? staticObjectBox(o.object) : null;
+        if (i !== null && b && e.key.startsWith('Arrow')) {
+          e.preventDefault();
+          const step = e.shiftKey ? 0.25 : 0.05;
+          applyMaster(i, { x: round4(b.x + (e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0)), y: round4(b.y + (e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0)) });
+        }
+        return;
+      }
       const ids = st.selected;
       if (e.key === 'Escape') {
         if (st.connectFrom !== null) return void set({ connectFrom: null });
@@ -395,6 +416,10 @@ export function Canvas() {
           ms.push({ kind: 'updateElement', slideId: sl.id, elementId: id, patch: { x: round4(r.box.x + dx), y: round4(r.box.y + dy), w: r.box.w, h: r.box.h } });
         }
         mutate(ms);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
+        // Ctrl+G groups the selection, Ctrl+Shift+G ungroups it.
+        e.preventDefault();
+        if (e.shiftKey || ids.length > 1) mutate(groupMutations(sl, ids, !e.shiftKey));
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         const { ms, ids: newIds } = duplicateMutations(sl, ids.map((id) => byId.get(id)).filter((r): r is ResolvedElement => !!r));
@@ -463,7 +488,9 @@ export function Canvas() {
           }}
         />
       )}
-      {selection.map((r) => {
+      {masterEdit && masterText === null && <MasterSelection zoom={zoom} />}
+      {masterEdit && masterText !== null && <MasterTextEditor key={`${slide.id}:${masterText}`} index={masterText} onDone={() => setMasterText(null)} />}
+      {!masterEdit && selection.map((r) => {
         const fit = (r.element.type === 'text' || r.element.type === 'shape') && r.element.paragraphs?.length ? estimateFit(r, r.element.paragraphs) : null;
         const style: CSSProperties = {
           position: 'absolute',
@@ -582,7 +609,7 @@ export function Canvas() {
   return (
     <div
       ref={wellRef}
-      className={`well${connectFrom !== null ? ' is-connecting' : ''}`}
+      className={`well${connectFrom !== null ? ' is-connecting' : ''}${masterEdit ? ' is-master-edit' : ''}`}
       onWheel={onWheel}
       onPointerDown={(e) => {
         if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('stage')) select(slide.id, []);
@@ -613,6 +640,21 @@ export function Canvas() {
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
           onPointerDownCapture={(e) => {
+            if (masterEdit) {
+              // Master editing: slide elements are inert, layout objects are picked and dragged.
+              const t = e.target as HTMLElement;
+              if (t.closest('.master-text-editor')) return;
+              if (masterText !== null) setMasterText(null);
+              if (e.button !== 0 || t.closest('[data-handle]')) return;
+              e.stopPropagation();
+              const hit = t.closest<HTMLElement>('[data-master-object]');
+              const i = hit ? Number(hit.dataset.masterObject) : null;
+              set({ masterSel: i });
+              const o = i !== null ? resolved?.layout?.objects[i] : undefined;
+              const b = o ? staticObjectBox(o.object) : null;
+              if (i !== null && b) startMasterDrag(e, i, b, inPerPx);
+              return;
+            }
             // Ctrl + drag draws a selection rectangle anywhere, even starting on an element.
             if ((e.ctrlKey || e.metaKey) && e.button === 0 && !editingId && connectFrom === null) startMarquee(e, true);
           }}
@@ -622,6 +664,13 @@ export function Canvas() {
             if (e.button === 0 && connectFrom === null) startMarquee(e, e.shiftKey);
           }}
           onDoubleClick={(e) => {
+            if (masterEdit) {
+              // Master text objects are typed into in place, like slide texts.
+              const hit = (e.target as HTMLElement).closest<HTMLElement>('[data-master-object]');
+              const i = hit ? Number(hit.dataset.masterObject) : null;
+              if (!readOnly && i !== null && masterTextEditable(i)) setMasterText(i);
+              return;
+            }
             if (readOnly || connectFrom !== null || (e.target as HTMLElement).closest('[data-element-id]')) return;
             // Double-click in an empty layout placeholder: type straight into it, as in PowerPoint.
             const rect = e.currentTarget.getBoundingClientRect();
@@ -644,8 +693,10 @@ export function Canvas() {
               assets={assets}
               metadata={doc.metadata}
               slideNumber={slideIndex + 1}
-              showPlaceholders
+              showPlaceholders={!masterEdit && !design}
+              designPlaceholders={design}
               showHidden={showHidden}
+              showHiddenMaster={!!masterEdit}
               editingId={editingId}
               renderEditor={(r) => r.element.type === 'table' ? <TableEditor r={r} onDone={(patch) => {
                 setEditing(null);
@@ -681,7 +732,7 @@ export function Canvas() {
 
 /* ------------------------------ inline text editing ------------------------------ */
 
-type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string; size?: number };
+type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string; size?: number; caps?: TextRun['caps'] };
 
 /** Paragraph DOM of the editor → canonical paragraphs (runs keep bold/italic/underline/color). */
 function readParagraphs(root: HTMLElement): Paragraph[] {
@@ -714,6 +765,7 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         if (m.underline) run.underline = true;
         if (m.color) run.color = m.color as TextRun['color'];
         if (m.size) run.size = m.size;
+        if (m.caps) run.caps = m.caps;
         cur.runs.push(run);
         return;
       }
@@ -730,6 +782,7 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         underline: m.underline || n.tagName === 'U' || st.textDecoration.includes('underline'),
         color: n.dataset.color ?? m.color,
         size: n.dataset.size ? Number(n.dataset.size) : m.size,
+        caps: (n.dataset.caps as TextRun['caps']) ?? m.caps,
       };
       // Chrome splits paragraphs with nested <div>s when Enter is pressed inside a block.
       const nested = n !== block && (n.tagName === 'DIV' || n.tagName === 'P');
@@ -755,6 +808,7 @@ export function RunView({ run, hex }: { run: TextRun; hex: (token: string) => st
   if (run.italic) node = <i>{node}</i>;
   if (run.bold) node = <b>{node}</b>;
   if (run.size) node = <span data-size={run.size} style={{ fontSize: (run.size / 72) * PPI }}>{node}</span>;
+  if (run.caps) node = <span data-caps={run.caps} style={capsCss(run.caps)}>{node}</span>;
   return run.color ? <span data-color={run.color} style={{ color: hex(run.color) ? `#${hex(run.color)}` : undefined }}>{node}</span> : <>{node}</>;
 }
 
@@ -785,14 +839,15 @@ export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: st
     let node: Node;
     if (f === 'clear') node = document.createTextNode(frag.textContent ?? '');
     else {
-      const key = f.size !== undefined ? 'size' : 'color';
-      const value = key === 'size' ? f.size : f.color;
+      const key = f.size !== undefined ? 'size' : f.caps !== undefined ? 'caps' : 'color';
+      const value = key === 'size' ? f.size : key === 'caps' ? f.caps : f.color;
       // The new value replaces the same mark inside the selection; null only removes it.
       frag.querySelectorAll<HTMLElement>(`[data-${key}]`).forEach((el) => el.replaceWith(...el.childNodes));
       const span = document.createElement('span');
       if (value !== null && value !== undefined) {
         span.dataset[key] = String(value);
         if (key === 'size') span.style.fontSize = `${(Number(value) / 72) * PPI}px`;
+        else if (key === 'caps') Object.assign(span.style, capsCss(String(value)));
         else if (hex(String(value))) span.style.color = `#${hex(String(value))}`;
       }
       span.append(frag);

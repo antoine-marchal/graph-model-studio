@@ -22,3 +22,16 @@ describe('flattenPart', () => {
     expect(flattenPart('<mc:AlternateContent><mc:Choice Requires="x">A</mc:Choice><mc:Fallback>B</mc:Fallback></mc:AlternateContent>')).toBe('B');
   });
 });
+
+describe('outlineIn', () => {
+  it('reads explicit, theme-referenced and disabled outlines', async () => {
+    const { outlineIn } = await import('./ooxml.js');
+    const { outlineHex } = await import('./normalize.js');
+    expect(outlineIn('<p:spPr><a:ln w="38100"><a:solidFill><a:srgbClr val="ff0000"/></a:solidFill><a:prstDash val="dash"/></a:ln></p:spPr>')).toEqual({ color: { srgb: 'FF0000' }, width: 3, dash: 'dash' });
+    expect(outlineIn('<p:spPr><a:ln><a:noFill/></a:ln></p:spPr><p:style><a:lnRef idx="2"><a:schemeClr val="accent1"/></a:lnRef></p:style>')).toBe('none');
+    const ref = outlineIn('<p:spPr/><p:style><a:lnRef idx="1"><a:schemeClr val="accent1"><a:lumMod val="50000"/></a:schemeClr></a:lnRef></p:style>');
+    expect(ref).toEqual({ color: { scheme: 'accent1', lumMod: 0.5 }, width: 0.75 });
+    expect(outlineHex((ref as { color: { scheme: string } }).color, { accent1: 'FF0000' })).toBe('800000');
+    expect(outlineIn('<p:spPr><a:prstGeom prst="rect"/></p:spPr>')).toBeUndefined();
+  });
+});

@@ -31,12 +31,41 @@ export function localPath(uri: vscode.Uri): string {
   return join((hit ?? folders[0])?.uri.fsPath ?? '', rel);
 }
 
-/** Relay a rendered-review action to the companion. The URI always comes from the host document. */
+/** Merge request revisions (changed side) seen this session, by working-copy path. */
+const twins = new Map<string, string>();
+const twinKey = (p: string) => p.toLowerCase();
+
+/** Remember a merge request revision so the working copy of the same file can show its discussions. */
+export function trackMrRevision(d: vscode.TextDocument): boolean {
+  if (mrRef(d.uri)?.side !== 'new') return false;
+  twins.set(twinKey(localPath(d.uri)), d.uri.toString());
+  return true;
+}
+
+/** Merge request revision of a local file, when one was opened from the merge request this session. */
+export function mrTwin(uri: vscode.Uri): vscode.Uri | undefined {
+  const t = uri.scheme === 'file' ? twins.get(twinKey(uri.fsPath)) : undefined;
+  return t ? vscode.Uri.parse(t) : undefined;
+}
+
+/**
+ * Relay a rendered-review action to the companion. The URI always comes from the host document:
+ * the merge request revision itself, or for a local file the revision of the same path opened
+ * from the merge request (the companion only knows files opened from its Changes list).
+ */
 export async function reviewRequest(document: vscode.TextDocument, request: { action: string; line?: number; text?: string; discussionId?: string; resolved?: boolean }): Promise<ReviewData> {
-  if (document.uri.scheme !== MR_SCHEME) throw new Error(tr('Les commentaires de revue sont disponibles depuis la liste des modifications de la merge request.', 'Review comments are available from the changes list of the merge request.'));
+  const twin = document.uri.scheme === MR_SCHEME ? undefined : mrTwin(document.uri);
+  if (document.uri.scheme !== MR_SCHEME && !twin) throw new Error(tr('Ouvrez une fois ce fichier depuis la liste des modifications de la merge request (Project Integration) : ses discussions s’afficheront ensuite aussi sur la copie locale.', 'Open this file once from the merge request changes list (Project Integration): its discussions then also show on the local copy.'));
   const commands = await vscode.commands.getCommands(true);
   if (!commands.includes(RENDERED_REVIEW)) throw new Error(tr('Mettez à jour l’extension Project Integration pour commenter dans l’éditeur visuel.', 'Update the Project Integration extension to comment in the visual editor.'));
-  return (await vscode.commands.executeCommand(RENDERED_REVIEW, { uri: document.uri.toString(), ...request })) as ReviewData;
+  const uri = twin ?? document.uri;
+  const data = (await vscode.commands.executeCommand(RENDERED_REVIEW, { uri: uri.toString(), ...request })) as ReviewData;
+  if (twin && data) {
+    // Comment lines are those of the merge request revision: new comments need the same text.
+    const same = (await vscode.workspace.openTextDocument(twin)).getText() === document.getText();
+    if (!same) return { ...data, canCreate: false, notice: tr('La copie locale diffère de la version de la merge request : les commentaires peuvent être décalés ; pour en créer un, ouvrez la version de la merge request.', 'The local copy differs from the merge request version: comments may be offset; to add one, open the merge request version.') };
+  }
+  return data;
 }
 
 const git = (cwd: string, args: string[]) =>

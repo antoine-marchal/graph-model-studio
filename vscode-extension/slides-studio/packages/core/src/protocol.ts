@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { Transaction } from './mutations.js';
+import { LayoutDef, MasterOverride } from './schema.js';
 import { tr } from './i18n.js';
 
 /** Which revision the visual diff compares the document with. */
@@ -21,6 +22,8 @@ export interface ReviewData {
   canCreate: boolean;
   focus?: { noteId: number; line: number };
   threads: ReviewThread[];
+  /** Shown above the threads (local copy reviewed against its merge request revision). */
+  notice?: string;
 }
 
 /** Messages webview → extension host. Every message is validated by the host before use. */
@@ -44,6 +47,20 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('renderReference'), slideIndex: z.number().int().min(0) }),
   z.object({ type: z.literal('newFromLayout'), layout: z.string().max(120) }),
   z.object({ type: z.literal('openSource') }),
+  /** Master editing for every slide: change one static object of a layout in the corporate master. */
+  z.object({ type: z.literal('editMaster'), layoutId: z.string().max(120), index: z.number().int().min(0).max(9999), patch: MasterOverride }),
+  /** New layout in the corporate master (blank, copy of the slide's layout, or from the slide's rendering). */
+  z.object({ type: z.literal('createLayout'), slideId: z.string().max(64), from: z.enum(['blank', 'duplicate', 'slide']), name: z.string().min(1).max(80) }),
+  /** Rename a layout of the corporate master (the old id stays as an alias for other decks). */
+  z.object({ type: z.literal('renameLayout'), layoutId: z.string().max(120), newId: z.string().regex(/^[A-Za-z0-9][\w-]{0,119}$/) }),
+  /** Layout designer: replace a layout of the corporate master; `indexMap` re-keys this deck's master overrides. */
+  z.object({ type: z.literal('saveLayout'), layout: LayoutDef, indexMap: z.record(z.string(), z.number().int().min(0).nullable()) }),
+  /** Delete a slide master and all its layouts, after a confirmation by the host (name typed). */
+  z.object({ type: z.literal('deleteMaster'), masterId: z.string().max(120) }),
+  /** Delete a layout of the corporate master, after a confirmation by the host. */
+  z.object({ type: z.literal('deleteLayout'), layoutId: z.string().max(120) }),
+  /** Slide show started / ended: the host hides the workbench (zen mode) when the webview cannot go full screen. */
+  z.object({ type: z.literal('presentation'), active: z.boolean() }),
   z.object({ type: z.literal('setDiffBase'), base: DiffBaseKind }),
   z.object({
     type: z.literal('review'),
@@ -61,7 +78,6 @@ export const WebviewMessage = z.discriminatedUnion('type', [
     /** Path of the `.gmc` source relative to the presentation folder. */
     path: z.string().min(5).max(260).regex(/^[^:*?"<>|]+\.gmc$/i, tr('chemin .gmc invalide', 'invalid .gmc path')),
     create: z.boolean(),
-    template: z.enum(['blank', 'context', 'flow']).optional(),
   }),
   z.object({ type: z.literal('editGmc'), src: z.string().max(260) }),
   z.object({ type: z.literal('refreshGmc'), src: z.string().max(260) }),

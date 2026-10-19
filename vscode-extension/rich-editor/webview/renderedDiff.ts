@@ -36,7 +36,7 @@ export function splitBlocks(md: string): MdBlocks {
   return { blocks, defs };
 }
 
-export type DiffKind = "same" | "ins" | "del" | "old" | "new" | "gap";
+export type DiffKind = "same" | "ins" | "del" | "old" | "new" | "gap" | "pad-old" | "pad-new";
 
 export interface DiffEntry {
   kind: DiffKind;

@@ -16,9 +16,9 @@ function dataUrlToBytes(dataUrl: string): Uint8Array {
 export async function captureGraphPng(wrapper: HTMLElement): Promise<Uint8Array> {
   const graphWrapper = wrapper as GraphCaptureWorkspace
   await waitForStableGraph(graphWrapper)
-  const contentBounds = graphWrapper.__gmsGetContentBounds?.()
-  if (contentBounds && contentBounds.width > 0 && contentBounds.height > 0) {
-    return captureCompleteGraph(graphWrapper, contentBounds)
+  const nodeBounds = graphWrapper.__gmsGetContentBounds?.()
+  if (nodeBounds && nodeBounds.width > 0 && nodeBounds.height > 0) {
+    return captureCompleteGraph(graphWrapper, renderedContentBounds(graphWrapper, nodeBounds))
   }
 
   const wrapperRect = wrapper.getBoundingClientRect()
@@ -97,7 +97,60 @@ export async function captureGraphPng(wrapper: HTMLElement): Promise<Uint8Array>
   const context = canvas.getContext('2d')
   if (!context) throw new Error('Could not create a PNG export canvas.')
   context.drawImage(image, cropX, cropY, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height)
-  return dataUrlToBytes(canvas.toDataURL('image/png'))
+  return dataUrlToBytes(trimCanvas(canvas).toDataURL('image/png'))
+}
+
+/** Pixels at or below this alpha are background: the last fringe of a soft shadow, not content. */
+const TRIM_ALPHA = 10
+
+/**
+ * Crop a transparent capture to its visible pixels, edge to edge: slides and
+ * documents place the diagram themselves, so any margin baked into the PNG
+ * shows up as an off-centre gap.
+ */
+export function trimCanvas(source: HTMLCanvasElement): HTMLCanvasElement {
+  const { width, height } = source
+  const context = source.getContext('2d')
+  if (!context || !width || !height) return source
+  const box = alphaBounds(context.getImageData(0, 0, width, height).data, width, height)
+  if (!box || (box.x === 0 && box.y === 0 && box.width === width && box.height === height)) return source
+  const out = document.createElement('canvas')
+  out.width = box.width
+  out.height = box.height
+  out.getContext('2d')!.drawImage(source, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height)
+  return out
+}
+
+/** Smallest box holding every pixel more opaque than `threshold` (RGBA data), or null when none is. */
+export function alphaBounds(data: Uint8ClampedArray | Uint8Array, width: number, height: number, threshold = TRIM_ALPHA): { x: number; y: number; width: number; height: number } | null {
+  let top = height, bottom = -1, left = width, right = -1
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4
+    for (let x = 0; x < width; x++) {
+      if (data[row + x * 4 + 3] <= threshold) continue
+      if (y < top) top = y
+      bottom = y
+      if (x < left) left = x
+      if (x > right) right = x
+    }
+  }
+  return bottom < 0 ? null : { x: left, y: top, width: right - left + 1, height: bottom - top + 1 }
+}
+
+async function trimDataUrl(dataUrl: string): Promise<Uint8Array> {
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve()
+    image.onerror = reject
+    image.src = dataUrl
+  })
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const context = canvas.getContext('2d')
+  if (!context) return dataUrlToBytes(dataUrl)
+  context.drawImage(image, 0, 0)
+  return dataUrlToBytes(trimCanvas(canvas).toDataURL('image/png'))
 }
 
 /**
@@ -114,6 +167,7 @@ async function captureCompleteGraph(
   const viewport = wrapper.querySelector<HTMLElement>('.react-flow__viewport')
   if (!reactFlow || !viewport) throw new Error('The graph viewport did not initialize.')
 
+  // Covers arrowheads and stroke widths not part of the measured geometry; the trim removes it.
   const padding = 32
   const width = Math.max(1, Math.ceil(bounds.width + padding * 2))
   const height = Math.max(1, Math.ceil(bounds.height + padding * 2))
@@ -152,13 +206,14 @@ async function captureCompleteGraph(
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
 
     const dataUrl = await toPng(wrapper, {
-      pixelRatio: 2,
+      pixelRatio: exportPixelRatio(width, height),
       width,
       height,
       backgroundColor: undefined,
       filter: node => !(node instanceof Element) || !skippedClasses.some(className => node.classList?.contains(className)),
     })
-    return dataUrlToBytes(dataUrl)
+    // The padding keeps strokes, arrowheads and labels that overhang node bounds; the trim then removes it.
+    return await trimDataUrl(dataUrl)
   } finally {
     restoreProperty(wrapper, 'width', saved.wrapperWidth)
     restoreProperty(wrapper, 'height', saved.wrapperHeight)
@@ -170,6 +225,39 @@ async function captureCompleteGraph(
     restoreProperty(viewport, 'transition', saved.viewportTransition)
     restoreEdgeStrokes(materializedStrokes)
   }
+}
+
+/**
+ * Node bounds widened to everything drawn around them: edge routes that leave
+ * the nodes' box, arrowheads and edge labels. Without this the capture canvas,
+ * sized from the nodes alone, cuts relations off at its border.
+ */
+function renderedContentBounds(
+  wrapper: HTMLElement,
+  nodes: { x: number; y: number; width: number; height: number },
+): { x: number; y: number; width: number; height: number } {
+  const viewport = wrapper.querySelector<HTMLElement>('.react-flow__viewport')
+  if (!viewport) return nodes
+  // Screen → flow coordinates: the viewport is a 0×0 box at the flow origin, scaled by the zoom.
+  const zoom = new DOMMatrixReadOnly(getComputedStyle(viewport).transform).a || 1
+  const origin = viewport.getBoundingClientRect()
+  let minX = nodes.x, minY = nodes.y, maxX = nodes.x + nodes.width, maxY = nodes.y + nodes.height
+  const drawn = wrapper.querySelectorAll('.react-flow__edge-path, .react-flow__edge path[marker-end], .react-flow__edge text, .react-flow__edgelabel-renderer > *, .react-flow__edges marker')
+  drawn.forEach(element => {
+    const rect = element.getBoundingClientRect()
+    if (!rect.width && !rect.height) return
+    minX = Math.min(minX, (rect.left - origin.left) / zoom)
+    minY = Math.min(minY, (rect.top - origin.top) / zoom)
+    maxX = Math.max(maxX, (rect.right - origin.left) / zoom)
+    maxY = Math.max(maxY, (rect.bottom - origin.top) / zoom)
+  })
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY }
+}
+
+/** Raster scale: crisp on slides and in documents (≈4000 px on the long side), within canvas limits. */
+export function exportPixelRatio(width: number, height: number): number {
+  const long = Math.max(width, height, 1)
+  return Math.max(2, Math.min(4, 4000 / long, 16000 / long))
 }
 
 /** Wait until measured node geometry is unchanged across consecutive paints. */

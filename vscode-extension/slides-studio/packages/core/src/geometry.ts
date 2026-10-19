@@ -1,4 +1,4 @@
-import type { AnchorPoint, ArrowHead, ConnectorSide, CorporateMaster, ElementStyle, LayoutDef, LevelStyle, Numbering, PlaceholderDef, SlideElement, SlideNode } from './schema.js';
+import type { AnchorPoint, ArrowHead, Caps, ConnectorSide, CorporateMaster, ElementStyle, LayoutDef, LevelStyle, MasterOverride, Numbering, PlaceholderDef, SlideElement, SlideNode, StaticObject } from './schema.js';
 import { findLayout, resolveColor, resolveFont } from './theme.js';
 
 export interface Box {
@@ -21,6 +21,7 @@ export interface ResolvedStyle {
   bold: boolean;
   italic: boolean;
   underline: boolean;
+  caps: Caps;
   align: 'left' | 'center' | 'right' | 'justify';
   valign: 'top' | 'middle' | 'bottom';
   lineSpacing: number;
@@ -112,10 +113,11 @@ export function resolveStyle(el: SlideElement, ph: PlaceholderDef | undefined, m
   const defaultFill = isShape && !isLine ? 'theme.accent1' : undefined;
   const defaultLine = isLine ? 'theme.dk1' : undefined;
   return {
-    fill: resolveColor(s.fill ?? defaultFill, master),
-    line: resolveColor(s.line ?? defaultLine, master),
-    lineWidth: s.lineWidth ?? (isLine ? 1.5 : 1),
-    dash: s.dash ?? 'solid',
+    fill: resolveColor(s.fill ?? defaultFill, master) ?? (s.fill === undefined && ph?.style.fill ? ph.style.fill.toUpperCase() : null),
+    // A placeholder drawn with an outline in the template keeps it on the slides bound to it.
+    line: resolveColor(s.line ?? defaultLine, master) ?? (s.line === undefined && ph?.style.line ? ph.style.line.toUpperCase() : null),
+    lineWidth: s.lineWidth ?? ph?.style.lineWidth ?? (isLine ? 1.5 : 1),
+    dash: s.dash ?? ph?.style.dash ?? 'solid',
     transparency: s.transparency ?? 0,
     fontFace:
       resolveFont(s.fontFace, master) ?? ph?.style.fontFace ?? (isTitle ? master.theme.fonts.heading : master.theme.fonts.body),
@@ -128,6 +130,7 @@ export function resolveStyle(el: SlideElement, ph: PlaceholderDef | undefined, m
     bold: s.bold ?? ph?.style.bold ?? firstLevel?.bold ?? false,
     italic: s.italic ?? ph?.style.italic ?? false,
     underline: s.underline ?? false,
+    caps: s.caps ?? 'none',
     align: s.align ?? ph?.style.align ?? (isShape ? 'center' : 'left'),
     valign: s.valign ?? ph?.style.valign ?? (isShape ? 'middle' : 'top'),
     lineSpacing: s.lineSpacing ?? 1,
@@ -202,7 +205,7 @@ export interface ResolvedSlide {
 
 /** Resolve all elements of a slide, sorted back-to-front. */
 export function resolveSlide(slide: SlideNode, master: CorporateMaster): ResolvedSlide {
-  const layout = findLayout(master, slide.layout);
+  const layout = layoutForSlide(findLayout(master, slide.layout), slide);
   const elements = slide.elements.map((el, i) => resolveElement(el, i, layout, master));
   // Connectors take their geometry from the elements they link.
   const byId = new Map(elements.map((r) => [r.element.id, r]));
@@ -217,6 +220,48 @@ export function resolveSlide(slide: SlideNode, master: CorporateMaster): Resolve
   }
   elements.sort((a, b) => a.z - b.z);
   return { slide, layout, elements };
+}
+
+/** Bounding-box geometry of a static object, in its own option format. */
+const geomHolder = (obj: Record<string, unknown>): Record<string, unknown> | null => {
+  const [kind, raw] = Object.entries(obj)[0] ?? [];
+  if (!kind || !raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  return kind === 'text' ? ((r.options ??= {}) as Record<string, unknown>) : r;
+};
+
+/** A static object with a slide's override applied (geometry, colors, text). */
+export function overrideStaticObject(o: StaticObject, ov: MasterOverride | undefined): StaticObject {
+  if (!ov) return o;
+  const out: StaticObject = structuredClone(o);
+  if (ov.hidden === true) out.hidden = true;
+  else if (ov.hidden === false) delete out.hidden;
+  const [kind] = Object.keys(out.object);
+  const g = geomHolder(out.object);
+  if (!g) return out;
+  for (const k of ['x', 'y', 'w', 'h'] as const) if (ov[k] !== undefined) g[k] = ov[k];
+  if (kind === 'element') {
+    // Objects drawn like slide elements: colors and text go through the element style / paragraphs.
+    const el = g as SlideElement;
+    el.style = { ...(el.style ?? {}), ...(ov.fill ? { fill: ov.fill } : {}), ...(ov.line ? { line: ov.line } : {}), ...(ov.color ? { color: ov.color } : {}), ...(ov.fontSize ? { fontSize: ov.fontSize } : {}) };
+    if (ov.text !== undefined && (el.type === 'text' || el.type === 'shape')) el.paragraphs = ov.text.split('\n').map((t) => ({ runs: t ? [{ text: t }] : [] }));
+    return out;
+  }
+  if (ov.fill) g.fill = ov.fill === 'none' ? undefined : { ...((g.fill as object) ?? {}), color: ov.fill };
+  if (ov.line) g.line = ov.line === 'none' ? undefined : { width: 1, ...((g.line as object) ?? {}), color: ov.line };
+  if (kind === 'text') {
+    if (ov.color) g.color = ov.color;
+    if (ov.fontSize) g.fontSize = ov.fontSize;
+    if (ov.text !== undefined) (out.object.text as Record<string, unknown>).text = ov.text;
+  }
+  return out;
+}
+
+/** The slide's layout with its master overrides applied (the master's own layout when there are none). */
+export function layoutForSlide(layout: LayoutDef | undefined, slide: Pick<SlideNode, 'masterOverrides'>): LayoutDef | undefined {
+  const ovs = slide.masterOverrides;
+  if (!layout || !ovs || !Object.keys(ovs).length) return layout;
+  return { ...layout, objects: layout.objects.map((o, i) => overrideStaticObject(o, ovs[String(i)])) };
 }
 
 /** Effective fit of a picture: placeholder pictures keep their ratio unless told otherwise. */

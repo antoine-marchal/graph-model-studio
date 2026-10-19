@@ -262,3 +262,29 @@ describe('tables and connectors in sources', () => {
     expect(parseMarkdown(moved).doc.slides[0]!.elements.find((e) => e.id === 'c')).toMatchObject({ route: 'curved', fromSide: 'bottom' });
   });
 });
+
+describe('renameElement', () => {
+  const ids = (text: string, kind: SourceKind, i: number) => parseSource(text, kind).doc.slides[i]!.elements.map((e) => e.id);
+  const sid = (i: number) => parseMarkdown(MD).doc.slides[i]!.id;
+
+  it('renames Markdown titles, slots and derived blocks, keeping the text', () => {
+    let out = applyMutations(MD, 'markdown', [{ kind: 'renameElement', slideId: sid(0), elementId: 'title', newId: 'headline' }]);
+    expect(out).toContain('# PLM / MES / ERP Architecture {#headline}');
+    out = applyMutations(out, 'markdown', [{ kind: 'renameElement', slideId: sid(1), elementId: 'main-title', newId: 'principles' }]);
+    expect(out).toContain('# Integration principles {#principles}');
+    out = applyMutations(out, 'markdown', [{ kind: 'renameElement', slideId: sid(1), elementId: 'left', newId: 'plm' }]);
+    expect(out).toContain('::: left {#plm}');
+    out = applyMutations(out, 'markdown', [{ kind: 'renameElement', slideId: sid(0), elementId: 'subtitle', newId: 'tagline' }]);
+    const s0 = parseMarkdown(out).doc.slides[0]!;
+    expect(s0.elements.map((e) => e.id).sort()).toEqual(['headline', 'tagline']);
+    expect(s0.elements.find((e) => e.id === 'tagline')).toMatchObject({ placeholder: 'subtitle', paragraphs: [{ runs: [{ text: 'Target landscape and integration strategy' }] }] });
+    expect(ids(out, 'markdown', 1)).toContain('plm');
+  });
+
+  it('renames DSL elements and refuses a taken id', () => {
+    const dsl = documentToDsl(parseMarkdown(MD).doc);
+    const out = applyMutations(dsl, 'dsl', [{ kind: 'renameElement', slideId: sid(1), elementId: 'left', newId: 'plm' }]);
+    expect(ids(out, 'dsl', 1)).toContain('plm');
+    expect(() => applyMutations(dsl, 'dsl', [{ kind: 'renameElement', slideId: sid(1), elementId: 'left', newId: 'right' }])).toThrow(/already used|déjà utilisé/);
+  });
+});

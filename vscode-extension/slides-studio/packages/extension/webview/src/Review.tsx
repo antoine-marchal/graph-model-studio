@@ -160,11 +160,12 @@ export function CommentsPane() {
       {!review ? (
         <div className="pane-empty">
           <Icon name="comment" size={20} />
-          <p>{tr('Les discussions GitLab s’affichent ici quand la présentation est ouverte depuis la liste des modifications d’une merge request (extension Project Integration).', 'GitLab discussions show here when the presentation is opened from the changes list of a merge request (Project Integration extension).')}</p>
+          <p>{tr('Les discussions GitLab de la merge request s’affichent ici, aussi sur ce fichier local, dès que sa version a été ouverte une fois depuis la liste des modifications de la merge request (extension Project Integration).', 'The merge request’s GitLab discussions show here, on this local file too, once its version was opened from the merge request changes list (Project Integration extension).')}</p>
         </div>
       ) : (
         <div className="threads">
           {error && <p className="pane-error" role="alert">{error}</p>}
+          {data?.notice && <p className="pane-notice" role="status">{data.notice}</p>}
           {data?.canCreate && (composing ? (
             <div className="thread is-draft">
               <p className="hint">{tr('Sur', 'On')} {target ? <code>{target.id}</code> : tr('la diapositive', 'the slide')} · {tr('ligne', 'line')} {line ?? 1}</p>
