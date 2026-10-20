@@ -36,6 +36,7 @@ Review semantics: `--diff-add` (green), `--diff-mod` (violet, distinct from the 
 
 - Icon buttons 28px, authored 16px SVG icons, 1.5px stroke.
 - Inspector sections with 11px uppercase headings, two-column numeric fields (X/Y, L/H) with unit suffix "in".
+- Inner margins: box-model editor — compact fields (label kept for screen readers) on the four sides of a miniature frame whose dashed inner edge previews the insets; the center link toggle (accent when on) makes one field set all four. Unit and "back to template" reset sit in the section header.
 - Color swatches: 12 theme slots, each with 6 tints/shades row; tokens shown by name on hover/aria-label.
 - Selection: 1.5px accent outline, 8 square handles (white fill, accent stroke), constant screen size; snapping guides in magenta `#ff3dbb`.
 - Placeholder ghosts: dashed 1px `--fg-muted` outlines labeled with the placeholder key.

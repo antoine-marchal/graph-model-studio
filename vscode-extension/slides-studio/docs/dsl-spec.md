@@ -105,6 +105,8 @@ Texte des notes.
 | Paragraphe ne contenant qu'une image `![alt](chemin)` (+ `{#id}` facultatif) | élément `image` (`image-N`), lié à `pic` |
 | Tableau GFM | élément `table` (`table-N`) ; lié à `body` s'il n'y a pas de texte libre |
 | `::: nom {#id}` … `:::` | élément texte lié à l'espace réservé `nom` ; `notes` = notes |
+| `::: id` … `:::` + entrée `elements:` complète (`type: text`, sans `placeholder`) | zone de texte libre : géométrie/style dans l'en-tête, texte dans le bloc (renommé avec l'élément) |
+| `shared:` dans l'en-tête du document (`clé: texte Markdown`) | valeur partagée : remplit l'espace réservé `clé` de chaque diapositive dont la disposition le possède et qui n'a pas sa propre valeur (icône en haut à droite de l'espace réservé pour partager / détacher) |
 | `<!-- commentaires -->` | conservés tels quels, ignorés par le rendu |
 | Diapositive sans `id` | id implicite `slide-N` ; matérialisé dans l'en-tête dès la première opération structurelle (ajout, déplacement…) |
 

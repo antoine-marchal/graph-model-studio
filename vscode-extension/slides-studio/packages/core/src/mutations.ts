@@ -64,6 +64,11 @@ export const Mutation = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('setNotes'), slideId: Id, notes: z.string() }),
   /** Change (or with `null`, restore) one static object of the layout on this slide only. */
   z.object({ kind: z.literal('setMasterOverride'), slideId: Id, index: z.number().int().min(0).max(9999), override: MasterOverride.nullable() }),
+  /**
+   * `shared: true`: the text of this placeholder becomes the deck-wide value of every slide whose
+   * layout has the placeholder (their own values are dropped). `false`: this slide gets its own copy.
+   */
+  z.object({ kind: z.literal('shareText'), slideId: Id, elementId: Id, shared: z.boolean() }),
 ]);
 export type Mutation = z.infer<typeof Mutation>;
 
@@ -199,6 +204,17 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         const s = getSlide(next, m.slideId);
         s.masterOverrides = withMasterOverride(s.masterOverrides, m.index, m.override);
         if (!s.masterOverrides) delete s.masterOverrides;
+        break;
+      }
+      case 'shareText': {
+        // Approximation for optimistic UI: slides without the placeholder are only known with the master.
+        const el = getSlide(next, m.slideId).elements.find((e) => e.id === m.elementId);
+        if (el?.type !== 'text' || !el.placeholder) throw new MutationError(tr(`Élément « ${m.elementId} » : pas un espace réservé de texte`, `Element “${m.elementId}” is not a text placeholder`));
+        if (!m.shared) delete el.shared;
+        else {
+          el.shared = true;
+          for (const s of next.slides) for (const e of s.elements) if (e !== el && e.type === 'text' && e.placeholder === el.placeholder) Object.assign(e, { paragraphs: structuredClone(el.paragraphs), shared: true });
+        }
         break;
       }
     }

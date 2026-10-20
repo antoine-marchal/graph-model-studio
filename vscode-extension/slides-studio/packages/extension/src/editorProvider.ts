@@ -379,6 +379,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     ];
     panel.onDidDispose(() => {
       disposed = true;
+      if (state.zen) void presentationMode(false);
       clearTimeout(timer);
       this.panels.get(key)?.delete(state);
       subs.forEach((s) => s.dispose());
@@ -386,7 +387,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
   }
 
   private parse(document: vscode.TextDocument, kind: SourceKind, master: CorporateMaster | null) {
-    return parseSource(document.getText(), kind, master ? { dimensions: master.dimensions } : {});
+    return parseSource(document.getText(), kind, master ? { dimensions: master.dimensions, master } : {});
   }
 
   async pushDocument({ document, kind, panel }: PanelState): Promise<void> {
@@ -430,7 +431,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
   private async pushDiffBase(state: PanelState, master: CorporateMaster | null): Promise<void> {
     const base = await loadDiffBase(state.document, state.diffBase);
     const available: DiffBaseKind[] = mrRef(state.document.uri) ? (mrRef(state.document.uri)!.side === 'new' ? ['none', 'mr'] : ['none']) : ['none', 'head', 'mr'];
-    const doc = base.text === null ? null : parseSource(base.text, state.kind, master ? { dimensions: master.dimensions } : {}).doc;
+    const doc = base.text === null ? null : parseSource(base.text, state.kind, master ? { dimensions: master.dimensions, master } : {}).doc;
     state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error } satisfies HostMessage);
   }
 
@@ -546,10 +547,9 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           if (!readOnly) await this.editLayout(state, msg, send);
           break;
         case 'presentation':
-          // Zen mode is full screen with the editor alone; toggled back when the show ends.
-          if (msg.active !== state.zen) {
+          if (msg.active !== !!state.zen) {
             state.zen = msg.active;
-            await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+            await presentationMode(msg.active);
           }
           break;
         case 'reveal': {
@@ -756,7 +756,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     const before = document.getText();
     let after: string;
     try {
-      after = applyMutations(before, kind, mutations, m ? { dimensions: m.master.dimensions } : {});
+      after = applyMutations(before, kind, mutations, m ? { dimensions: m.master.dimensions, master: m.master } : {});
     } catch (e) {
       return e instanceof MutationError ? e.message : tr(`Modification impossible : ${(e as Error).message}`, `Edit failed: ${(e as Error).message}`);
     }
@@ -841,9 +841,37 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     }
     const id = uniqueId('image', slide.elements.map((e) => e.id));
     const W = m.master.dimensions.width, H = m.master.dimensions.height;
-    const text = applyMutations(document.getText(), kind, [{ kind: 'addElement', slideId, element: { id, type: 'image', src: rel, x: round((W - w) / 2), y: round((H - h) / 2), w, h, alt: basename(file, extname(file)) } }], { dimensions: m.master.dimensions });
+    const text = applyMutations(document.getText(), kind, [{ kind: 'addElement', slideId, element: { id, type: 'image', src: rel, x: round((W - w) / 2), y: round((H - h) / 2), w, h, alt: basename(file, extname(file)) } }], { dimensions: m.master.dimensions, master: m.master });
     if (await replaceMinimal(document, document.getText(), text)) send({ type: 'select', slideId, elementId: id });
   }
+}
+
+/** Zen mode settings of the slide show: whole screen, no tabs, bars or centered layout. */
+const SHOW_ZEN: Record<string, unknown> = {
+  fullScreen: true, showTabs: 'none', centerLayout: false, hideStatusBar: true, hideActivityBar: true, hideLineNumbers: true, silentNotifications: true,
+};
+let savedZen: Record<string, unknown> | undefined;
+let maximizedGroup = false;
+
+/**
+ * Slide show full screen: zen mode with `SHOW_ZEN` (user values restored afterwards) and the
+ * editor group maximized so other groups disappear. The webview cannot go native full screen.
+ */
+async function presentationMode(active: boolean): Promise<void> {
+  const zen = vscode.workspace.getConfiguration('zenMode');
+  if (active) {
+    savedZen = Object.fromEntries(Object.keys(SHOW_ZEN).map((k) => [k, zen.inspect(k)?.globalValue]));
+    for (const [k, v] of Object.entries(SHOW_ZEN)) await zen.update(k, v, vscode.ConfigurationTarget.Global);
+    maximizedGroup = vscode.window.tabGroups.all.length > 1;
+    if (maximizedGroup) await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+    await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+    return;
+  }
+  await vscode.commands.executeCommand('workbench.action.toggleZenMode');
+  if (maximizedGroup) await vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+  maximizedGroup = false;
+  for (const [k, v] of Object.entries(savedZen ?? {})) await zen.update(k, v, vscode.ConfigurationTarget.Global);
+  savedZen = undefined;
 }
 
 const round = (n: number) => Math.round(n * 10_000) / 10_000;

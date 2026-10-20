@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type Mutation, type ResolvedElement } from '@corporate-slides/core';
+import { explicitStyle, isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type ElementStyle, type Mutation, type ResolvedElement, type SlideNode } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
@@ -131,6 +131,7 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
           { id: 'reverse', label: tr('Inverser le sens', 'Reverse direction'), icon: 'refresh' as const, disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { from: el.to, to: el.from, fromSide: el.toSide ?? 'auto', toSide: el.fromSide ?? 'auto', fromPoint: el.toPoint ?? null, toPoint: el.fromPoint ?? null } }]) },
         ]
       : [{ id: 'connect', label: tr('Relier à un autre élément', 'Connect to another element'), icon: 'connector' as const, disabled: ro || !solo, run: () => set({ connectFrom: el!.id }) }]),
+    ...(st.design && one ? placeholderConversion(slide, one, ro) : []),
     'sep',
     { id: 'lock', label: locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock'), icon: locked ? 'unlock' : 'lock', disabled: ro, run: all((r) => ({ kind: 'updateElement', slideId: slide.id, elementId: r.element.id, patch: { locked: !locked } })) },
     { id: 'hide', label: tr('Masquer', 'Hide'), icon: 'eyeOff', disabled: ro, run: () => (mutate(rs.map((r) => ({ kind: 'updateElement', slideId: slide.id, elementId: r.element.id, patch: { hidden: true } }))), select(slide.id, [])) },
@@ -153,6 +154,33 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
     ],
     entries,
   };
+}
+
+/**
+ * Layout designer: a text box (or rectangle) becomes a placeholder and a placeholder a plain
+ * element, keeping exactly the look it had (inherited style made explicit).
+ */
+function placeholderConversion(slide: SlideNode, r: ResolvedElement, ro: boolean): Cmd[] {
+  const el = r.element;
+  const { mutate, select } = useEditor.getState();
+  const style = explicitStyle(r) as Record<string, unknown>;
+  if (el.type === 'text' && el.placeholder) {
+    return [{ id: 'to-element', label: tr('Convertir en élément', 'Convert to element'), icon: 'text', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: null, style } }]) }];
+  }
+  const shape = el.type === 'shape' && (el.shape === 'rect' || el.shape === 'roundRect');
+  if (el.type !== 'text' && !shape) return [];
+  const taken = slide.elements.map((e) => e.placeholder ?? '');
+  const key = taken.includes('body') ? uniqueId('body', taken) : 'body';
+  const run = () => {
+    if (el.type === 'text') return mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: key, style } }]);
+    // Placeholders are text frames: the rectangle's fill, outline and corners carry over as box style.
+    const id = uniqueId(key, slide.elements.map((e) => e.id));
+    const { x, y, w, h } = r.box;
+    const paragraphs = el.type === 'shape' ? (el.paragraphs ?? []) : [];
+    mutate([{ kind: 'deleteElement', slideId: slide.id, elementId: el.id }, { kind: 'addElement', slideId: slide.id, element: { id, type: 'text', placeholder: key, x, y, w, h, paragraphs, style: style as ElementStyle } }]);
+    select(slide.id, [id]);
+  };
+  return [{ id: 'to-placeholder', label: tr('Convertir en espace réservé', 'Convert to placeholder'), icon: 'layout', disabled: ro, run }];
 }
 
 /** Selected text inside the inline editor: clipboard, character marks, size and color of the selection. */

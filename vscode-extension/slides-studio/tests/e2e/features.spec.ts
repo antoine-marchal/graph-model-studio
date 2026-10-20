@@ -250,3 +250,74 @@ test('master editing for this slide: a layout object moves on this slide only', 
   await synced(page);
   expect(await source(page)).not.toContain('masterOverrides:');
 });
+
+test('text box: its text lives in a `::: id` block', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('slide-thumb-landscape').locator('.slide-button').click();
+  await page.getByTestId('tab-insert').click();
+  await page.getByTestId('add-text').click();
+  await synced(page);
+  const src = await source(page);
+  const id = /::: (text-\d+)\nNouveau texte\n:::/.exec(src)?.[1];
+  expect(id).toBeTruthy();
+  expect(src).not.toContain("content: Nouveau texte");
+});
+
+test('shared placeholder value: hover toggle shares the text deck-wide, then detaches it', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('slide-thumb-principles').locator('.slide-button').click();
+  await canvasEl(page, 'left').hover();
+  const toggle = page.getByTestId('share-toggle');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await toggle.click();
+  await synced(page);
+  let src = await source(page);
+  expect(src).toMatch(/shared:\n  left: \|/);
+  expect(src).not.toContain('::: left');
+  await canvasEl(page, 'left').hover();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await toggle.click();
+  await synced(page);
+  src = await source(page);
+  expect(src).toContain('::: left\n## PLM');
+});
+
+test('copy / paste of a placeholder pastes a placeholder with the original look', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('slide-thumb-principles').locator('.slide-button').click();
+  await canvasEl(page, 'left').click();
+  await page.keyboard.press('ControlOrMeta+c');
+  await page.getByTestId('slide-thumb-landscape').locator('.slide-button').click();
+  await page.getByTestId('slide-canvas').click({ position: { x: 20, y: 20 } });
+  await page.keyboard.press('ControlOrMeta+v');
+  await synced(page);
+  const src = await source(page);
+  const entry = /- id: (text-\d+)\n    type: text\n([\s\S]*?)(?=\n  - |\n---)/.exec(src.slice(src.indexOf('id: landscape')));
+  expect(entry?.[2]).toMatch(/fontSize: \d+/);
+  expect(entry?.[2]).toMatch(/color: "?#[0-9A-F]{6}/);
+  expect(entry?.[2]).toContain('placeholder: left');
+});
+
+test('inner margins: linked sides, then one side with the + button, then back to the template', async ({ page }) => {
+  await open(page);
+  await page.getByTestId('slide-thumb-landscape').locator('.slide-button').click();
+  await canvasEl(page, 'caption').click();
+  const link = page.getByTestId('margin-link');
+  await expect(link).toHaveAttribute('aria-pressed', 'false'); // template default 0.05 / 0.1
+  await link.click();
+  await expect(link).toHaveAttribute('aria-pressed', 'true');
+  await page.getByTestId('field-margin-top').fill('0.3');
+  await page.getByTestId('field-margin-top').press('Enter');
+  await synced(page);
+  expect(await source(page)).toMatch(/margin:[\s\S]{0,40}?0\.3[\s\S]{0,12}?0\.3[\s\S]{0,12}?0\.3[\s\S]{0,12}?0\.3/);
+  await expect(page.getByTestId('field-margin-left')).toHaveValue('0.3');
+  await link.click();
+  await page.getByTestId('field-margin-left-inc').click();
+  await synced(page);
+  await expect(page.getByTestId('field-margin-left')).toHaveValue('0.35');
+  await expect(page.getByTestId('field-margin-top')).toHaveValue('0.3');
+  await page.getByTestId('margin-reset').click();
+  await synced(page);
+  expect(await source(page)).not.toContain('margin:');
+  await expect(page.getByTestId('margin-reset')).toHaveCount(0);
+});

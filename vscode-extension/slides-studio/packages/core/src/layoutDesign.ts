@@ -83,6 +83,7 @@ export function staticToElement(o: StaticObject, id: string): SlideElement | nul
       valign: opts.valign as ElementStyle['valign'],
       fill: colorOf(opts.fill),
       ...lineStyle(opts.line),
+      radius: num(opts.rectRadius),
     }) as ElementStyle;
     return { id, type: 'text', ...geom(opts), paragraphs: paragraphsOf((v.text as string | undefined) ?? ''), style, ...hidden };
   }
@@ -125,7 +126,7 @@ export function layoutToDesign(layout: LayoutDef): LayoutDesign {
 }
 
 /** Placeholder style keys an element style can set. */
-const PH_STYLE_KEYS = ['fontFace', 'fontSize', 'color', 'bold', 'italic', 'align', 'valign', 'line', 'lineWidth', 'dash', 'fill'] as const;
+const PH_STYLE_KEYS = ['fontFace', 'fontSize', 'color', 'bold', 'italic', 'align', 'valign', 'line', 'lineWidth', 'dash', 'fill', 'radius', 'margin'] as const;
 
 /**
  * The layout after a design session: elements back to static objects (in stacking order) and

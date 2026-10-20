@@ -89,6 +89,9 @@ export function Canvas() {
   const showHidden = useEditor((s) => s.showHidden);
   const snap = useEditor((s) => s.snap);
   const readOnly = useEditor((s) => s.readOnly);
+  const sourceKind = useEditor((s) => s.sourceKind);
+  /** Element under the pointer: a filled text placeholder shows its "share on all slides" toggle. */
+  const [hoverId, setHoverId] = useState<string | null>(null);
   const showDiff = useEditor((s) => s.showDiff);
   const showBase = useEditor((s) => s.showBase);
   const ghostSlideId = useEditor((s) => s.ghostSlideId);
@@ -575,6 +578,33 @@ export function Canvas() {
           </div>
         );
       })()}
+      {!masterEdit && !design && !readOnly && sourceKind === 'markdown' && connectFrom === null && (() => {
+        const r = [hoverId, selected.length === 1 ? selected[0] : null].map((id) => (id ? byId.get(id) : undefined)).find((x) => x?.element.type === 'text' && x.element.placeholder && editingId !== x.element.id && (x.element.shared || x.element.paragraphs.length));
+        if (r?.element.type !== 'text') return null;
+        const shared = !!r.element.shared;
+        const key = r.element.placeholder!;
+        const label = shared
+          ? tr(`Valeur partagée par les diapositives ayant l’espace réservé « ${key} » — cliquer pour une valeur propre à cette diapositive`, `Value shared by the slides with placeholder “${key}” — click for a value specific to this slide`)
+          : tr(`Partager cette valeur sur toutes les diapositives ayant l’espace réservé « ${key} »`, `Share this value on all slides with placeholder “${key}”`);
+        return (
+          <button
+            type="button"
+            className={`share-toggle${shared ? ' is-shared' : ''}`}
+            data-testid="share-toggle"
+            aria-pressed={shared}
+            aria-label={label}
+            title={label}
+            style={{ left: (r.box.x + r.box.w) * PPI - 4 / zoom, top: r.box.y * PPI + 4 / zoom, transform: `translateX(-100%) scale(${1 / zoom})` }}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              mutate([{ kind: 'shareText', slideId: slide.id, elementId: r.element.id, shared: !shared }]);
+            }}
+          >
+            <Icon name="link" size={14} />
+          </button>
+        );
+      })()}
       {showDiff && <DiffMarks slideId={slide.id} byId={byId} diff={diff} zoom={zoom} />}
       {anchors.filter((a) => a.slideId === slide.id).map((a, i) => {
         const r = a.elementId ? byId.get(a.elementId) : undefined;
@@ -639,6 +669,11 @@ export function Canvas() {
           style={{ width: W * PPI * zoom, height: H * PPI * zoom }}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerOver={(e) => {
+            const t = e.target as HTMLElement;
+            if (!t.closest('.share-toggle')) setHoverId(t.closest<HTMLElement>('[data-element-id]')?.dataset.elementId ?? null);
+          }}
+          onPointerLeave={() => setHoverId(null)}
           onPointerDownCapture={(e) => {
             if (masterEdit) {
               // Master editing: slide elements are inert, layout objects are picked and dragged.

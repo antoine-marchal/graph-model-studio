@@ -40,4 +40,15 @@ describe('PowerPoint clipboard (GVML) → elements', () => {
     expect(table).toMatchObject({ type: 'table', x: 4, rows: [['A', 'B'], ['1', '2']] });
     expect(table?.type === 'table' && table.cellStyles?.[0]?.[0]).toEqual({ fill: '#FFC000' });
   });
+
+  it('keeps the corner of a rounded, outlined text box (default adj = 1/6 of the short side)', async () => {
+    const box = `<a:sp><a:nvSpPr><a:cNvPr id="6" name="TextBox 5"/><a:cNvSpPr txBox="1"/></a:nvSpPr>
+<a:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="2743200" cy="1828800"/></a:xfrm><a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom><a:ln w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></a:spPr>
+<a:txSp><a:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>Note</a:t></a:r></a:p></a:txBody><a:useSpRect/></a:txSp></a:sp>`;
+    const zip = new JSZip();
+    zip.file('[Content_Types].xml', '<Types/>');
+    zip.file('clipboard/drawings/drawing1.xml', DRAWING.replace('<a:graphicFrame>', `${box}<a:graphicFrame>`));
+    const { elements } = await convertClipboardDrawing(await zip.generateAsync({ type: 'uint8array' }), master);
+    expect(elements[1]).toMatchObject({ type: 'text', style: { line: '#FF0000', radius: 0.3333 } });
+  });
 });

@@ -221,7 +221,7 @@ function polygon(n: number, w: number, h: number, inner?: number): string {
  * SVG path of a preset geometry in a w×h box (px). `radius` is the corner size in px; `adjust`
  * holds the OOXML adjustment values (see adjust.ts), PowerPoint's defaults when absent.
  */
-export function shapePath(kind: string, w: number, h: number, radius = Math.min(w, h) * 0.15, adjust?: Record<string, number>): string {
+export function shapePath(kind: string, w: number, h: number, radius = Math.min(w, h) / 6, adjust?: Record<string, number>): string {
   const m = Math.min(w, h);
   const a = adjOf(kind, adjust);
   const f = (k: string, max = 100000) => clamp(a[k] ?? 0, 0, max) / 100000;
@@ -394,7 +394,7 @@ function ShapeSvg({ r }: { r: ResolvedElement }) {
   const fill = s.fill ? hex(s.fill) : 'none';
   const fillOpacity = 1 - s.transparency / 100;
   const common = { fill, fillOpacity, stroke, strokeWidth: sw, strokeDasharray: dash, vectorEffect: 'non-scaling-stroke' as const };
-  const radius = Math.min(s.radius === null ? Math.min(w, h) * 0.15 : px(s.radius), Math.min(w, h) / 2);
+  const radius = Math.min(s.radius === null ? Math.min(w, h) / 6 : px(s.radius), Math.min(w, h) / 2);
   let shape: ReactNode;
   if (el.shape === 'rect') shape = <rect x={0} y={0} width={w} height={h} {...common} />;
   else if (el.shape === 'roundRect') shape = <rect x={0} y={0} width={w} height={h} rx={radius} ry={radius} {...common} />;
@@ -490,6 +490,7 @@ export function StaticObjectView({ o, assets, metadata, resolved, master }: { o:
           whiteSpace: 'pre-wrap',
           background: (opts.fill as { color?: string } | undefined)?.color ? hex((opts.fill as { color: string }).color) : undefined,
           border: line?.color ? `${Math.max(1, ptPx(line.width ?? 0.75))}px ${line.dashType === 'sysDot' ? 'dotted' : line.dashType ? 'dashed' : 'solid'} #${line.color}` : undefined,
+          borderRadius: opts.rectRadius ? px(opts.rectRadius as number) : undefined,
           boxSizing: 'border-box',
         }}
       >
@@ -519,6 +520,7 @@ export function elementBoxStyle(r: ResolvedElement): CSSProperties {
 const textChrome = (r: ResolvedElement): CSSProperties => ({
   background: r.style.fill && (r.element.style?.fill || r.placeholder?.style.fill) ? hex(r.style.fill) : undefined,
   border: r.style.line ? `${ptPx(r.style.lineWidth)}px ${cssDash(r.style.dash)} ${hex(r.style.line)}` : undefined,
+  borderRadius: r.style.radius ? px(r.style.radius) : undefined,
 });
 
 /** What stays visible behind the inline text editor: the shape geometry or the text box decoration. */

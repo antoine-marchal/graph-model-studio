@@ -99,6 +99,8 @@ export const ElementStyle = z
     lineSpacing: z.number().min(0.5).max(4).optional(),
     /** Corner radius in inches (roundRect / snip1Rect corners). */
     radius: z.number().min(0).max(20).optional(),
+    /** Inner text margins in inches: [top, right, bottom, left]. */
+    margin: z.tuple([z.number().min(0).max(10), z.number().min(0).max(10), z.number().min(0).max(10), z.number().min(0).max(10)]).optional(),
     /** Bullet character of the element's bulleted list items (overrides the template). */
     bullet: z.string().min(1).max(2).optional(),
     /** Numbering scheme of the element's ordered list items. */
@@ -144,7 +146,13 @@ const ElementBase = {
   source: SourceRef.optional(),
 };
 
-export const TextElement = z.object({ ...ElementBase, type: z.literal('text'), paragraphs: z.array(Paragraph) });
+export const TextElement = z.object({
+  ...ElementBase,
+  type: z.literal('text'),
+  paragraphs: z.array(Paragraph),
+  /** Text of the deck-wide `shared:` value of its placeholder (computed by the parser, not stored on the slide). */
+  shared: z.boolean().optional(),
+});
 export const ShapeElement = z.object({
   ...ElementBase,
   type: z.literal('shape'),
@@ -345,6 +353,8 @@ export const PlaceholderDef = z.object({
     lineWidth: z.number().optional(),
     dash: z.enum(['solid', 'dash', 'dot']).optional(),
     fill: z.string().optional(),
+    /** Corner radius in inches of a rounded placeholder box. */
+    radius: z.number().optional(),
   }),
   levels: z.array(LevelStyle).optional(),
   prompt: z.string().optional(),

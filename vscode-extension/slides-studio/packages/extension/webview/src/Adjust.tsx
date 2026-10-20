@@ -30,11 +30,11 @@ function handlesFor(r: ResolvedElement): AdjHandle[] {
   const L = { radius: tr('Arrondi du coin', 'Corner rounding'), head: tr('Longueur de la pointe', 'Head length'), shaft: tr('Épaisseur du corps', 'Shaft thickness'), size: tr('Ajuster la forme', 'Adjust shape') };
   switch (el.shape) {
     case 'roundRect': {
-      const rr = Math.min(r.style.radius === null ? ss * 0.15 : r.style.radius * PPI, ss / 2);
+      const rr = Math.min(r.style.radius === null ? ss / 6 : r.style.radius * PPI, ss / 2);
       return [{ id: 'radius', label: L.radius, x: rr, y: 0, apply: (px) => ({ style: { radius: round4(clamp(px, 0, ss / 2) / PPI) } }) }];
     }
     case 'snip1Rect': {
-      const rr = Math.min(r.style.radius === null ? ss * 0.15 : r.style.radius * PPI, ss / 2);
+      const rr = Math.min(r.style.radius === null ? ss / 6 : r.style.radius * PPI, ss / 2);
       return [{ id: 'radius', label: L.radius, x: w - rr, y: 0, apply: (px) => ({ style: { radius: round4(clamp(w - px, 0, ss / 2) / PPI) } }) }];
     }
     case 'triangle':

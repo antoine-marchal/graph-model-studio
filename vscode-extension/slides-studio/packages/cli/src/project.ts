@@ -42,7 +42,7 @@ export async function loadMasterFor(sourcePath: string): Promise<{ masterDir: st
 }
 
 export function parseWithMaster(text: string, kind: SourceKind, master: CorporateMaster) {
-  return parseSource(text, kind, { dimensions: master.dimensions });
+  return parseSource(text, kind, { dimensions: master.dimensions, master });
 }
 
 export async function loadProject(sourcePath: string): Promise<LoadedProject> {

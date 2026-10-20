@@ -28,7 +28,7 @@ let master: CorporateMaster;
 const toWebview = (m: HostMessage) => window.postMessage(m, '*');
 
 function pushDocument() {
-  const { doc, errors } = parseSource(text, kind, { dimensions: master.dimensions });
+  const { doc, errors } = parseSource(text, kind, { dimensions: master.dimensions, master });
   const assetUrls: Record<string, string> = {};
   for (const a of master.assets) {
     const f = a.preview ?? (/\.(png|jpe?g|gif|svg)$/i.test(a.file) ? a.file : null);
@@ -40,7 +40,7 @@ function pushDocument() {
 
 async function pushBase(base: 'none' | 'head' | 'mr') {
   const text = base === 'none' || !baseFile ? null : await fetch(`/__file?path=${encodeURIComponent(baseFile)}`).then((r) => r.text());
-  const doc = text === null ? null : parseSource(text, sourceKindOf(baseFile!)!, { dimensions: master.dimensions }).doc;
+  const doc = text === null ? null : parseSource(text, sourceKindOf(baseFile!)!, { dimensions: master.dimensions, master }).doc;
   toWebview({ type: 'diffBase', base, label: base === 'mr' ? 'base de !42' : 'HEAD', doc, available: reviewMode ? ['none', 'mr'] : ['none', 'head', 'mr'] });
 }
 
@@ -105,11 +105,11 @@ window.acquireVsCodeApi = () => ({
       case 'listGmc':
         return toWebview({ type: 'gmcFiles', files: ['diagrams/landscape.gmc'] });
       case 'insertGmc': {
-        const { doc } = parseSource(text, kind, { dimensions: master.dimensions });
+        const { doc } = parseSource(text, kind, { dimensions: master.dimensions, master });
         const slide = doc.slides.find((s) => s.id === msg.slideId)!;
         const id = ['diagram', ...Array.from({ length: 50 }, (_, i) => `diagram-${i + 1}`)].find((x) => !slide.elements.some((e) => e.id === x))!;
         undo.push(text);
-        setText(applyMutations(text, kind, [{ kind: 'addElement', slideId: slide.id, element: { id, type: 'image', src: msg.path, x: 2.67, y: 1.6, w: 8, h: 4.5, alt: 'Diagramme' } }], { dimensions: master.dimensions }));
+        setText(applyMutations(text, kind, [{ kind: 'addElement', slideId: slide.id, element: { id, type: 'image', src: msg.path, x: 2.67, y: 1.6, w: 8, h: 4.5, alt: 'Diagramme' } }], { dimensions: master.dimensions, master }));
         return toWebview({ type: 'select', slideId: slide.id, elementId: id });
       }
       case 'mutate': {
@@ -119,7 +119,7 @@ window.acquireVsCodeApi = () => ({
           return pushDocument();
         }
         try {
-          const next = applyMutations(text, kind, msg.tx.mutations, { dimensions: master.dimensions });
+          const next = applyMutations(text, kind, msg.tx.mutations, { dimensions: master.dimensions, master });
           undo.push(text);
           redo.length = 0;
           setText(next);

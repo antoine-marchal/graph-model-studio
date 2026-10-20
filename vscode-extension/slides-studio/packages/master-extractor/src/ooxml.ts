@@ -249,6 +249,8 @@ export interface PictureInfo {
   ph?: { type: string; idx?: string };
   /** Outline of the shape (`a:ln`, or the `p:style` line reference); `none` when explicitly off. */
   line?: OutlineInfo | 'none';
+  /** Corner radius in inches of a `roundRect` geometry (`adj`, default 16667 = 1/6 of the short side). */
+  radius?: number;
 }
 
 /** A shape outline as written in the part: literal or scheme color (with luminance modifiers), width in points. */
@@ -269,6 +271,10 @@ function colorIn(xml: string): OutlineInfo['color'] | undefined {
   const mod = /<a:lumMod val="(\d+)"/.exec(sc[2] ?? '')?.[1], off = /<a:lumOff val="(\d+)"/.exec(sc[2] ?? '')?.[1];
   return { scheme: sc[1]!, ...(mod ? { lumMod: Number(mod) / 100000 } : {}), ...(off ? { lumOff: Number(off) / 100000 } : {}) };
 }
+
+/** Corner radius (inches) of a roundRect from its `adj` (1/100000 of the short side, OOXML default 16667, max 50000). */
+export const cornerRadius = (adj: string | number | undefined, w: number, h: number): number =>
+  Math.round((Math.min(50000, Math.max(0, adj === undefined || adj === '' ? 16667 : Number(adj))) / 100000) * Math.min(w, h) * 10000) / 10000;
 
 /** Outline of a `p:sp` body: explicit `a:ln` in `p:spPr`, else the theme line its `p:style` references. */
 export function outlineIn(body: string): OutlineInfo | 'none' | undefined {
@@ -328,6 +334,7 @@ export async function picturesIn(zip: JSZip, part: string): Promise<PictureInfo[
       }
       const line = outlineIn(body);
       if (line) info.line = line;
+      if (/<a:prstGeom prst="roundRect"/.test(body)) info.radius = cornerRadius(/<a:gd name="adj" fmla="val (-?\d+)"/.exec(body)?.[1], info.w, info.h);
     }
     const sr = /<a:srcRect([^>]*)\/>/.exec(body)?.[1] ?? '';
     const v = (k: string) => Number(new RegExp(`\\b${k}="(-?\\d+)"`).exec(sr)?.[1] ?? 0) / 100000;

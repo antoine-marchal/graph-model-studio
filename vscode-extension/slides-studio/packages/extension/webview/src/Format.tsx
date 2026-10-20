@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   round4,
   uniqueId,
@@ -400,6 +400,55 @@ const ARROWS: { id: ArrowHead; label: string }[] = [
   { id: 'diamond', label: tr('Losange', 'Diamond') },
   { id: 'oval', label: tr('Rond', 'Round') },
 ];
+/** Inner margin sides, in the order of `style.margin`. */
+const MARGIN_SIDES = [
+  { id: 'top', label: tr('Marge haute', 'Top margin') },
+  { id: 'right', label: tr('Marge droite', 'Right margin') },
+  { id: 'bottom', label: tr('Marge basse', 'Bottom margin') },
+  { id: 'left', label: tr('Marge gauche', 'Left margin') },
+] as const;
+
+/**
+ * Box-model editor of the inner margins: one field on each side of a miniature text frame whose
+ * dashed inner edge previews the insets. The link in the middle keeps the four sides equal.
+ */
+function MarginBox({ margin, onCommit }: { margin: [number, number, number, number]; onCommit: (m: number[]) => void }) {
+  const [linked, setLinked] = useState(() => margin.every((m) => m === margin[0]));
+  const set = (i: number, v: number) => {
+    const n = Math.max(0, Math.min(10, round4(v)));
+    onCommit(linked ? [n, n, n, n] : margin.map((m, k) => (k === i ? n : m)));
+  };
+  // Preview: insets in px, readable at small values, capped so the frame never collapses.
+  const inset = (m: number) => Math.round(Math.min(16, 3 + m * 60));
+  const [t, rt, b, l] = margin;
+  return (
+    <div className="margin-box">
+      {MARGIN_SIDES.map((side, i) => (
+        <div key={side.id} className={`margin-box-field is-${side.id}`}>
+          <NumField className="compact" label={side.label} value={margin[i]} onCommit={(v) => set(i, v)} testId={`field-margin-${side.id}`} />
+        </div>
+      ))}
+      <div className="margin-box-frame" aria-hidden>
+        <div className="margin-box-content" style={{ top: inset(t), right: inset(rt), bottom: inset(b), left: inset(l) }} />
+      </div>
+      <button
+        type="button"
+        className={`margin-box-link${linked ? ' is-linked' : ''}`}
+        aria-pressed={linked}
+        aria-label={tr('Marges identiques sur les 4 côtés', 'Same margin on all 4 sides')}
+        title={linked ? tr('Marges liées : chaque champ règle les 4 côtés', 'Linked: each field sets all 4 sides') : tr('Lier les 4 marges', 'Link the 4 margins')}
+        data-testid="margin-link"
+        onClick={() => {
+          setLinked(!linked);
+          // Linking equalizes on the top margin, as design tools do.
+          if (!linked && !margin.every((m) => m === t)) onCommit([t, t, t, t]);
+        }}
+      >
+        <Icon name="link" size={13} />
+      </button>
+    </div>
+  );
+}
 const SIDES: { id: ConnectorSide; label: string }[] = [
   { id: 'auto', label: 'Auto' },
   { id: 'top', label: tr('Haut', 'Top') },
@@ -494,6 +543,24 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
             </label>
           </div>
           <button type="button" className="btn" onClick={() => upd({ from: el.to, to: el.from, fromSide: el.toSide ?? 'auto', toSide: el.fromSide ?? 'auto', fromPoint: el.toPoint ?? null, toPoint: el.fromPoint ?? null })}>{tr('⇄ Inverser le sens', '⇄ Reverse direction')}</button>
+        </Section>
+      )}
+
+      {(el.type === 'text' || (el.type === 'shape' && !isLine)) && (
+        <Section
+          title={tr('Marges intérieures', 'Inner margins')}
+          aside={
+            <span className="section-aside">
+              <span className="hint">{tr('pouces', 'inches')}</span>
+              {el.style?.margin && (
+                <button type="button" className="ibtn section-reset" onClick={() => style('margin', null)} title={tr('Revenir aux marges du modèle', 'Back to the template margins')} aria-label={tr('Revenir aux marges du modèle', 'Back to the template margins')} data-testid="margin-reset">
+                  <Icon name="refresh" size={12} />
+                </button>
+              )}
+            </span>
+          }
+        >
+          <MarginBox key={el.id} margin={r.style.margin} onCommit={(m) => style('margin', m)} />
         </Section>
       )}
 

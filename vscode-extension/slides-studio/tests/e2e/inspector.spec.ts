@@ -139,3 +139,27 @@ test('groups: Ctrl+G associates the selection, one click picks the whole group, 
   expect(await source(page)).not.toContain('group: group-2');
   expect((await source(page)).match(/group: group-1/g)).toHaveLength(2);
 });
+
+test('layout designer: a text box becomes a placeholder and back, keeping its style', async ({ page }) => {
+  await open(page, 'examples/corporate-demo/architecture.slides.yaml');
+  await page.getByTestId('tab-design').click();
+  await page.getByTestId('toggle-master-edit').click();
+  const layoutId = (await page.getByTestId('layout-id').innerText()).trim();
+  const layout = () => page.evaluate((id) => window.__harness.master().layouts.find((l) => l.id === id)!, layoutId);
+  const { objects: o0, placeholders: p0 } = await layout();
+  await page.getByTestId('tab-insert').click();
+  await page.getByTestId('add-text').click();
+  await expect.poll(async () => (await layout()).objects.length).toBe(o0.length + 1);
+  const box = (await page.locator('[data-selection]').first().boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+  await page.getByTestId('ctx-to-placeholder').click();
+  await expect.poll(async () => (await layout()).placeholders.length).toBe(p0.length + 1);
+  expect((await layout()).objects.length).toBe(o0.length);
+  const ph = (await layout()).placeholders.at(-1)!;
+  expect(ph.style.fontSize).toBeGreaterThan(0);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+  await page.getByTestId('ctx-to-element').click();
+  await expect.poll(async () => (await layout()).placeholders.length).toBe(p0.length);
+  expect((await layout()).objects.length).toBe(o0.length + 1);
+  expect(JSON.stringify((await layout()).objects.at(-1))).toContain(`"fontSize":${ph.style.fontSize}`);
+});

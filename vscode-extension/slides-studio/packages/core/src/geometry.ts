@@ -27,7 +27,7 @@ export interface ResolvedStyle {
   lineSpacing: number;
   /** Text insets [top, right, bottom, left] in inches (PowerPoint default 0.05/0.1). */
   margin: [number, number, number, number];
-  /** Corner radius in inches (roundRect, snip1Rect); null = preset default (15 % of the short side). */
+  /** Corner radius in inches (roundRect, snip1Rect); null = preset default (OOXML adj 16667: 1/6 of the short side). */
   radius: number | null;
   startArrow: ArrowHead;
   endArrow: ArrowHead;
@@ -134,8 +134,8 @@ export function resolveStyle(el: SlideElement, ph: PlaceholderDef | undefined, m
     align: s.align ?? ph?.style.align ?? (isShape ? 'center' : 'left'),
     valign: s.valign ?? ph?.style.valign ?? (isShape ? 'middle' : 'top'),
     lineSpacing: s.lineSpacing ?? 1,
-    margin: (ph?.style.margin as ResolvedStyle['margin'] | undefined) ?? DEFAULT_MARGIN,
-    radius: s.radius ?? null,
+    margin: s.margin ?? (ph?.style.margin as ResolvedStyle['margin'] | undefined) ?? DEFAULT_MARGIN,
+    radius: s.radius ?? ph?.style.radius ?? null,
     startArrow: s.startArrow ?? 'none',
     endArrow: s.endArrow ?? (el.type === 'connector' ? 'triangle' : 'none'),
     bullet: s.bullet ?? null,
@@ -220,6 +220,23 @@ export function resolveSlide(slide: SlideNode, master: CorporateMaster): Resolve
   }
   elements.sort((a, b) => a.z - b.z);
   return { slide, layout, elements };
+}
+
+/**
+ * Everything an element shows, as explicit element style: what it inherits from its placeholder
+ * (or the defaults) plus its own overrides. Used to copy a placeholder or turn it into a plain element.
+ */
+export function explicitStyle(r: ResolvedElement): ElementStyle {
+  const s = r.style;
+  const hex = (c: string | null) => (c && /^[0-9a-fA-F]{6}$/.test(c) ? `#${c.toUpperCase()}` : undefined);
+  const out: ElementStyle = {
+    fontFace: s.fontFace, fontSize: s.fontSize, color: hex(s.color), bold: s.bold || undefined, italic: s.italic || undefined,
+    align: s.align, valign: s.valign, lineSpacing: s.lineSpacing !== 1 ? s.lineSpacing : undefined,
+    fill: hex(s.fill), line: hex(s.line), radius: s.radius ?? undefined, margin: s.margin,
+    bullet: s.bullet ?? r.placeholder?.levels?.[0]?.bullet?.char ?? undefined,
+  };
+  if (out.line) Object.assign(out, { lineWidth: s.lineWidth, ...(s.dash !== 'solid' ? { dash: s.dash } : {}) });
+  return { ...(Object.fromEntries(Object.entries(out).filter(([, v]) => v !== undefined)) as ElementStyle), ...(r.element.style ?? {}) };
 }
 
 /** Bounding-box geometry of a static object, in its own option format. */

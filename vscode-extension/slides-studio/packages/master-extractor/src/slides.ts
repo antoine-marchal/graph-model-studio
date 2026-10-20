@@ -17,7 +17,7 @@ import {
   type SlideNode,
   type TextRun,
 } from '@corporate-slides/core';
-import { readRels, readText, type Rel } from './ooxml.js';
+import { cornerRadius, readRels, readText, type Rel } from './ooxml.js';
 import { loadZipSafely } from './safety.js';
 
 /*
@@ -357,6 +357,10 @@ async function convertTree(tree: X | undefined, ctx: TreeContext): Promise<Slide
           const c = colorOf(lnRef, master);
           if (c && c !== 'none') Object.assign(line, { line: c, ...(line.lineWidth ? {} : { lineWidth: 0.75 }) });
         }
+        // Preset adjustments (avLst); a rounded text box or placeholder keeps its corner radius.
+        const gds = all(path(spPr, 'a:prstGeom', 'a:avLst'), 'a:gd').map((gd) => [attr(gd, 'name') ?? '', Number(/val (-?\d+)/.exec(attr(gd, 'fmla') ?? '')?.[1])] as const).filter(([k, v]) => /^adj\d?$/.test(k) && Number.isFinite(v));
+        const adjOf = gds.find(([k]) => k === 'adj')?.[1];
+        if (prst === 'roundRect' && g) line.radius = cornerRadius(adjOf, g.w, g.h);
         if (child(spPr, 'a:custGeom')) warnings.push(`${where} : ${tr('forme libre', 'freeform shape')} « ${name} » ${tr('convertie en rectangle', 'converted to a rectangle')}`);
         if (child(spPr, 'a:gradFill')) warnings.push(`${where} : ${tr('dégradé de', 'gradient of')} « ${name} » ${tr('non repris', 'not kept')}`);
         if (ph) {
@@ -380,11 +384,10 @@ async function convertTree(tree: X | undefined, ctx: TreeContext): Promise<Slide
         if (text?.style.align === 'center') delete text.style.align;
         if (text?.style.valign === 'middle') delete text.style.valign;
         if (prst && !SHAPES.has(prst)) warnings.push(`${where} : ${tr('forme', 'shape')} « ${prst} » ${tr('remplacée par un rectangle', 'replaced by a rectangle')} (« ${name} »)`);
-        // Preset adjustments (avLst): roundRect / snip1Rect corners become the radius, the rest is kept as is.
-        const gds = all(path(spPr, 'a:prstGeom', 'a:avLst'), 'a:gd').map((gd) => [attr(gd, 'name') ?? '', Number(/val (-?\d+)/.exec(attr(gd, 'fmla') ?? '')?.[1])] as const).filter(([k, v]) => /^adj\d?$/.test(k) && Number.isFinite(v));
-        const corner = (shape === 'roundRect' || shape === 'snip1Rect') && gds.find(([k]) => k === 'adj');
+        // roundRect / snip1Rect corners become the radius, other adjustments are kept as is.
+        const corner = shape === 'roundRect' || shape === 'snip1Rect';
         const adjust = !corner && gds.length ? { adjust: Object.fromEntries(gds) } : {};
-        if (corner) line.radius = round4((corner[1] / 100000) * Math.min(g.w, g.h));
+        if (shape === 'snip1Rect') line.radius = cornerRadius(adjOf, g.w, g.h);
         push({
           id: idFor(name, 'shape'), type: 'shape', name, shape, ...geom, ...hidden, ...adjust,
           ...(g.flipH ? { flipH: true } : {}), ...(g.flipV ? { flipV: true } : {}),

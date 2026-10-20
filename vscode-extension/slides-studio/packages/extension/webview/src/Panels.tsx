@@ -99,7 +99,7 @@ export function Menu({ trigger, children, testId }: { trigger: (open: () => void
 }
 
 /** Numeric field that commits on Enter/blur, with −/+ buttons and arrow-key stepping. */
-export function NumField({ label, value, onCommit, step = 0.05, unit, testId, disabled }: { label: string; value: number | undefined; onCommit: (v: number) => void; step?: number; unit?: string; testId?: string; disabled?: boolean }) {
+export function NumField({ label, value, onCommit, step = 0.05, unit, testId, disabled, className }: { label: string; value: number | undefined; onCommit: (v: number) => void; step?: number; unit?: string; testId?: string; disabled?: boolean; className?: string }) {
   const [text, setText] = useState(value === undefined ? '' : String(round4(value)));
   useEffect(() => setText(value === undefined ? '' : String(round4(value))), [value]);
   const parsed = Number(text.replace(',', '.'));
@@ -113,7 +113,7 @@ export function NumField({ label, value, onCommit, step = 0.05, unit, testId, di
     onCommit(v);
   };
   return (
-    <label className="numfield">
+    <label className={`numfield${className ? ` ${className}` : ''}`}>
       <span className="numfield-label">{label}</span>
       <input
         inputMode="decimal"

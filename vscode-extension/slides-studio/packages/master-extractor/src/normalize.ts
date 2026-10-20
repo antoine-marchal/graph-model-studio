@@ -175,6 +175,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
       const samePh = (q: PictureInfo) => q.ph && q.ph.type === (p.type ?? 'body') && (q.ph.idx === p.idx || !p.idx || p.type === 'title' || p.type === 'ctrTitle');
       const masterType = ({ ctrTitle: 'title', subTitle: 'body', obj: 'body' } as Record<string, string>)[p.type ?? ''] ?? p.type ?? 'body';
       const phLine = (pictures.get(l._file) ?? []).find((q) => q.line && (nearPh(q) || samePh(q)))?.line ?? (pictures.get(mPart) ?? []).find((q) => q.line && q.ph?.type === masterType)?.line;
+      const phRadius = ((pictures.get(l._file) ?? []).find((q) => nearPh(q) || samePh(q)) ?? (pictures.get(mPart) ?? []).find((q) => q.ph?.type === masterType))?.radius;
       const outline = phLine && phLine !== 'none' ? outlineHex(phLine.color, r.themeColors) : undefined;
       const bodyLevels = toLevels(type === 'title' ? null : ts.body, p.textProps?.lstStyleProps);
       return {
@@ -195,6 +196,7 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
           valign: opt.valign === 'middle' || opt.valign === 'bottom' || opt.valign === 'top' ? opt.valign : undefined,
           margin: Array.isArray(opt.margin) && opt.margin.length === 4 ? (opt.margin as number[]) : undefined,
           ...(outline && phLine !== 'none' ? { line: outline, lineWidth: phLine!.width, ...(phLine!.dash ? { dash: phLine!.dash } : {}) } : {}),
+          ...(phRadius ? { radius: phRadius } : {}),
         },
         levels: type === 'title' ? undefined : bodyLevels,
       };
@@ -234,6 +236,10 @@ export function buildCorporateMaster({ r, inv, textStyles, source, assets, asset
         // Small images near a corner are treated as logos for overlap checks.
         if (box && box.w * box.h < 6 && (box.x < 2 || box.x + box.w > W - 3) && (box.y < 1.8 || box.y + box.h > H - 1)) role = 'logo';
       }
+      // pptx-masters guesses 0.1 in for a roundRect without `adj` and drops text box geometry: take the radius from the part.
+      const radius = box && partShapes.find((q) => q.kind === 'sp' && !q.ph && q.radius !== undefined && same(q))?.radius;
+      if (kind === 'rect' && radius !== undefined) obj.rect!.rectRadius = radius;
+      if (kind === 'text' && radius) obj.text!.options = { ...((obj.text!.options ?? {}) as Record<string, unknown>), shape: 'roundRect', rectRadius: radius };
       if (kind === 'text' && box) {
         // pptx-masters drops text box outlines: recover them from the part (matched by geometry).
         const ln = partShapes.find((q) => q.kind === 'sp' && q.line && q.line !== 'none' && same(q))?.line;

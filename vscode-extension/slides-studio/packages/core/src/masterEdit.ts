@@ -73,7 +73,7 @@ export function newLayout(master: CorporateMaster, slide: SlideNode, from: NewLa
             ...g,
             fontFace: s.fontFace, fontSize: s.fontSize, color: s.color, align: s.align, valign: s.valign, margin: s.margin,
             ...(s.bold ? { bold: true } : {}), ...(s.italic ? { italic: true } : {}),
-            ...(withChrome ? { ...(el.style?.fill ? fill : {}), ...line } : {}),
+            ...(withChrome ? { ...(el.style?.fill ? fill : {}), ...line, ...(s.radius ? { shape: 'roundRect', rectRadius: s.radius } : {}) } : {}),
           },
         },
       },
@@ -87,7 +87,7 @@ export function newLayout(master: CorporateMaster, slide: SlideNode, from: NewLa
       layout.objects.push(textObject(true));
       converted.push(el.id);
     } else if (el.type === 'shape' && (el.shape === 'rect' || el.shape === 'roundRect')) {
-      layout.objects.push({ role: 'decoration', object: { rect: { ...g, ...fill, ...line, ...(el.shape === 'roundRect' ? { rectRadius: s.radius ?? Math.min(g.w, g.h) * 0.15 } : {}) } } });
+      layout.objects.push({ role: 'decoration', object: { rect: { ...g, ...fill, ...line, ...(el.shape === 'roundRect' ? { rectRadius: s.radius ?? Math.min(g.w, g.h) / 6 } : {}) } } });
       if (text.trim()) layout.objects.push(textObject(false));
       converted.push(el.id);
     } else if (el.type === 'shape' && el.shape === 'line') {

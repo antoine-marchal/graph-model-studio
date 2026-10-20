@@ -309,6 +309,8 @@ export function applyDslMutations(text: string, model: SlideDocument, mutations:
         else node.delete('masterOverrides');
         break;
       }
+      case 'shareText':
+        throw new MutationError(tr('Valeurs partagées : disponibles dans les fichiers .deck uniquement', 'Shared values: only available in .deck files'));
     }
     // Re-derive the model so subsequent mutations in the transaction see consistent indexes.
     current = parseDsl(d.toString({ lineWidth: 0 }), { dimensions: current.dimensions }).doc;

@@ -1,4 +1,4 @@
-import type { SlideDocument } from '@corporate-slides/core';
+import type { CorporateMaster, SlideDocument } from '@corporate-slides/core';
 import type { ZodError } from 'zod';
 
 export type SourceKind = 'markdown' | 'dsl';
@@ -6,6 +6,8 @@ export type SourceKind = 'markdown' | 'dsl';
 export interface ParseOptions {
   /** Slide dimensions from the corporate master (inches). */
   dimensions?: { width: number; height: number };
+  /** Corporate master: deck-wide `shared:` placeholder values only fill slides whose layout has the placeholder. */
+  master?: CorporateMaster;
 }
 
 export interface ParseResult {

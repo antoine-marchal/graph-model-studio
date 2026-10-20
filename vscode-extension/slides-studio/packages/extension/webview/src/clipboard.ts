@@ -1,4 +1,4 @@
-import { resolveSlide, round4, tr, uniqueId, type CellStyle, type ElementStyle, type Mutation, type SlideElement } from '@corporate-slides/core';
+import { explicitStyle, resolveSlide, round4, tr, uniqueId, type CellStyle, type ElementStyle, type Mutation, type SlideElement } from '@corporate-slides/core';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
 import { freshGroups } from './Format';
@@ -38,19 +38,23 @@ function selection(): Clip | null {
   const st = useEditor.getState();
   const slide = currentSlide(st);
   if (!slide || !st.master || !st.selected.length) return null;
-  const boxes = new Map(resolveSlide(slide, st.master).elements.map((r) => [r.element.id, r.box]));
+  const resolved = new Map(resolveSlide(slide, st.master).elements.map((r) => [r.element.id, r]));
   const ids = new Set(st.selected);
   const elements = slide.elements
     .filter((e) => ids.has(e.id) && (e.type !== 'connector' || (ids.has(e.from) && ids.has(e.to))))
     .map((e) => {
-      const { source: _s, z: _z, ...rest } = e as SlideElement & { source?: unknown };
-      const b = boxes.get(e.id);
-      return (e.type === 'connector' || !b ? rest : { ...rest, x: b.x, y: b.y, w: b.w, h: b.h }) as SlideElement;
+      const { source: _s, z: _z, shared: _sh, ...rest } = e as SlideElement & { source?: unknown; shared?: boolean };
+      const r = resolved.get(e.id);
+      if (e.type === 'connector' || !r) return rest as SlideElement;
+      const placed = { ...rest, x: r.box.x, y: r.box.y, w: r.box.w, h: r.box.h } as SlideElement;
+      // A copied placeholder stays a placeholder and keeps the look it inherited, whatever the target layout.
+      return (r.placeholder ? { ...placed, style: explicitStyle(r) } : placed) as SlideElement;
     });
   // Elements without text still need a recognisable clipboard text (the host may only relay text).
   const text = elements.map(plainText).filter(Boolean).join('\n') || `[Corporate Slides : ${elements.length} ${elements.length > 1 ? tr('éléments', 'elements') : tr('élément', 'element')}]`;
   return elements.length ? { slideId: slide.id, elements, text, pastes: 0 } : null;
 }
+
 
 function writeClip(clip: Clip, data: DataTransfer | null) {
   last = clip;
@@ -80,8 +84,8 @@ function pasteElements(elements: SlideElement[], fromSlide: string, clip?: Clip)
     const id = uniqueId(e.type, [...taken, ...remap.values()]);
     remap.set(e.id, id);
   }
-  // Same slide: each paste steps down-right so copies do not stack invisibly.
-  const n = clip ? ++clip.pastes - (fromSlide === slide.id ? 0 : 1) : fromSlide === slide.id ? 1 : 0;
+  // Same slide: each paste steps down-right so copies do not stack invisibly. Another slide: exact source position.
+  const n = fromSlide !== slide.id ? 0 : clip ? ++clip.pastes : 1;
   const d = 0.2 * n;
   const regroup = freshGroups(slide);
   const ms: Mutation[] = elements.map((e) => {

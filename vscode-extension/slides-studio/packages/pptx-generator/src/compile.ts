@@ -263,6 +263,7 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
         const opts2: Record<string, unknown> = { ...common, ...textBoxOptions(r) };
         if (bound) opts2.placeholder = r.placeholder!.key;
         if (el.style?.fill || el.style?.line || r.placeholder?.style.fill || r.placeholder?.style.line) Object.assign(opts2, fillLine(r));
+        if (r.style.radius) Object.assign(opts2, { shape: 'roundRect', rectRadius: r.style.radius });
         s.addText(textRuns(r, el.paragraphs, master) as never, opts2 as never);
         stats.nativeText++;
         if (bound) stats.placeholderBound++;
@@ -270,7 +271,7 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
       }
       case 'shape': {
         const base = { ...common, ...fillLine(r), ...(el.flipH ? { flipH: true } : {}), ...(el.flipV ? { flipV: true } : {}) };
-        if (el.shape === 'roundRect' || el.shape === 'snip1Rect') (base as Record<string, unknown>).rectRadius = r.style.radius ?? Math.min(r.box.w, r.box.h) * 0.15;
+        if (el.shape === 'roundRect' || el.shape === 'snip1Rect') (base as Record<string, unknown>).rectRadius = r.style.radius ?? Math.min(r.box.w, r.box.h) / 6;
         // Preset names are the OOXML prstGeom names; `line` is pptxgenjs' straight line.
         if (el.adjust && el.shape !== 'roundRect' && el.shape !== 'snip1Rect') if (slideNo !== undefined) stats.adjustments.push({ slide: slideNo, name: el.id, values: el.adjust });
         if (el.paragraphs?.length) {

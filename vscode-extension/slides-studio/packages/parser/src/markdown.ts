@@ -6,6 +6,8 @@ import type { Root, RootContent, PhrasingContent, Table } from 'mdast';
 import {
   applyToDocument,
   assertFreeId,
+  findLayout,
+  findPlaceholder,
   formatInline,
   isPlainRepresentable,
   MutationError,
@@ -16,6 +18,7 @@ import {
   withMasterOverride,
   SlideDocument,
   SlideElement,
+  type CorporateMaster,
   type Mutation,
   type Paragraph,
   type SlideNode,
@@ -64,7 +67,7 @@ export interface MdModel {
 }
 
 const SLIDE_FM_KEYS = new Set(['id', 'layout', 'notes', 'hidden', 'masterOverrides', 'elements']);
-const DOC_FM_KEYS = new Set(['title', 'author', 'subject', 'footer', 'date', 'master', 'theme', 'constraints']);
+const DOC_FM_KEYS = new Set(['title', 'author', 'subject', 'footer', 'date', 'master', 'theme', 'constraints', 'shared']);
 const SEP_RE = /^---[ \t]*$/;
 const FENCE_RE = /^\s*(```|~~~)/;
 const SLOT_OPEN_RE = /^:::[ \t]*([A-Za-z][\w-]*)(?:[ \t]*\{#([A-Za-z0-9][\w-]*)\})?[ \t]*$/;
@@ -383,9 +386,14 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
     if (target) {
       const { id: _i, type: _t, content: _c, paragraphs: _p, ...override } = r;
       const style = target.style || override.style ? { ...(target.style ?? {}), ...((override.style as object) ?? {}) } : undefined;
-      const merged = SlideElement.safeParse({ ...target, ...override, ...(style ? { style } : {}) });
-      if (merged.success) Object.assign(target, merged.data);
-      else errors.push(tr(`Diapositive « ${s.id} », surcharge « ${id} » : ${formatZodError(merged.error)}`, `Slide “${s.id}”, override “${id}”: ${formatZodError(merged.error)}`));
+      // A full definition (`type`, no `placeholder`) for a `::: id` block is a free text box whose text is the block.
+      const free = r.type !== undefined && r.placeholder === undefined && s.blocks.some((b) => b.kind === 'slot' && b.elementId === id);
+      const { placeholder: _ph, ...unbound } = target;
+      const merged = SlideElement.safeParse({ ...(free ? unbound : target), ...override, ...(style ? { style } : {}) });
+      if (merged.success) {
+        Object.assign(target, merged.data);
+        if (free) delete target.placeholder;
+      } else errors.push(tr(`Diapositive « ${s.id} », surcharge « ${id} » : ${formatZodError(merged.error)}`, `Slide “${s.id}”, override “${id}”: ${formatZodError(merged.error)}`));
     } else {
       const parsed = SlideElement.safeParse(dslToElement(r));
       if (parsed.success) elements.push({ ...parsed.data, source: src(fmItemRange(text, s.fm!, k) ?? s.fm!, 'markdown-frontmatter') });
@@ -424,6 +432,7 @@ export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResul
       source: { kind: 'markdown', startLine, endLine: lineOf(Math.max(s.bodyStart, s.end - 1)) },
     };
   });
+  if (opts.master && model.docFm) injectShared(slides, sharedValues(fm), opts.master, { kind: 'markdown-frontmatter', startLine: lineOf(model.docFm.start), endLine: lineOf(Math.max(model.docFm.start, model.docFm.end - 1)) });
   const candidate = {
     version: '1',
     metadata: { title: String(fm.title ?? tr('Présentation', 'Presentation')), author: fm.author, subject: fm.subject, footer: fm.footer, date: fm.date },
@@ -438,6 +447,53 @@ export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResul
   errors.push(formatZodError(r.error));
   return { doc: { ...candidate, metadata: { title: candidate.metadata.title }, constraints: undefined, slides: slides.filter((s) => /^[A-Za-z0-9][\w-]*$/.test(s.id)) } as SlideDocument, errors, model };
 }
+
+/** Deck-wide placeholder values (`shared:` in the deck header): placeholder key → Markdown. */
+function sharedValues(fm: Record<string, unknown>): Record<string, string> {
+  const v = fm.shared;
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+  return Object.fromEntries(Object.entries(v).filter(([k, t]) => /^[A-Za-z][\w-]*$/.test(k) && (typeof t === 'string' || typeof t === 'number')).map(([k, t]) => [k, String(t)]));
+}
+
+/**
+ * Shared values fill the matching placeholder of every slide whose layout has it, unless the slide
+ * has its own element there (its specific value). The injected elements are flagged `shared`.
+ */
+function injectShared(slides: SlideNode[], shared: Record<string, string>, master: CorporateMaster, source: SlideElement['source']): void {
+  for (const [key, body] of Object.entries(shared)) {
+    const paragraphs = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
+    for (const slide of slides) {
+      const layout = findLayout(master, slide.layout);
+      const ph = findPlaceholder(layout, key);
+      if (!ph || slide.elements.some((e) => e.placeholder && findPlaceholder(layout, e.placeholder) === ph)) continue;
+      const taken = new Set(slide.elements.map((e) => e.id));
+      let id = key;
+      for (let n = 1; taken.has(id); n++) id = `${key}-shared${n > 1 ? `-${n}` : ''}`;
+      slide.elements.push({ id, type: 'text', placeholder: key, paragraphs: structuredClone(paragraphs), shared: true, source });
+    }
+  }
+}
+
+/** Edit (or create) the deck header. */
+function editDocFm(text: string, fn: (d: Document) => void): string {
+  const { docFm } = buildMdModel(text);
+  const d = docFm ? parseDocument(text.slice(docFm.start, docFm.end)) : new Document({});
+  fn(d);
+  let y = d.toString({ lineWidth: 0 });
+  if (!y.endsWith('\n')) y += '\n';
+  return docFm ? splice(text, docFm, y) : `---\n${y}---\n\n${text}`;
+}
+
+/** Set `shared.<key>` in the deck header (multi-line values as block literals). */
+function setShared(d: Document, key: string, body: string): void {
+  if (!isMap(d.get('shared'))) d.set('shared', d.createNode({}));
+  const node = d.createNode(body);
+  if (body.includes('\n')) (node as { type?: string }).type = 'BLOCK_LITERAL';
+  (d.get('shared') as YAMLMap).set(key, node);
+}
+
+const isShared = (doc: SlideDocument, si: number, id: string) => doc.slides[si]?.elements.some((e) => e.id === id && e.type === 'text' && e.shared) ?? false;
+const sharedLocked = () => new MutationError(tr('Texte partagé par plusieurs diapositives : détachez-le (icône en haut à droite) pour le modifier ici.', 'Text shared by several slides: detach it (top-right icon) to change it here.'));
 
 /* ------------------------------------------------------------------ */
 /* Format-preserving edits                                             */
@@ -551,7 +607,7 @@ function rewriteBlock(text: string, block: MdBlock, paragraphs: Paragraph[]): st
   }
 }
 
-function applyOne(text: string, m: Mutation, current: SlideDocument): string {
+function applyOne(text: string, m: Mutation, current: SlideDocument, opts: ParseOptions = {}): string {
   const model = buildMdModel(text);
   // Recompute derived blocks for the slide(s) we touch.
   const parsedModel = parseMarkdown(text).model;
@@ -561,7 +617,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     const implicit = model.slides.findIndex((s) => !s.explicitId);
     if (implicit >= 0) {
       const id = model.slides[implicit]!.id;
-      return applyOne(editSlideFm(text, implicit, (d) => d.set('id', id)), m, current);
+      return applyOne(editSlideFm(text, implicit, (d) => d.set('id', id)), m, current, opts);
     }
   }
   switch (m.kind) {
@@ -605,6 +661,11 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       }
       const el = current.slides[si]?.elements.find((e) => e.id === m.elementId);
       if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
+      if (el.type === 'text' && el.shared) {
+        // Editing a shared text changes it on every slide showing it; anything else needs a detached copy.
+        if (!paragraphs || Object.values(rest).some((v) => v !== undefined) || src !== undefined || rows || colAlign || !isPlainRepresentable(paragraphs)) throw sharedLocked();
+        return editDocFm(out, (d) => setShared(d, el.placeholder!, paragraphsToMarkdown(paragraphs)));
+      }
       const fmNode = (d: Document) => {
         const node = fmEntry(d, m.elementId, false);
         if (!node) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable dans l'en-tête`, `Element “${m.elementId}” not found in the header`));
@@ -643,6 +704,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     }
     case 'deleteElement': {
       const si = slideIndex(model, m.slideId);
+      if (isShared(current, si, m.elementId)) throw sharedLocked();
       const block = parsedModel.slides[si]!.blocks.find((b) => b.elementId === m.elementId);
       let out = text;
       if (block) {
@@ -664,6 +726,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
     }
     case 'renameElement': {
       const si = slideIndex(model, m.slideId);
+      if (isShared(current, si, m.elementId)) throw sharedLocked();
       assertFreeId(current.slides[si]!, m.newId);
       const block = parsedModel.slides[si]!.blocks.find((b) => b.elementId === m.elementId);
       // Frontmatter entry (override or full definition) follows the new id.
@@ -676,7 +739,9 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
         const eol = text.indexOf('\n', r.start);
         const end = eol < 0 ? r.end : text[eol - 1] === '\r' ? eol - 1 : eol;
         const name = SLOT_OPEN_RE.exec(text.slice(r.start, end))?.[1] ?? m.elementId;
-        return renameFm(splice(text, { start: r.start, end }, `::: ${name} {#${m.newId}}`));
+        // A free text box's block is named after its id; a placeholder's keeps the placeholder name.
+        const free = current.slides[si]?.elements.find((e) => e.id === m.elementId)?.placeholder === undefined;
+        return renameFm(splice(text, { start: r.start, end }, free || name === m.newId ? `::: ${m.newId}` : `::: ${name} {#${m.newId}}`));
       }
       // Subtitle, body, table: no id syntax in Markdown → full definition in the slide frontmatter.
       const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
@@ -747,6 +812,36 @@ function applyOne(text: string, m: Mutation, current: SlideDocument): string {
       const next = withMasterOverride(current.slides[si]?.masterOverrides, m.index, m.override);
       return editSlideFm(text, si, (d) => (next ? d.set('masterOverrides', d.createNode(next)) : d.delete('masterOverrides')));
     }
+    case 'shareText': {
+      const si = slideIndex(model, m.slideId);
+      const el = current.slides[si]?.elements.find((e) => e.id === m.elementId);
+      if (el?.type !== 'text' || !el.placeholder) throw new MutationError(tr(`Élément « ${m.elementId} » : pas un espace réservé de texte`, `Element “${m.elementId}” is not a text placeholder`));
+      if (!m.shared) {
+        if (!el.shared) return text;
+        // This slide gets its own copy, which then hides the shared value here.
+        const { source: _s, shared: _sh, ...own } = el;
+        const body = slotBody(own);
+        if (body !== null && own.id === own.placeholder) return appendSlot(text, si, own.id, body);
+        const dsl = elementToDsl(own);
+        if (body !== null) delete dsl.content;
+        const out = editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl)));
+        return body === null ? out : appendSlot(out, si, own.id, body);
+      }
+      if (el.shared) return text;
+      if (!isPlainRepresentable(el.paragraphs)) throw new MutationError(tr('Seul du texte Markdown simple peut être partagé (pas de couleurs ni de tailles par mot).', 'Only plain Markdown text can be shared (no per-word colors or sizes).'));
+      const key = el.placeholder;
+      let out = editDocFm(text, (d) => setShared(d, key, paragraphsToMarkdown(el.paragraphs)));
+      // Every slide follows the shared value: own values in the same placeholder are dropped (last slide first).
+      const layoutOf = (k: number) => (opts.master ? findLayout(opts.master, current.slides[k]!.layout) : undefined);
+      for (let k = current.slides.length - 1; k >= 0; k--) {
+        const ph = findPlaceholder(layoutOf(k), key);
+        for (const e of current.slides[k]!.elements) {
+          const same = e.placeholder === key || (!!ph && !!e.placeholder && findPlaceholder(layoutOf(k), e.placeholder) === ph);
+          if (same && e.type === 'text' && !e.shared) out = applyOne(out, { kind: 'deleteElement', slideId: current.slides[k]!.id, elementId: e.id }, parseMarkdown(out, opts).doc, opts);
+        }
+      }
+      return out;
+    }
   }
 }
 
@@ -754,7 +849,7 @@ export function applyMarkdownMutations(text: string, mutations: Mutation[], opts
   let out = text;
   for (const m of mutations) {
     const current = parseMarkdown(out, opts).doc;
-    out = applyOne(out, m, current);
+    out = applyOne(out, m, current, opts);
   }
   return out;
 }
@@ -812,11 +907,11 @@ export function documentToDeck(doc: SlideDocument): string {
   return out;
 }
 
-/** Markdown for a `::: id` block holding a placeholder's text, or null when it would not read back identically. */
+/** Markdown for a `::: id` block holding a text box's text, or null when it would not read back identically. */
 function slotBody(e: SlideElement): string | null {
-  if (e.type !== 'text' || !e.placeholder || e.id === 'notes' || !/^[A-Za-z][\w-]*$/.test(e.id) || !e.paragraphs.length || !isPlainRepresentable(e.paragraphs)) return null;
+  if (e.type !== 'text' || e.id === 'notes' || !/^[A-Za-z][\w-]*$/.test(e.id) || (e.placeholder && !e.paragraphs.length) || !isPlainRepresentable(e.paragraphs)) return null;
   const body = paragraphsToMarkdown(e.paragraphs);
-  if (!body.trim() || body.split('\n').some((l) => SLOT_OPEN_RE.test(l) || SLOT_CLOSE_RE.test(l))) return null;
+  if ((e.placeholder && !body.trim()) || body.split('\n').some((l) => SLOT_OPEN_RE.test(l) || SLOT_CLOSE_RE.test(l))) return null;
   const back = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
   return paragraphsToContent(back) === paragraphsToContent(e.paragraphs) ? body : null;
 }
