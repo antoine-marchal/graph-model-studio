@@ -490,7 +490,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
             <div className="row radius-row">
               <Icon name="radius" />
               <Slider
-                value={r.style.radius ?? Math.min(r.box.w, r.box.h) * 0.15}
+                value={r.style.radius ?? Math.min(r.box.w, r.box.h) / 6}
                 min={0}
                 max={Math.round((Math.min(r.box.w, r.box.h) / 2) * 100) / 100}
                 step={0.01}
@@ -499,7 +499,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
                 onPreview={(v) => preview({ radius: v })}
                 onCommit={(v) => style('radius', Math.round(v * 1000) / 1000)}
               />
-              <NumField label="R" unit="in" value={r.style.radius ?? undefined} onCommit={(v) => style('radius', Math.max(0, v))} />
+              <NumField label="R" unit="in" value={round4(r.style.radius ?? Math.min(r.box.w, r.box.h) / 6)} onCommit={(v) => style('radius', Math.max(0, v))} />
             </div>
           )}
         </Section>
@@ -568,10 +568,11 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
         <Section title={tr('Remplissage', 'Fill')}>
           <ColorPicker label={el.type === 'text' ? tr('Fond', 'Background') : tr('Couleur', 'Color')} value={el.style?.fill} onChange={(v) => style('fill', v)} allowNone testId="color-fill" />
           {el.type === 'shape' && (
-            <label className="field">
-              <span>{tr('Transparence', 'Transparency')} · {r.style.transparency} %</span>
+            <div className="slider-row">
+              <span className="slider-row-label">{tr('Transparence', 'Transparency')}</span>
               <Slider value={r.style.transparency} min={0} max={100} step={5} label={tr("Transparence", "Transparency")} onPreview={(v) => preview({ transparency: v })} onCommit={(v) => style('transparency', v || null)} />
-            </label>
+              <span className="slider-row-value">{r.style.transparency} %</span>
+            </div>
           )}
         </Section>
       )}

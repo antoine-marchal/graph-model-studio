@@ -33,6 +33,12 @@ function plainText(el: SlideElement): string {
   return '';
 }
 
+/** Where a copy comes from: the slide, or the layout being designed (its virtual slide id is shared by all layouts). */
+const here = () => {
+  const st = useEditor.getState();
+  return st.design ? `layout:${st.design.layoutId}` : (st.slideId ?? '');
+};
+
 /** The selected elements with explicit geometry; connectors only when both ends are copied. */
 function selection(): Clip | null {
   const st = useEditor.getState();
@@ -52,7 +58,7 @@ function selection(): Clip | null {
     });
   // Elements without text still need a recognisable clipboard text (the host may only relay text).
   const text = elements.map(plainText).filter(Boolean).join('\n') || `[Corporate Slides : ${elements.length} ${elements.length > 1 ? tr('éléments', 'elements') : tr('élément', 'element')}]`;
-  return elements.length ? { slideId: slide.id, elements, text, pastes: 0 } : null;
+  return elements.length ? { slideId: here(), elements, text, pastes: 0 } : null;
 }
 
 
@@ -85,7 +91,7 @@ function pasteElements(elements: SlideElement[], fromSlide: string, clip?: Clip)
     remap.set(e.id, id);
   }
   // Same slide: each paste steps down-right so copies do not stack invisibly. Another slide: exact source position.
-  const n = fromSlide !== slide.id ? 0 : clip ? ++clip.pastes : 1;
+  const n = fromSlide !== here() ? 0 : clip ? ++clip.pastes : 1;
   const d = 0.2 * n;
   const regroup = freshGroups(slide);
   const ms: Mutation[] = elements.map((e) => {

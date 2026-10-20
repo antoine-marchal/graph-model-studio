@@ -163,3 +163,71 @@ test('layout designer: a text box becomes a placeholder and back, keeping its st
   expect((await layout()).objects.length).toBe(o0.length + 1);
   expect(JSON.stringify((await layout()).objects.at(-1))).toContain(`"fontSize":${ph.style.fontSize}`);
 });
+
+test('layout designer: the navigator lists the master layouts; a copied placeholder lands at the same place on another layout', async ({ page }) => {
+  await open(page, 'examples/corporate-demo/architecture.slides.yaml');
+  await page.getByTestId('tab-design').click();
+  await page.getByTestId('toggle-master-edit').click();
+  const thumbs = page.locator('[data-testid^="layout-thumb-"]');
+  expect(await thumbs.count()).toBeGreaterThan(1);
+  const fromId = (await page.getByTestId('layout-id').innerText()).trim();
+  const layoutOf = (id: string) => page.evaluate((x) => window.__harness.master().layouts.find((l) => l.id === x)!, id);
+  const src = (await layoutOf(fromId)).placeholders[0]!;
+  await page.getByTestId('slide-canvas').locator(`[data-element-id="${src.key}"]`).click();
+  await expect(page.locator('[data-selection]')).toHaveCount(1);
+  await page.keyboard.press('ControlOrMeta+c');
+  const target = thumbs.filter({ hasNot: page.locator('[aria-current="true"]') }).nth(1);
+  const toId = (await target.getAttribute('data-testid'))!.replace('layout-thumb-', '');
+  await target.locator('.slide-button').click();
+  await expect(page.getByTestId('layout-id')).toHaveText(toId);
+  const before = (await layoutOf(toId)).placeholders.length;
+  await page.getByTestId('slide-canvas').click({ position: { x: 3, y: 3 } });
+  await page.keyboard.press('ControlOrMeta+v');
+  await expect.poll(async () => (await layoutOf(toId)).placeholders.length).toBe(before + 1);
+  const pasted = (await layoutOf(toId)).placeholders.at(-1)!;
+  expect(pasted.x).toBeCloseTo(src.x, 2);
+  expect(pasted.y).toBeCloseTo(src.y, 2);
+});
+
+test('layout designer: duplicate and delete layouts from the navigator without leaving the designer', async ({ page }) => {
+  await open(page, 'examples/corporate-demo/architecture.slides.yaml');
+  await page.getByTestId('tab-design').click();
+  await page.getByTestId('toggle-master-edit').click();
+  const id = (await page.getByTestId('layout-id').innerText()).trim();
+  const ids = () => page.evaluate(() => window.__harness.master().layouts.map((l) => l.id));
+  const before = await ids();
+  await page.getByTestId(`layout-thumb-${id}`).hover();
+  await page.getByTestId(`layout-duplicate-${id}`).click();
+  await expect.poll(ids).toHaveLength(before.length + 1);
+  const copy = `${id}-copie`;
+  expect((await ids())[(await ids()).indexOf(id) + 1]).toBe(copy);
+  await expect(page.getByTestId(`layout-thumb-${copy}`)).toBeVisible();
+  // Deleting the layout being designed moves the designer to its neighbour, still in master mode.
+  await page.getByTestId(`layout-thumb-${id}`).hover();
+  await page.getByTestId(`layout-remove-${id}`).click();
+  await expect.poll(ids).not.toContain(id);
+  await expect(page.getByTestId('master-banner')).toBeVisible();
+  await expect(page.getByTestId('layout-id')).toHaveText(copy);
+});
+
+test('layout designer: renaming a placeholder keeps its style, on the canvas, in the layout and after undo', async ({ page }) => {
+  await open(page, 'examples/corporate-demo/architecture.slides.yaml');
+  await page.getByTestId('tab-design').click();
+  await page.getByTestId('toggle-master-edit').click();
+  const layoutId = (await page.getByTestId('layout-id').innerText()).trim();
+  const layout = () => page.evaluate((id) => window.__harness.master().layouts.find((l) => l.id === id)!, layoutId);
+  const ph = (await layout()).placeholders.find((p) => p.key === 'title')!;
+  const look = (id: string) => canvasEl(page, id).evaluate((el) => { const t = el.querySelector('span, p, div') ?? el; const cs = getComputedStyle(t); return `${cs.fontSize}|${cs.color}|${cs.fontWeight}`; });
+  const before = await look('title');
+  await canvasEl(page, 'title').click();
+  await page.getByTestId('element-id').dblclick();
+  await page.getByTestId('element-id-input').fill('headline');
+  await page.getByTestId('element-id-input').press('Enter');
+  await expect.poll(async () => (await layout()).placeholders.some((p) => p.key === 'headline')).toBe(true);
+  expect((await layout()).placeholders.find((p) => p.key === 'headline')!.style).toEqual(ph.style);
+  expect(await look('headline')).toBe(before);
+  await page.getByTestId('undo').click();
+  await expect.poll(async () => (await layout()).placeholders.some((p) => p.key === 'title')).toBe(true);
+  expect((await layout()).placeholders.find((p) => p.key === 'title')!.style).toEqual(ph.style);
+  expect(await look('title')).toBe(before);
+});

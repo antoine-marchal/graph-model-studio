@@ -3,7 +3,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { imageSize } from 'image-size';
-import { DESIGN_SLIDE_ID, findLayout, isDiagramSrc, masterAssetSrc, MutationError, newLayout, patchMasterObjects, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
+import { DESIGN_SLIDE_ID, duplicateLayout, findLayout, isDiagramSrc, masterAssetSrc, MutationError, newLayout, patchMasterObjects, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
 import { applyMutations, parseSource, presentationKind, type SourceKind } from '@corporate-slides/parser';
 import { findMasterDir, fsValidateOptions, projectRootOf, resolveImage } from '@corporate-slides/cli';
 import { convertClipboardDrawing, loadMaster, slugify } from '@corporate-slides/master-extractor';
@@ -542,6 +542,16 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'deleteMaster':
           if (!readOnly) await this.deleteMaster(state, msg, send);
           break;
+        case 'duplicateLayout': {
+          if (readOnly) break;
+          const m = await this.getMaster(document.uri);
+          if (!m) throw new Error(tr('Aucun masque corporate importé.', 'No corporate master imported.'));
+          const master = structuredClone(m.master);
+          const id = duplicateLayout(master, msg.layoutId);
+          await this.writeMaster(m.dir, master);
+          send({ type: 'notice', level: 'info', message: tr(`Disposition copiée : « ${id} ».`, `Layout copied: “${id}”.`) });
+          break;
+        }
         case 'renameLayout':
         case 'deleteLayout':
           if (!readOnly) await this.editLayout(state, msg, send);

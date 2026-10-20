@@ -59,6 +59,8 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('deleteMaster'), masterId: z.string().max(120) }),
   /** Delete a layout of the corporate master, after a confirmation by the host. */
   z.object({ type: z.literal('deleteLayout'), layoutId: z.string().max(120) }),
+  /** Copy a layout of the corporate master, placed right after it in the same master. */
+  z.object({ type: z.literal('duplicateLayout'), layoutId: z.string().max(120) }),
   /** Slide show started / ended: the host hides the workbench (zen mode) when the webview cannot go full screen. */
   z.object({ type: z.literal('presentation'), active: z.boolean() }),
   z.object({ type: z.literal('setDiffBase'), base: DiffBaseKind }),

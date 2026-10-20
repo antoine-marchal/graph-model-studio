@@ -29,7 +29,7 @@ interface BtnProps {
 /** Large ribbon command: 20px icon over a (two-line max) label. */
 function Big({ icon, label, onClick, active, disabled, testId, title, caret }: BtnProps) {
   return (
-    <button type="button" className={`rb-big${active ? ' is-active' : ''}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-pressed={active} data-testid={testId} title={title ?? label}>
+    <button type="button" className={`rb-big${active ? ' is-active' : ''}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-pressed={active} aria-haspopup={caret ? 'menu' : undefined} data-testid={testId} title={title ?? label}>
       <Icon name={icon} size={20} />
       <span>
         {label.replace(/\S+$/, '')}
@@ -41,11 +41,12 @@ function Big({ icon, label, onClick, active, disabled, testId, title, caret }: B
 }
 
 /** Small ribbon command: icon + optional inline label, stacked three per column. */
-function Small({ icon, label, onClick, active, disabled, testId, title, iconOnly }: BtnProps & { iconOnly?: boolean }) {
+function Small({ icon, label, onClick, active, disabled, testId, title, iconOnly, caret }: BtnProps & { iconOnly?: boolean }) {
   return (
-    <button type="button" className={`rb-small${active ? ' is-active' : ''}${iconOnly ? ' icon-only' : ''}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-pressed={active} aria-label={label} data-testid={testId} title={title ?? label}>
+    <button type="button" className={`rb-small${active ? ' is-active' : ''}${iconOnly ? ' icon-only' : ''}`} onMouseDown={keepFocus} onClick={onClick} disabled={disabled} aria-pressed={active} aria-haspopup={caret ? 'menu' : undefined} aria-label={label} data-testid={testId} title={title ?? label}>
       <Icon name={icon} />
       {!iconOnly && <span>{label}</span>}
+      {caret && <Icon name="chevronDown" size={10} className="caret" />}
     </button>
   );
 }
@@ -154,9 +155,31 @@ function TitleBar() {
           <button type="button" className="ibtn is-active" aria-pressed>{tr('Visuel', 'Visual')}</button>
           <button type="button" className="ibtn" title={tr("Ouvrir la source dans l'éditeur de texte", "Open the source in the text editor")} data-testid="open-source" onClick={() => post({ type: 'openSource' })}>Source</button>
         </div>
-        <button type="button" className="ibtn has-label" data-testid="start-slideshow" disabled={!doc} title={tr('Diaporama depuis le début (F5) — Maj+F5 : depuis la diapositive actuelle', 'Slide show from the beginning (F5) — Shift+F5: from the current slide')} onClick={() => startSlideShow(false)}>
-          <Icon name="play" /> {tr('Diaporama', 'Slide show')}
-        </button>
+        <div className="split" role="group" aria-label={tr('Diaporama', 'Slide show')}>
+          <button type="button" className="ibtn has-label" data-testid="start-slideshow" disabled={!doc} title={tr('Diaporama depuis le début (F5)', 'Slide show from the beginning (F5)')} onClick={() => startSlideShow(false)}>
+            <Icon name="play" /> {tr('Diaporama', 'Slide show')}
+          </button>
+          <Menu
+            testId="slideshow-menu"
+            trigger={(open) => (
+              <button type="button" className="ibtn split-caret" disabled={!doc} aria-haspopup="menu" aria-label={tr('Options du diaporama', 'Slide show options')} title={tr('Options du diaporama', 'Slide show options')} data-testid="slideshow-options" onClick={open}>
+                <Icon name="chevronDown" size={10} />
+              </button>
+            )}
+          >
+            {(close) => (
+              <>
+                <button type="button" role="menuitem" className="menu-item" data-testid="slideshow-start" onClick={() => (close(), startSlideShow(false))}>
+                  <Icon name="play" /> {tr('À partir du début', 'From beginning')} <kbd>F5</kbd>
+                </button>
+                <button type="button" role="menuitem" className="menu-item" data-testid="slideshow-current" onClick={() => (close(), startSlideShow(true))}>
+                  <Icon name="slideshow" /> {tr('À partir de la diapositive actuelle', 'From current slide')} <kbd>{tr('Maj+F5', 'Shift+F5')}</kbd>
+                </button>
+                <p className="menu-note">{tr('→ / Espace : suivante · ← : précédente · B : écran noir · Échap : quitter', '→ / Space: next · ←: previous · B: black screen · Esc: exit')}</p>
+              </>
+            )}
+          </Menu>
+        </div>
         <button type="button" className="ibtn is-primary has-label" data-testid="export" disabled={!doc || pending > 0} onClick={() => post({ type: 'export' })}>
           <Icon name="download" /> {tr('Exporter .pptx', 'Export .pptx')}
         </button>
@@ -388,8 +411,8 @@ function ArrangeTools() {
     </button>
   );
   return (
-    <>
-      <Menu testId="order-menu" trigger={(open) => <Big icon="layers" label={tr('Ordre', 'Order')} caret disabled={off} testId="order" onClick={open} />}>
+    <Col>
+      <Menu testId="order-menu" trigger={(open) => <Small icon="layers" label={tr('Ordre', 'Order')} caret disabled={off} testId="order" onClick={open} />}>
         {(close) => (
           <>
             {item('front', tr('Mettre au premier plan', 'Bring to front'), () => order('front'), close, 'order-front')}
@@ -399,7 +422,7 @@ function ArrangeTools() {
           </>
         )}
       </Menu>
-      <Menu testId="group-menu" trigger={(open) => <Big icon="group" label={tr('Grouper', 'Group')} caret disabled={off} testId="group" onClick={open} />}>
+      <Menu testId="group-menu" trigger={(open) => <Small icon="group" label={tr('Grouper', 'Group')} caret disabled={off} testId="group" onClick={open} />}>
         {(close) => (
           <>
             {rs.length > 1 && item('group', tr('Grouper (Ctrl+G)', 'Group (Ctrl+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), true)), close, 'group-on')}
@@ -407,7 +430,7 @@ function ArrangeTools() {
           </>
         )}
       </Menu>
-      <Menu testId="align-menu" trigger={(open) => <Big icon="alignCenter" label={rs.length > 1 ? tr('Aligner', 'Align') : tr('Aligner sur la diapositive', 'Align to slide')} caret disabled={off} testId="align" onClick={open} />}>
+      <Menu testId="align-menu" trigger={(open) => <Small icon="alignCenter" label={rs.length > 1 ? tr('Aligner', 'Align') : tr('Aligner sur la diapositive', 'Align to slide')} caret disabled={off} testId="align" onClick={open} />}>
         {(close) => (
           <>
             {item('alignLeft', tr('Aligner à gauche', 'Align left'), () => align('left'), close, 'align-left')}
@@ -421,7 +444,7 @@ function ArrangeTools() {
           </>
         )}
       </Menu>
-    </>
+    </Col>
   );
 }
 
@@ -487,7 +510,7 @@ function DesignTab() {
           }}
         />
         <Col>
-          <MasterEditToggle disabled={off || !masterEdit} />
+          {masterEdit && <MasterEditToggle disabled={off} />}
           <Small
             icon="refresh"
             label={`${tr('Rétablir le masque', 'Reset to master')}${overrides.length ? ` (${overrides.length})` : ''}`}
@@ -510,19 +533,6 @@ function DesignTab() {
   );
 }
 
-/** Slide Show: start from the beginning or from the current slide. */
-function SlideShowTab() {
-  const doc = useEditor((s) => s.doc);
-  return (
-    <Group label={tr('Démarrage du diaporama', 'Start slide show')}>
-      <Big icon="play" label={tr('À partir du début', 'From beginning')} testId="slideshow-start" disabled={!doc} title={tr('Diaporama depuis la première diapositive (F5)', 'Slide show from the first slide (F5)')} onClick={() => startSlideShow(false)} />
-      <Big icon="slideshow" label={tr('À partir de la diapositive actuelle', 'From current slide')} testId="slideshow-current" disabled={!doc} title={tr('Diaporama depuis la diapositive affichée (Maj+F5)', 'Slide show from the current slide (Shift+F5)')} onClick={() => startSlideShow(true)} />
-      <Col>
-        <span className="rb-note">{tr('→ / Espace : suivante · ← : précédente · B : écran noir · Échap : quitter', '→ / Space: next · ←: previous · B: black screen · Esc: exit')}</span>
-      </Col>
-    </Group>
-  );
-}
 
 const BASES: { id: DiffBaseKind; label: string }[] = [
   { id: 'none', label: tr('Aucune', 'None') },
@@ -536,7 +546,6 @@ function ReviewTab() {
   const diffState = useEditor((s) => s.diff);
   const showDiff = useEditor((s) => s.showDiff);
   const showBase = useEditor((s) => s.showBase);
-  const pane = useEditor((s) => s.pane);
   const reviewData = useEditor((s) => s.reviewData);
   const focus = useEditor((s) => s.focusThread);
   const { set, select } = useEditor.getState();
@@ -580,7 +589,6 @@ function ReviewTab() {
       <Group label={tr("Commentaires", "Comments")}>
         <Big icon="commentPlus" label={tr("Nouveau commentaire", "New comment")} disabled={!reviewData?.canCreate} title={reviewData ? undefined : tr('Disponible sur une révision ouverte depuis une merge request GitLab', 'Available on a revision opened from a GitLab merge request')} onClick={() => set({ pane: 'comments' })} />
         <Col>
-          <Small icon="comment" label={tr("Volet Commentaires", "Comments pane")} active={pane === 'comments'} testId="toggle-comments" onClick={() => set({ pane: pane === 'comments' ? 'format' : 'comments' })} />
           <Row>
             <Small iconOnly icon="prev" label={tr("Commentaire précédent", "Previous comment")} disabled={!anchors.length} onClick={() => stepComment(-1)} />
             <Small iconOnly icon="next" label={tr("Commentaire suivant", "Next comment")} disabled={!anchors.length} onClick={() => stepComment(1)} />
@@ -599,17 +607,14 @@ function ViewTab() {
   const slide = useEditor(currentSlide);
   const showGrid = useEditor((s) => s.showGrid);
   const snap = useEditor((s) => s.snap);
-  const notesOpen = useEditor((s) => s.notesOpen);
   const showHidden = useEditor((s) => s.showHidden);
   const hiddenCount = useEditor((s) => currentSlide(s)?.elements.filter((e) => e.hidden).length ?? 0);
-  const zoom = useEditor((s) => s.zoom);
   const doc = useEditor((s) => s.doc);
-  const { toggleGrid, toggleSnap, set, setZoom } = useEditor.getState();
+  const { toggleGrid, toggleSnap, set } = useEditor.getState();
   const index = doc?.slides.findIndex((s) => s.id === slide?.id) ?? -1;
   return (
     <>
       <Group label={tr("Afficher", "Show")}>
-        <Big icon="notes" label="Notes" active={notesOpen} onClick={() => set({ notesOpen: !notesOpen })} />
         <Col>
           <Small icon="grid" label={tr("Grille", "Grid")} active={showGrid} onClick={toggleGrid} />
           <Small icon="magnet" label={tr("Magnétisme", "Snap")} active={snap} title={tr("Magnétisme (Alt pour ignorer)", "Snap (Alt to ignore)")} onClick={toggleSnap} />
@@ -622,10 +627,6 @@ function ViewTab() {
             onClick={() => set({ showHidden: !showHidden })}
           />
         </Col>
-      </Group>
-      <Group label="Zoom">
-        <Big icon="fit" label={tr("Ajuster", "Fit")} active={zoom === 'fit'} onClick={() => setZoom('fit')} />
-        <Big icon="zoomIn" label="100 %" active={zoom === 1} onClick={() => setZoom(1)} />
       </Group>
       <Group label="Source">
         <Big icon="code" label={tr("Ouvrir la source", "Open source")} onClick={() => post({ type: 'openSource' })} />
@@ -671,14 +672,13 @@ export function Ribbon() {
   const els = slide?.elements.filter((e) => selected.includes(e.id)) ?? [];
   const isDiagram = els.length === 1 && els[0]!.type === 'image' && isDiagramSrc(els[0]!.src);
   const contextual = isDiagram;
-  const active: RibbonTab = tab === 'format' && !contextual ? 'home' : tab;
+  const active: RibbonTab = (tab === 'format' && !contextual) || tab === 'slideshow' ? 'home' : tab;
   const open = anchors.filter((a) => !a.thread.resolved).length;
 
   const tabs: { id: RibbonTab; label: string; badge?: number }[] = [
     { id: 'home', label: tr('Accueil', 'Home') },
     { id: 'insert', label: tr('Insertion', 'Insert') },
     { id: 'design', label: tr('Conception', 'Design') },
-    { id: 'slideshow', label: tr('Diaporama', 'Slide Show') },
     { id: 'review', label: tr('Révision', 'Review'), badge: open || diff?.count || undefined },
     { id: 'view', label: tr('Affichage', 'View') },
   ];
@@ -717,7 +717,6 @@ export function Ribbon() {
           {active === 'home' && <HomeTab />}
           {active === 'insert' && <InsertTab />}
           {active === 'design' && <DesignTab />}
-          {active === 'slideshow' && <SlideShowTab />}
           {active === 'review' && <ReviewTab />}
           {active === 'view' && <ViewTab />}
           {active === 'format' && <FormatTab />}

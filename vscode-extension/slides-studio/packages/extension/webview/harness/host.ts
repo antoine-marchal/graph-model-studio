@@ -3,7 +3,7 @@
  * real webview UI can be driven by Playwright. It uses the same parser/mutation/validation code as
  * the extension and persists through a dev-only file bridge (vite.config.ts). Not shipped in the .vsix.
  */
-import { CorporateMaster, MutationError, renderedImageSrc, validateDocument, WebviewMessage, type HostMessage, type ReviewData } from '@corporate-slides/core';
+import { CorporateMaster, duplicateLayout, MutationError, renderedImageSrc, validateDocument, WebviewMessage, type HostMessage, type ReviewData } from '@corporate-slides/core';
 import { applyMutations, parseSource, sourceKindOf } from '@corporate-slides/parser';
 
 const params = new URLSearchParams(location.search);
@@ -143,6 +143,16 @@ window.acquireVsCodeApi = () => ({
         return;
       case 'pastePowerPoint':
         return void toWebview({ type: 'pasteFallback' });
+      case 'duplicateLayout': {
+        // Master kept in memory, as for saveLayout.
+        const next = structuredClone(master);
+        duplicateLayout(next, msg.layoutId);
+        master = next;
+        return pushDocument();
+      }
+      case 'deleteLayout':
+        master = { ...master, layouts: master.layouts.filter((l) => l.id !== msg.layoutId), masters: master.masters.map((x) => ({ ...x, layoutIds: x.layoutIds.filter((id) => id !== msg.layoutId) })) };
+        return pushDocument();
       case 'saveLayout':
         // Layout designer: the master is kept in memory (the shared test master is never written).
         master = { ...master, layouts: master.layouts.map((l) => (l.id === msg.layout.id ? msg.layout : l)) };

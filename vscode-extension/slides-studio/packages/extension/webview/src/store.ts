@@ -45,9 +45,11 @@ export interface DesignSession {
   canvasLayout: LayoutDef;
   /** The presentation as the host keeps sending it, restored on exit. */
   real: { doc: SlideDocument; master: CorporateMaster; slideId: string | null };
-  undo: SlideDocument[];
-  redo: SlideDocument[];
+  /** Undo / redo steps: the virtual slide with the saved layout and links it was made against. */
+  undo: DesignStep[];
+  redo: DesignStep[];
 }
+type DesignStep = { doc: SlideDocument; base: LayoutDef; origin: LayoutDesign['origin'] };
 
 export interface EditorState {
   ready: boolean;
@@ -273,9 +275,11 @@ export const useEditor = create<EditorState>((set, get) => ({
     const doc = get().doc;
     const prev = (redo ? d?.redo : d?.undo)?.at(-1);
     if (!d || !doc || !prev) return;
-    const undo = redo ? [...d.undo, doc] : d.undo.slice(0, -1);
-    const redoStack = redo ? d.redo.slice(0, -1) : [...d.redo, doc];
-    set({ doc: prev, confirmed: prev, design: { ...d, undo, redo: redoStack }, editingId: null });
+    const now: DesignStep = { doc, base: d.base, origin: d.origin };
+    const undo = redo ? [...d.undo, now] : d.undo.slice(0, -1);
+    const redoStack = redo ? d.redo.slice(0, -1) : [...d.redo, now];
+    // Base and links go back with the slide: a renamed placeholder finds its former self again.
+    set({ doc: prev.doc, confirmed: prev.doc, design: { ...d, base: prev.base, origin: prev.origin, undo, redo: redoStack }, editingId: null });
     saveDesign(get, set);
   },
 
@@ -337,7 +341,7 @@ function designApply(get: Get, set: Put, mutations: Mutation[]) {
   // A renamed element keeps its link to the layout object it stands for.
   const origin = { ...design!.origin };
   for (const m of mutations) if (m.kind === 'renameElement' && origin[m.elementId]) (origin[m.newId] = origin[m.elementId]!), delete origin[m.elementId];
-  set({ doc: next, confirmed: next, design: { ...design!, origin, undo: [...design!.undo.slice(-99), doc!], redo: [] } });
+  set({ doc: next, confirmed: next, design: { ...design!, origin, undo: [...design!.undo.slice(-99), { doc: doc!, base: design!.base, origin: design!.origin }], redo: [] } });
   saveDesign(get, set);
 }
 
@@ -356,7 +360,9 @@ function saveDesign(get: Get, set: Put) {
   const slide = doc?.slides[0];
   if (!design || !slide) return;
   const { layout, indexMap, origin } = designToLayout(design.base, { slide, origin: design.origin }, design.real.master);
-  set({ design: { ...design, base: layout, origin } });
+  // The canvas draws placeholders from their saved definition (renamed keys, styles).
+  const canvasLayout = { ...design.canvasLayout, placeholders: layout.placeholders };
+  set({ design: { ...design, base: layout, origin, canvasLayout }, master: designMaster(get().master ?? design.real.master, canvasLayout) });
   post({ type: 'saveLayout', layout, indexMap });
 }
 

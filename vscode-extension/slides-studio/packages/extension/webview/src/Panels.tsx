@@ -286,7 +286,9 @@ export function Navigator() {
   const { select, mutate, set } = useEditor.getState();
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  const design = useEditor((s) => s.design);
   if (!doc || !master) return <nav className="navigator" />;
+  if (design) return <LayoutNavigator />;
   const ghostsAfter = (after: string | null) => (showDiff ? (diff?.removedSlides ?? []).filter((r) => r.after === after) : []);
 
   const ghost = (g: { slide: SlideNode }) => (
@@ -380,6 +382,59 @@ export function Navigator() {
             </li>,
             ...ghostsAfter(s.id).map(ghost),
           ];
+        })}
+      </ol>
+    </nav>
+  );
+}
+
+/**
+ * Layout designer: the layouts of the designed layout's master, in template order. The designed one
+ * shows its live edit; clicking another one designs it (each edit is already saved).
+ */
+function LayoutNavigator() {
+  const design = useEditor((s) => s.design)!;
+  const doc = useEditor((s) => s.doc);
+  const master = useEditor((s) => s.master);
+  const assets = useAssets();
+  const real = design.real.master;
+  const layouts = real.layouts.filter((l) => l.masterId === design.base.masterId);
+  const readOnly = useEditor((s) => s.readOnly);
+  const remove = (id: string) => {
+    // The designer moves to a neighbour first: the deleted layout must not stay on the canvas.
+    if (id === design.layoutId) {
+      const i = layouts.findIndex((l) => l.id === id);
+      const next = layouts[i + 1] ?? layouts[i - 1];
+      if (next) useEditor.getState().enterDesign(next.id);
+      else useEditor.getState().exitDesign();
+    }
+    post({ type: 'deleteLayout', layoutId: id });
+  };
+  return (
+    <nav className="navigator" aria-label={tr('Dispositions du masque', 'Layouts of the master')}>
+      <ol className="slide-list">
+        {layouts.map((l, i) => {
+          const current = l.id === design.layoutId;
+          const slide = current && doc ? doc.slides[0]! : { id: `layout-${l.id}`, layout: l.id, elements: [] };
+          return (
+            <li key={l.id} className={`slide-item${current ? ' is-current' : ''}`} data-testid={`layout-thumb-${l.id}`}>
+              <button className="slide-button" onClick={() => !current && useEditor.getState().enterDesign(l.id)} aria-current={current} aria-label={`${tr('Disposition', 'Layout')} ${l.name}`}>
+                <span className="slide-num">{i + 1}</span>
+                <Thumb width={150}>
+                  <SlideView slide={slide} master={current && master ? master : real} assets={assets} showPlaceholders={!current} designPlaceholders={current} />
+                </Thumb>
+              </button>
+              <div className="slide-meta">
+                <span className="slide-layout" title={l.id}>{l.name}</span>
+              </div>
+              {!readOnly && (
+                <div className="slide-actions">
+                  <IconButton icon="copy" label={tr('Dupliquer la disposition', 'Duplicate layout')} testId={`layout-duplicate-${l.id}`} onClick={() => post({ type: 'duplicateLayout', layoutId: l.id })} />
+                  <IconButton icon="trash" label={tr('Supprimer la disposition', 'Delete layout')} testId={`layout-remove-${l.id}`} disabled={layouts.length <= 1} onClick={() => remove(l.id)} />
+                </div>
+              )}
+            </li>
+          );
         })}
       </ol>
     </nav>
@@ -721,9 +776,25 @@ export function StatusBar() {
     <footer className="statusbar">
       <span className="status-item">{doc ? tr(`Diapositive ${index + 1} sur ${doc.slides.length}`, `Slide ${index + 1} of ${doc.slides.length}`) : ''}</span>
       <span className="status-item">{sourceKind === 'markdown' ? 'Markdown + YAML' : 'DSL YAML'}</span>
-      <span className={pending ? 'status-item sync is-pending' : 'status-item sync'} data-testid="sync-state">{pending ? tr('Synchronisation…', 'Syncing…') : tr('Synchronisé avec la source', 'Synced with the source')}</span>
-      <button type="button" className={`status-btn diag-count${errors ? ' has-errors' : warnings ? ' has-warnings' : ''}`} data-testid="diag-count" title={[...parseErrors, ...diagnostics.map((d) => d.message)].join('\n')} onClick={() => post({ type: 'validate' })}>
-        {errors} {errors > 1 ? tr('erreurs', 'errors') : tr('erreur', 'error')} · {warnings} {warnings > 1 ? tr('avertissements', 'warnings') : tr('avertissement', 'warning')}
+      <span className={`status-item sync${pending ? ' is-pending' : ''}`}>
+        <span className="sync-dot" aria-hidden />
+        <span data-testid="sync-state">{pending ? tr('Synchronisation…', 'Syncing…') : tr('Synchronisé avec la source', 'Synced with the source')}</span>
+      </span>
+      <button
+        type="button"
+        className={`status-btn diag-count${errors ? ' has-errors' : warnings ? ' has-warnings' : ' is-clean'}`}
+        data-testid="diag-count"
+        title={errors || warnings ? [...parseErrors, ...diagnostics.map((d) => d.message)].join('\n') : tr('Charte respectée — cliquer pour revalider', 'Brand rules met — click to validate again')}
+        onClick={() => post({ type: 'validate' })}
+      >
+        <Icon name={errors || warnings ? 'warn' : 'check'} size={13} />
+        {errors || warnings ? (
+          <>
+            {errors} {errors > 1 ? tr('erreurs', 'errors') : tr('erreur', 'error')} · {warnings} {warnings > 1 ? tr('avertissements', 'warnings') : tr('avertissement', 'warning')}
+          </>
+        ) : (
+          tr('Charte respectée', 'Brand rules met')
+        )}
       </button>
       <span className="grow" />
       <button type="button" className={`status-btn${notesOpen ? ' is-active' : ''}`} aria-pressed={notesOpen} onClick={() => set({ notesOpen: !notesOpen })}><Icon name="notes" size={14} /> Notes</button>

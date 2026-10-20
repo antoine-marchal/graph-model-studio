@@ -2,6 +2,7 @@ import type { CorporateMaster, LayoutDef, MasterOverride, SlideNode, StaticObjec
 import { layoutForSlide, overrideStaticObject, resolveSlide } from './geometry.js';
 import { findLayout } from './theme.js';
 import { round4 } from './units.js';
+import { tr } from './i18n.js';
 
 /**
  * Master editing "for every slide": the object is changed in its layout and in every other layout
@@ -101,4 +102,24 @@ export function newLayout(master: CorporateMaster, slide: SlideNode, from: NewLa
     // Other shapes, tables and connectors have no static-object form: they stay on the slide.
   }
   return { layout, converted, images };
+}
+
+/**
+ * Copy of a layout in the same master, right after the original (template order and the master's
+ * layout list). Assets are shared. Returns the copy's id.
+ */
+export function duplicateLayout(master: CorporateMaster, layoutId: string): string {
+  const i = master.layouts.findIndex((l) => l.id === layoutId);
+  const src = master.layouts[i];
+  if (!src) throw new Error(tr(`Disposition « ${layoutId} » introuvable`, `Layout “${layoutId}” not found`));
+  const taken = new Set(master.layouts.flatMap((l) => [l.id, ...l.aliases]));
+  let id = `${src.id}-copie`;
+  for (let n = 2; taken.has(id); n++) id = `${src.id}-copie-${n}`;
+  const copy: LayoutDef = { ...structuredClone(src), id, name: tr(`${src.name} (copie)`, `${src.name} (copy)`), aliases: [], sourcePart: '', ooxmlType: undefined };
+  master.layouts.splice(i + 1, 0, copy);
+  for (const m of master.masters) {
+    const k = m.layoutIds.indexOf(src.id);
+    if (k >= 0) m.layoutIds.splice(k + 1, 0, id);
+  }
+  return id;
 }

@@ -25,8 +25,9 @@ Type: platform UI sans (`system-ui`, Segoe UI), 12px base, 11px labels in small 
 
 PowerPoint-like Normal view, in the same studio tokens:
 
-- Title bar 38px on `--bg-chrome`: quick access (save, undo, redo) left, file name and revision chips centered, `Visuel | Source` switch and the primary *Exporter .pptx* right.
-- Ribbon: tabs 30px (Accueil, Insertion, Révision, Affichage, plus the contextual accent-colored *Format* / *Diagramme* tab when something is selected), body 92px of labelled groups. Large commands are 66px wide (20px icon over a balanced label), small ones 22px rows. Double-click a tab or use the chevron to collapse.
+- Title bar 38px on `--bg-chrome`: quick access (save, undo, redo) left, file name and revision chips centered, `Visuel | Source` switch, the *Diaporama* split button (from beginning / from current slide) and the primary *Exporter .pptx* right.
+- One home per command: slide show lives in the title bar (no ribbon tab); notes, comments pane and zoom live in the status bar only; View keeps grid, snap, hidden objects and source.
+- Ribbon: tabs 30px (Accueil, Insertion, Conception, Révision, Affichage, plus the contextual accent-colored *Format* / *Diagramme* tab when something is selected), body 96px of labelled groups; every group body is a fixed 72px so all group labels share one baseline. Toggles carry `aria-pressed` and the accent-soft fill; actions never do. Arrange is a column of three small menu commands. Large commands are 66px wide (20px icon over a balanced label), small ones 22px rows. Double-click a tab or use the chevron to collapse.
 - `thumbnails 200px | canvas well over notes 92px | Format pane 280px`; the Format pane swaps for the Comments pane. Status bar 26px: slide position, sync, diagnostics, Notes and Comments toggles, zoom slider + fit.
 - Thumbnails hide below 1000px, the right pane below 720px.
 
