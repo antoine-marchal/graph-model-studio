@@ -874,6 +874,11 @@
             "default": true,
             "description": "%s127.render.reference.thumbnails.with.powerpoint%"
           },
+          "corporateSlides.deckThumbnail": {
+            "type": "boolean",
+            "default": true,
+            "description": "%s200.deck.thumbnail%"
+          },
           "corporateSlides.exportFolder": {
             "type": "string",
             "default": "out",

@@ -6,6 +6,7 @@ import {
   CSS_PX_PER_INCH,
   numberLabel,
   paragraphLook,
+  placeholderTable,
   resolveSlide,
   tableWeights,
   type CorporateMaster,
@@ -40,20 +41,34 @@ export function tokenHex(token: string | undefined, master: CorporateMaster): st
   return ((variant ? master.theme.palette[slot!]?.[variant] : master.theme.colors[slot!]) ?? null)?.toUpperCase() ?? null;
 }
 
+/** Text look a whole table takes from its style (bold, italic, underline, caps); cells and runs override it. */
+export const tableTextCss = (el: TableElement): CSSProperties => ({
+  fontWeight: el.style?.bold ? 700 : undefined,
+  fontStyle: el.style?.italic ? 'italic' : undefined,
+  textDecoration: el.style?.underline ? 'underline' : undefined,
+  ...capsCss(el.style?.caps),
+});
+
 /** Cell CSS of a table: grid border (table style), header row, then per-cell overrides. Shared with the table editor. */
-export function tableCellStyle(el: TableElement, ri: number, ci: number, master: CorporateMaster, opts: { header?: boolean; valign?: string; align?: string | null; cell?: CellStyle | null } = {}): CSSProperties {
+export function tableCellStyle(el: TableElement, ri: number, ci: number, master: CorporateMaster, opts: { header?: boolean; headerColumn?: boolean; valign?: string; align?: string | null; cell?: CellStyle | null } = {}): CSSProperties {
   const s = el.style;
   const gridColor = tokenHex(s?.line, master) ?? master.theme.palette.dk1?.lighter60 ?? 'A8A8A8';
   const border = (line: string | undefined, width: number | undefined, dash: string | undefined, color: string) =>
     line === 'none' ? 'none' : `${Math.max(0.5, width ?? 0.5)}pt ${cssDash(dash)} #${color}`;
   const cs = opts.cell !== undefined ? opts.cell : el.cellStyles?.[ri]?.[ci];
-  const header = opts.header ?? el.header !== false;
+  const header = (opts.header ?? el.header !== false) && ri === 0;
+  const headerCol = (opts.headerColumn ?? !!el.headerColumn) && ci === 0;
   const out: CSSProperties = {
     border: border(s?.line, s?.lineWidth, s?.dash, gridColor),
     padding: '0 8px',
+    // Tabs typed in a cell show as tabs; line breaks never occur (cells are one paragraph).
+    whiteSpace: 'pre-wrap',
+    tabSize: 4,
     verticalAlign: (opts.valign ?? s?.valign ?? 'middle') as CSSProperties['verticalAlign'],
     textAlign: ((opts.align !== undefined ? opts.align : el.colAlign?.[ci]) ?? undefined) as CSSProperties['textAlign'],
-    ...(ri === 0 && header ? { background: `#${master.theme.colors.accent1 ?? '3E4A83'}`, color: '#fff', fontWeight: 700 } : {}),
+    ...(header ? { background: `#${master.theme.colors.accent1 ?? '3E4A83'}`, color: '#fff', fontWeight: 700 } : {}),
+    // A header column under a header row stays distinct: tinted, bold.
+    ...(headerCol && !header ? { background: `#${master.theme.palette.accent1?.lighter80 ?? 'DDE1EE'}`, fontWeight: 700 } : {}),
   };
   if (cs) {
     const fill = tokenHex(cs.fill, master);
@@ -65,6 +80,7 @@ export function tableCellStyle(el: TableElement, ri: number, ci: number, master:
     if (cs.italic) out.fontStyle = 'italic';
     if (cs.underline) out.textDecoration = 'underline';
     if (cs.size) out.fontSize = ptPx(cs.size);
+    if (cs.caps) Object.assign(out, capsCss(cs.caps));
     if (cs.align) out.textAlign = cs.align;
     if (cs.valign) out.verticalAlign = cs.valign;
     if (cs.line || cs.lineWidth !== undefined || cs.dash) out.border = border(cs.line ?? s?.line, cs.lineWidth ?? s?.lineWidth, cs.dash ?? s?.dash, tokenHex(cs.line, master) ?? gridColor);
@@ -567,7 +583,7 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
       const cols = Math.max(...el.rows.map((x) => x.length));
       const rowF = tableWeights(el.rowHeights, el.rows.length);
       return (
-        <table style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ptPx(el.style?.fontSize ?? 12), color: hex(s.color) }}>
+        <table style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ptPx(el.style?.fontSize ?? 12), color: hex(s.color), ...tableTextCss(el) }}>
           <colgroup>
             {tableWeights(el.colWidths, cols).map((f, ci) => (
               <col key={ci} style={{ width: `${f * 100}%` }} />
@@ -656,6 +672,25 @@ export function LayoutBackground({ layout, master, assets, metadata, slideNumber
   );
 }
 
+/** Empty table placeholder: its starting grid, faded, so the slide shows what will be filled in. */
+function PlaceholderTablePreview({ p, master }: { p: LayoutDef['placeholders'][number]; master: CorporateMaster }) {
+  const el: TableElement = { id: p.key, type: 'table', ...placeholderTable(p) };
+  const cols = Math.max(...el.rows.map((x) => x.length));
+  return (
+    <table style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', opacity: 0.45, fontSize: ptPx(12), fontFamily: `"${master.theme.fonts.body}", Arial, sans-serif` }}>
+      <tbody>
+        {el.rows.map((row, ri) => (
+          <tr key={ri}>
+            {Array.from({ length: cols }, (_, ci) => (
+              <td key={ci} style={tableCellStyle(el, ri, ci, master)}>{row[ci] ?? ''}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export const SlideView = memo(function SlideView(props: SlideViewProps) {
   const { slide, master, assets } = props;
   const rs = resolveSlide(slide, master);
@@ -674,9 +709,9 @@ export const SlideView = memo(function SlideView(props: SlideViewProps) {
             <div
               key={p.key}
               data-placeholder={p.key}
-              style={{ position: 'absolute', left: px(p.x), top: px(p.y), width: px(p.w), height: px(p.h), outline: '1.5px dashed #8a8f9877', outlineOffset: -1, color: '#8a8f98', font: '600 13px system-ui', padding: 6, pointerEvents: 'none' }}
+              style={{ position: 'absolute', left: px(p.x), top: px(p.y), width: px(p.w), height: px(p.h), outline: '1.5px dashed #8a8f9877', outlineOffset: -1, color: '#8a8f98', font: '600 13px system-ui', padding: p.type === 'tbl' ? 0 : 6, pointerEvents: 'none' }}
             >
-              {p.key}
+              {p.type === 'tbl' ? <PlaceholderTablePreview p={p} master={master} /> : p.key}
             </div>
           ))}
       {rs.elements.map((r) =>

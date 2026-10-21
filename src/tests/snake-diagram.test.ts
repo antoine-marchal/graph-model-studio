@@ -3,7 +3,7 @@ import { parseDsl } from '@/core/dsl/parser'
 import { serializeModel } from '@/core/dsl/serializer'
 import { notationRegistry } from '@/core/notation'
 import { modelToFlow } from '@/features/editor-graph/model-to-flow'
-import { snakeFlowCurve } from '@/features/editor-graph/edges/FloatingEdge'
+import { snakeArcCurve, snakeFlowCurve, snakeSelfLoopCurve } from '@/features/editor-graph/edges/FloatingEdge'
 
 const source = `model {
   snake = snakeGraph "Delivery" {
@@ -117,4 +117,36 @@ describe('snake diagram', () => {
     expect(badges).toMatchObject({ one: '1', two: '2', left: '3a', right: '4' })
     expect(parseDsl(serializeModel(model)).model!.elements.left.properties?.number).toBe('3a')
   })
+
+  it('parts an A→B / B→A pair into an eye and keeps selected rails under every bullet', () => {
+    const model = parseDsl(source.replace('  one -> two : snakeFlow', '  one -> two : snakeFlow\n  two -> one : snakeFlow')).model!
+    const { nodes, edges } = modelToFlow(model, Object.values(model.views)[0])
+    const pair = edges.filter(edge => (edge.source === 'one' && edge.target === 'two') || (edge.source === 'two' && edge.target === 'one'))
+    expect(pair.map(edge => (edge.data as { snakeReverse?: boolean }).snakeReverse)).toEqual([true, true])
+    const a = snakeArcCurve({ x: 0, y: 0 }, { x: 150, y: 0 }), b = snakeArcCurve({ x: 150, y: 0 }, { x: 0, y: 0 })
+    expect(Math.sign(a.midpoint.y)).toBe(-Math.sign(b.midpoint.y))
+    expect(Math.abs(a.midpoint.y - b.midpoint.y)).toBeGreaterThan(40)
+    // React Flow adds the bullet's z to its edges, plus 1000 for a selected edge and 1000 for a
+    // selected endpoint: the rail must still stay under the bullet's own z.
+    expect(nodes.some(node => model.elements[node.id]?.type === 'snakeBullet')).toBe(true)
+    expect(Math.max(...pair.map(edge => edge.zIndex ?? 0)) + 2000).toBeLessThan(0)
+  })
+
+  it('reserves headroom above rows holding a self-loop and keeps U-turns clear of captions', () => {
+    const loopSource = source.replace('  one -> two : snakeFlow', '  one -> two : snakeFlow\n  join -> join : snakeFlow')
+    const plain = layoutYs(source)
+    const looped = layoutYs(loopSource)
+    expect(looped.one).toBe(plain.one)
+    expect(looped.join - looped.one).toBeGreaterThan(plain.join - plain.one)
+    const loop = snakeSelfLoopCurve({ x: 0, y: 0 })
+    expect(loop.midpoint.y).toBeLessThan(-55)
+    const turn = snakeFlowCurve({ x: 0, y: 0 }, { x: 0, y: 126 }, 'r', 'r')
+    expect(turn.controls[0].x * 0.75).toBeGreaterThanOrEqual(90)
+  })
 })
+
+function layoutYs(dsl: string) {
+  const model = parseDsl(dsl).model!
+  const { nodes } = modelToFlow(model, Object.values(model.views)[0])
+  return Object.fromEntries(nodes.map(node => [node.id, node.position.y]))
+}

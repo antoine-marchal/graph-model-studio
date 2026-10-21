@@ -6,6 +6,7 @@ import type { Root, RootContent, PhrasingContent, Table } from 'mdast';
 import {
   applyToDocument,
   assertFreeId,
+  mergeRuns,
   findLayout,
   findPlaceholder,
   formatInline,
@@ -22,6 +23,7 @@ import {
   type Mutation,
   type Paragraph,
   type SlideNode,
+  type TableElement,
   type TextRun,
   tr,
 } from '@corporate-slides/core';
@@ -231,7 +233,20 @@ function blockParagraphs(node: RootContent, level = 0): Paragraph[] {
   }
 }
 
-const tableRows = (t: Table): string[][] => t.children.map((row) => row.children.map((cell) => runsOf(cell.children).map((r) => r.text).join('')));
+
+/** Runs Markdown can carry in a table cell: bold and italic only. */
+const mdRuns = (runs: TextRun[]) => runs.every((r) => !r.underline && !r.color && r.size === undefined && !r.caps);
+
+/** A GFM table as a table element's content: text, column alignment, bold / italic cell runs. */
+function tableOf(t: Table): Pick<TableElement, 'rows' | 'colAlign' | 'cellRuns'> {
+  // `<br>` is a line break inside a cell (GFM cells are one line).
+  const br = (r: TextRun) => (/^<br\s*\/?>$/i.test(r.text) ? { ...r, text: '\n' } : r);
+  const runs = t.children.map((row) => row.children.map((cell) => mergeRuns(runsOf(cell.children).map(br))));
+  const rows = runs.map((row) => row.map((cell) => cell.map((r) => r.text).join('')));
+  const marked = runs.map((row) => row.map((cell) => (cell.some((r) => r.bold || r.italic) ? cell : null)));
+  const colAlign = t.align?.some(Boolean) ? t.align.map((a) => a ?? null) : undefined;
+  return { rows, ...(colAlign ? { colAlign } : {}), ...(marked.some((row) => row.some(Boolean)) ? { cellRuns: marked } : {}) };
+}
 
 function stripIdSuffix(runs: TextRun[]): { runs: TextRun[]; id?: string } {
   const last = runs[runs.length - 1];
@@ -341,8 +356,7 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       const id = `table-${++tableN}`;
       const r = pos(n, s.bodyStart);
       s.blocks.push({ elementId: id, kind: 'table', ranges: [r], explicitId: false });
-      const colAlign = n.align?.some(Boolean) ? n.align.map((a) => a ?? null) : undefined;
-      elements.push({ id, type: 'table', rows: tableRows(n), header: true, ...(colAlign ? { colAlign } : {}), source: src(r) });
+      elements.push({ id, type: 'table', header: true, ...tableOf(n), source: src(r) });
       return;
     }
     bodyNodes.push(n);
@@ -370,6 +384,14 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
     }
     const id = slot.id ?? slot.name;
     const tree2 = md.parse(inner) as Root;
+    // A block holding only a table is a table element: `::: table-1` (free, defined in the
+    // frontmatter) or `::: tbl {#table-1}` (bound to the layout's table placeholder).
+    const blocks = tree2.children.filter((n) => n.type !== 'html');
+    if (blocks.length === 1 && blocks[0]!.type === 'table') {
+      s.blocks.push({ elementId: id, kind: 'table', ranges: [slot.outer], inner: slot.inner, explicitId: !!slot.id });
+      elements.push({ id, type: 'table', placeholder: slot.name, ...tableOf(blocks[0] as Table), source: src(slot.outer) });
+      continue;
+    }
     const paragraphs = tree2.children.flatMap((n) => blockParagraphs(n));
     s.blocks.push({ elementId: id, kind: 'slot', ranges: [slot.outer], inner: slot.inner, explicitId: !!slot.id });
     elements.push({ id, type: 'text', placeholder: slot.name, paragraphs, source: src(slot.outer) });
@@ -386,8 +408,11 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
     if (target) {
       const { id: _i, type: _t, content: _c, paragraphs: _p, ...override } = r;
       const style = target.style || override.style ? { ...(target.style ?? {}), ...((override.style as object) ?? {}) } : undefined;
-      // A full definition (`type`, no `placeholder`) for a `::: id` block is a free text box whose text is the block.
-      const free = r.type !== undefined && r.placeholder === undefined && s.blocks.some((b) => b.kind === 'slot' && b.elementId === id);
+      const slotBlock = s.blocks.find((b) => b.inner && b.elementId === id);
+      // The Markdown table is the content: stale frontmatter rows never win over it.
+      if (slotBlock?.kind === 'table') delete override.rows;
+      // A full definition (`type`, no `placeholder`) for a `::: id` block is a free text box / table whose content is the block.
+      const free = r.type !== undefined && r.placeholder === undefined && !!slotBlock;
       const { placeholder: _ph, ...unbound } = target;
       const merged = SlideElement.safeParse({ ...(free ? unbound : target), ...override, ...(style ? { style } : {}) });
       if (merged.success) {
@@ -552,6 +577,10 @@ function dropEmptyElements(d: Document) {
   }
 }
 
+/** The slide frontmatter has `key` on element `id`. */
+const fmHas = (s: MdSlide, id: string, key: string) =>
+  Array.isArray(s.fm?.data.elements) && (s.fm.data.elements as Record<string, unknown>[]).some((e) => e && String(e.id) === id && e[key] !== undefined);
+
 const slideIndex = (model: MdModel, slideId: string) => {
   const i = model.slides.findIndex((s) => s.id === slideId);
   if (i < 0) throw new MutationError(tr(`Diapositive « ${slideId} » introuvable`, `Slide “${slideId}” not found`));
@@ -566,13 +595,47 @@ function chunkOf(text: string, s: MdSlide): string {
   return chunk;
 }
 
-function tableMarkdown(rows: string[][], colAlign: (string | null)[] = []): string {
-  const esc = (c: string) => c.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+/** GFM table; cells with bold / italic runs keep them as Markdown emphasis. */
+function tableMarkdown(rows: string[][], colAlign: (string | null)[] = [], runs?: (TextRun[] | null)[][] | null): string {
+  const cell = (text: string, ri: number, ci: number) => {
+    const r = runs?.[ri]?.[ci];
+    return formatInline(r && mdRuns(r) && r.map((x) => x.text).join('') === text ? r : [{ text }]).replace(/\|/g, '\\|').replace(/\n/g, '<br>');
+  };
   const width = Math.max(...rows.map((r) => r.length));
-  const pad = (r: string[]) => [...r, ...Array(width - r.length).fill('')];
-  const [head, ...rest] = rows.map(pad);
-  const sep = Array.from({ length: width }, (_, i) => ({ left: ':---', center: ':---:', right: '---:' })[colAlign[i] as 'left'] ?? '---');
-  return [`| ${head!.map(esc).join(' | ')} |`, `| ${sep.join(' | ')} |`, ...rest.map((r) => `| ${r.map(esc).join(' | ')} |`)].join('\n');
+  const grid = rows.map((r, ri) => Array.from({ length: width }, (_, ci) => cell(r[ci] ?? '', ri, ci)));
+  // Prettified: every column padded to its widest cell, following its alignment.
+  const w = Array.from({ length: width }, (_, ci) => Math.max(3, ...grid.map((r) => [...r[ci]!].length)));
+  const pad = (s: string, ci: number) => {
+    const gap = w[ci]! - [...s].length;
+    const a = colAlign[ci];
+    return a === 'right' ? ' '.repeat(gap) + s : a === 'center' ? ' '.repeat(gap >> 1) + s + ' '.repeat(gap - (gap >> 1)) : s + ' '.repeat(gap);
+  };
+  const sep = w.map((n, i) => ({ left: `:${'-'.repeat(n - 1)}`, center: `:${'-'.repeat(n - 2)}:`, right: `${'-'.repeat(n - 1)}:` })[colAlign[i] as 'left'] ?? '-'.repeat(n));
+  const line = (r: string[]) => `| ${r.map(pad).join(' | ')} |`;
+  const [head, ...rest] = grid;
+  return [line(head!), `| ${sep.join(' | ')} |`, ...rest.map(line)].join('\n');
+}
+
+/** Cell runs Markdown cannot hold (colors, sizes…) stay in the frontmatter as `cellRuns`. */
+const runsInMarkdown = (runs: (TextRun[] | null)[][] | null | undefined) => !runs || runs.every((row) => row.every((c) => !c || mdRuns(c)));
+
+/**
+ * A table as a `::: id` block: its opener (`table-1`, or `tbl {#table-1}` when bound to a
+ * placeholder), the Markdown table, and its frontmatter entry (geometry, headers, styles…) without
+ * what the block says, or null when the block says everything.
+ */
+function tableSlot(e: TableElement): { head: string; body: string; dsl: Record<string, unknown> | null } {
+  const body = tableMarkdown(e.rows, e.colAlign ?? [], e.cellRuns);
+  const dsl = elementToDsl(e);
+  delete dsl.rows;
+  delete dsl.colAlign;
+  if (runsInMarkdown(e.cellRuns)) delete dsl.cellRuns;
+  const ph = e.placeholder && /^[A-Za-z][\w-]*$/.test(e.placeholder) ? e.placeholder : null;
+  if (ph) {
+    delete dsl.placeholder;
+    delete dsl.type;
+  }
+  return { head: ph && ph !== e.id ? `${ph} {#${e.id}}` : e.id, body, dsl: Object.keys(dsl).length > 1 ? dsl : null };
 }
 
 /** Replace the Markdown text of a derived element. */
@@ -650,10 +713,14 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
         if (paragraphs) out = rewriteBlock(out, block, paragraphs);
         else if (src !== undefined && block.kind === 'image') {
           out = splice(out, block.ranges[0]!, `![${block.alt ?? ''}](${src.replace(/[()\s]/g, encodeURIComponent)})${block.explicitId ? ` {#${block.elementId}}` : ''}`);
-        } else if ((rows || colAlign) && block.kind === 'table') {
+        } else if ((rows || colAlign || rest.cellRuns !== undefined) && block.kind === 'table') {
           const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
           const curT = cur?.type === 'table' ? cur : undefined;
-          out = splice(out, block.ranges[0]!, tableMarkdown(rows ?? curT?.rows ?? [['']], colAlign ?? curT?.colAlign ?? []));
+          const cellRuns = rest.cellRuns !== undefined ? rest.cellRuns : curT?.cellRuns;
+          const table = tableMarkdown(rows ?? curT?.rows ?? [['']], colAlign ?? curT?.colAlign ?? [], cellRuns);
+          out = block.inner ? splice(out, block.inner, `${table}\n`) : splice(out, block.ranges[0]!, table);
+          // Bold / italic live in the Markdown table; a frontmatter copy would override them.
+          if (runsInMarkdown(cellRuns)) rest.cellRuns = fmHas(parsedModel.slides[si]!, m.elementId, 'cellRuns') ? null : undefined;
         }
         const geometryOrStyle = Object.values(rest).some((v) => v !== undefined);
         if (geometryOrStyle) out = editSlideFm(out, si, (d) => patchElementNode(d, fmEntry(d, m.elementId, true)!, rest, { allowText: false }));
@@ -696,11 +763,12 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
     case 'addElement': {
       const si = slideIndex(model, m.slideId);
       if (current.slides[si]?.elements.some((e) => e.id === m.element.id)) throw new MutationError(tr(`Identifiant « ${m.element.id} » déjà utilisé`, `Identifier “${m.element.id}” already used`));
-      const dsl = elementToDsl(m.element);
-      const slot = slotBody(m.element);
-      if (slot !== null) delete dsl.content;
-      const out = editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl)));
-      return slot === null ? out : appendSlot(out, si, m.element.id, slot);
+      const table = m.element.type === 'table' && /^[A-Za-z][\w-]*$/.test(m.element.id) ? tableSlot(m.element) : null;
+      const dsl = table ? table.dsl : elementToDsl(m.element);
+      const slot = table?.body ?? slotBody(m.element);
+      if (slot !== null) delete dsl?.content;
+      const out = dsl ? editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl))) : text;
+      return slot === null ? out : appendSlot(out, si, table?.head ?? m.element.id, slot);
     }
     case 'deleteElement': {
       const si = slideIndex(model, m.slideId);
@@ -735,7 +803,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
       if (!block) return renameFm(text);
       const r = block.ranges[0]!;
       if (block.kind === 'title' || block.kind === 'image') return renameFm(splice(text, r, `${text.slice(r.start, r.end).replace(ID_SUFFIX_RE, '')} {#${m.newId}}`));
-      if (block.kind === 'slot') {
+      if (block.kind === 'slot' || block.inner) {
         const eol = text.indexOf('\n', r.start);
         const end = eol < 0 ? r.end : text[eol - 1] === '\r' ? eol - 1 : eol;
         const name = SLOT_OPEN_RE.exec(text.slice(r.start, end))?.[1] ?? m.elementId;
@@ -743,7 +811,8 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
         const free = current.slides[si]?.elements.find((e) => e.id === m.elementId)?.placeholder === undefined;
         return renameFm(splice(text, { start: r.start, end }, free || name === m.newId ? `::: ${m.newId}` : `::: ${name} {#${m.newId}}`));
       }
-      // Subtitle, body, table: no id syntax in Markdown → full definition in the slide frontmatter.
+      // Subtitle, body, table: no id syntax in Markdown → full definition in the slide frontmatter
+      // (a table keeps its content as Markdown in a `::: id` block).
       const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
       if (!cur) throw new MutationError(`${tr('Élément introuvable', 'Element not found')} : ${m.elementId}`);
       const { source: _s, ...el } = cur as SlideElement & { source?: unknown };
@@ -752,11 +821,17 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
         const after = /^[ \t]*\r?\n?[ \t]*\r?\n?/.exec(out.slice(rr.end))![0];
         out = splice(out, { start: rr.start, end: rr.end + after.length }, '');
       }
-      return editSlideFm(out, si, (d) => {
-        const seq = fmElementsSeq(d);
-        seq.items = seq.items.filter((n) => !(isMap(n) && String(n.get('id')) === m.elementId));
-        seq.add(d.createNode(elementToDsl({ ...(el as SlideElement), id: m.newId })));
-      });
+      const table = el.type === 'table' && /^[A-Za-z][\w-]*$/.test(m.newId) ? tableSlot({ ...el, id: m.newId }) : null;
+      const dsl = table ? table.dsl : elementToDsl({ ...(el as SlideElement), id: m.newId });
+      if (dsl || Array.isArray(buildMdModel(out).slides[si]?.fm?.data.elements)) {
+        out = editSlideFm(out, si, (d) => {
+          const seq = fmElementsSeq(d);
+          seq.items = seq.items.filter((n) => !(isMap(n) && String(n.get('id')) === m.elementId));
+          if (dsl) seq.add(d.createNode(dsl));
+          if (!seq.items.length) d.delete('elements');
+        });
+      }
+      return table ? appendSlot(out, si, table.head, table.body) : out;
     }
     case 'reorderElement': {
       const si = slideIndex(model, m.slideId);
@@ -890,6 +965,12 @@ export function documentToDeck(doc: SlideDocument): string {
         if (Object.keys(over).length) rest.push({ id: 'title', ...over });
         continue;
       }
+      if (e.type === 'table' && /^[A-Za-z][\w-]*$/.test(e.id)) {
+        const t = tableSlot(el as TableElement);
+        slots.push(`::: ${t.head}\n${t.body}\n:::\n`);
+        if (t.dsl) rest.push(t.dsl);
+        continue;
+      }
       const dsl = elementToDsl(el as SlideElement);
       const body = slotBody(e);
       if (body !== null) {
@@ -916,11 +997,11 @@ function slotBody(e: SlideElement): string | null {
   return paragraphsToContent(back) === paragraphsToContent(e.paragraphs) ? body : null;
 }
 
-/** Append a `::: id` block at the end of slide `index`'s body. */
-function appendSlot(text: string, index: number, id: string, body: string): string {
+/** Append a `::: id` block (`head`: `id` or `placeholder {#id}`) at the end of slide `index`'s body. */
+function appendSlot(text: string, index: number, head: string, body: string): string {
   const s = buildMdModel(text).slides[index]!;
   const before = text.slice(0, s.end).replace(/\s*$/, '');
-  return `${before}\n\n::: ${id}\n${body}\n:::\n${s.end < text.length ? '\n' : ''}${text.slice(s.end)}`;
+  return `${before}\n\n::: ${head}\n${body}\n:::\n${s.end < text.length ? '\n' : ''}${text.slice(s.end)}`;
 }
 
 function blockify(node: unknown): void {

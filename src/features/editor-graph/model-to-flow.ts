@@ -1007,6 +1007,8 @@ export function modelToFlow(
       const gitOrientation = gitRelation && model.elements[hostOf[rel.sourceId]!]?.properties?.['orientation'] === 'vertical'
         ? 'vertical'
         : 'horizontal'
+      // A Snake pair A→B + B→A: both rails bow apart into an eye instead of overlapping.
+      const snakeReverse = snakeRelation && Object.values(model.relations).some(other => other.type === 'snakeFlow' && other.sourceId === rel.targetId && other.targetId === rel.sourceId && other.sourceId !== other.targetId)
       const snakeSourceSide = snakeSides.get(rel.sourceId)?.source
       const snakeTargetSide = snakeSides.get(rel.targetId)?.target
       if (snakeRelation) { markerStart = undefined; markerEnd = undefined }
@@ -1035,6 +1037,7 @@ export function modelToFlow(
           snakeRelation,
           snakeSourceSide: snakeRelation ? snakeSourceSide : undefined,
           snakeTargetSide: snakeRelation ? snakeTargetSide : undefined,
+          snakeReverse: snakeReverse || undefined,
           chartRelation: ganttRelation ? 'gantt' : gitRelation ? 'git' : undefined,
           gitOrientation: gitRelation ? gitOrientation : undefined,
           ganttTargetMilestone: ganttRelation && targetType === 'ganttMilestone',
@@ -1048,10 +1051,10 @@ export function modelToFlow(
           strokeWidth: snakeRelation ? 3 : ganttRelation ? 2.2 : gitRelation ? 4 : critical ? 2.4 : 1.6,
           strokeDasharray: dashed ? '6 4' : dotted ? '2 3' : undefined,
         },
-        // React Flow adds a child node's z-index to its connected edges. The
-        // negative offset keeps Snake rails above the graph container while
-        // leaving each bullet (including its label) one layer higher.
-        zIndex: snakeRelation ? -1 : ganttRelation ? 2500 : gitRelation ? 1 : 1000,
+        // React Flow adds a child node's z-index to its connected edges, and
+        // +1000 when the edge or an endpoint is selected (both: +2000). The offset keeps Snake rails above
+        // the graph container but under every bullet, even while selected.
+        zIndex: snakeRelation ? -2001 : ganttRelation ? 2500 : gitRelation ? 1 : 1000,
       })
       continue
     }

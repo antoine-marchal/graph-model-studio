@@ -103,5 +103,6 @@
   "s127.render.reference.thumbnails.with.powerpoint": "Générer les vignettes de référence avec PowerPoint lors de l'import (Windows, si installé).",
   "s128.export.folder.relative.to.the": "Dossier d'export, relatif au fichier source.",
   "s129.merge.request.target.branch.for": "Branche cible des merge requests pour la comparaison « base MR » (vide : branche par défaut d'origin).",
-  "s130.no.template.imported.yet.import": "Aucun gabarit importé. [Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)\n[Importer une présentation PowerPoint](command:corporateSlides.importPresentation)"
+  "s130.no.template.imported.yet.import": "Aucun gabarit importé. [Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)\n[Importer une présentation PowerPoint](command:corporateSlides.importPresentation)",
+  "s200.deck.thumbnail": "Écrire <deck>.png (première diapositive) à côté de la présentation à chaque enregistrement ; les blocs « deck » de Markdown Studio l'affichent."
 }

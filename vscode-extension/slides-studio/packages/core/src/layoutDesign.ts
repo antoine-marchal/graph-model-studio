@@ -1,4 +1,5 @@
-import type { CorporateMaster, ElementStyle, LayoutDef, Paragraph, PlaceholderDef, SlideElement, SlideNode, StaticObject } from './schema.js';
+import type { CorporateMaster, ElementStyle, LayoutDef, Paragraph, PlaceholderDef, SlideElement, SlideNode, StaticObject, TableElement } from './schema.js';
+import { tr } from './i18n.js';
 import { resolveSlide } from './geometry.js';
 import { round4 } from './units.js';
 
@@ -91,6 +92,14 @@ export function staticToElement(o: StaticObject, id: string): SlideElement | nul
   return null;
 }
 
+/** Grid a table placeholder starts slides with (its template, or a 3 × 3 table with a header row). */
+export function placeholderTable(p: PlaceholderDef | undefined): Pick<TableElement, 'rows' | 'header' | 'headerColumn' | 'colWidths' | 'rowHeights' | 'style' | 'colAlign' | 'cellStyles' | 'cellRuns'> {
+  const t = p?.table;
+  const rows = t?.rows ?? [[1, 2, 3].map((n) => tr(`Colonne ${n}`, `Column ${n}`)), ['', '', ''], ['', '', '']];
+  // A copy: the slide's table starts from the suggested look, then lives its own life.
+  return structuredClone(clean({ rows, header: t?.header, headerColumn: t?.headerColumn, colWidths: t?.colWidths, rowHeights: t?.rowHeights, style: t?.style, colAlign: t?.colAlign, cellStyles: t?.cellStyles, cellRuns: t?.cellRuns }));
+}
+
 /** The layout as a virtual slide (see `LayoutDesign`). */
 export function layoutToDesign(layout: LayoutDef): LayoutDesign {
   const elements: SlideElement[] = [];
@@ -115,7 +124,9 @@ export function layoutToDesign(layout: LayoutDef): LayoutDesign {
   });
   for (const p of layout.placeholders) {
     const id = ID_RE.test(p.key) ? p.key : freeId(undefined, p.type);
-    elements.push({ id, type: 'text', placeholder: p.key, x: p.x, y: p.y, w: p.w, h: p.h, paragraphs: paragraphsOf(p.prompt ?? p.key) });
+    // A table placeholder is designed as a table: its grid is what slides start from.
+    if (p.type === 'tbl') elements.push({ id, type: 'table', placeholder: p.key, x: p.x, y: p.y, w: p.w, h: p.h, ...placeholderTable(p) });
+    else elements.push({ id, type: 'text', placeholder: p.key, x: p.x, y: p.y, w: p.w, h: p.h, paragraphs: paragraphsOf(p.prompt ?? p.key) });
     origin[id] = { index: -1, json: p.key };
   }
   return {
@@ -148,26 +159,28 @@ export function designToLayout(base: LayoutDef, design: Pick<LayoutDesign, 'slid
   for (const r of resolved) {
     const el = r.element;
     const from = design.origin[el.id];
-    if (el.placeholder && el.type === 'text') {
+    if (el.placeholder && (el.type === 'text' || el.type === 'table')) {
       const orig = base.placeholders.find((p) => p.key === (from?.index === -1 ? from.json : el.placeholder));
       const key = keys.has(el.placeholder) ? el.id : el.placeholder;
       keys.add(key);
       const style = { ...(orig?.style ?? {}) } as PlaceholderDef['style'];
-      for (const k of PH_STYLE_KEYS) {
+      // A table's look travels in `table.style` (a copy for slides), not in the placeholder box style.
+      for (const k of el.type === 'text' ? PH_STYLE_KEYS : []) {
         const val = el.style?.[k];
         if (val === undefined) continue;
         // Placeholder colors are literal: theme tokens are resolved.
         (style as Record<string, unknown>)[k] = k === 'color' || k === 'line' || k === 'fill' ? (val === 'none' ? undefined : (r.style[k] ?? undefined)) : val;
       }
-      const prompt = textOf(el.paragraphs);
+      const prompt = el.type === 'text' ? textOf(el.paragraphs) : '';
       placeholders.push(clean({
         ...(orig ?? {}),
         key,
         name: orig?.name ?? key,
-        type: orig?.type ?? placeholderTypeOf(key),
+        type: el.type === 'table' ? 'tbl' : (orig?.type ?? placeholderTypeOf(key)),
         x: round4(r.box.x), y: round4(r.box.y), w: round4(r.box.w), h: round4(r.box.h),
         style: clean(style),
         prompt: prompt && prompt !== key ? prompt : undefined,
+        table: el.type === 'table' ? clean({ rows: el.rows, header: el.header, headerColumn: el.headerColumn, colWidths: el.colWidths, rowHeights: el.rowHeights, style: el.style, colAlign: el.colAlign, cellStyles: el.cellStyles, cellRuns: el.cellRuns }) : undefined,
       }) as PlaceholderDef);
       origin[el.id] = { index: -1, json: key };
       continue;

@@ -87,6 +87,8 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   z.object({ type: z.literal('gmcOpen'), src: z.string().max(260) }),
   z.object({ type: z.literal('gmcWrite'), src: z.string().max(260), source: z.string().max(2_000_000) }),
   z.object({ type: z.literal('gmcClose'), src: z.string().max(260), changed: z.boolean() }),
+  /** First slide rendered as PNG (base64), written next to the deck as `<file>.png`. */
+  z.object({ type: z.literal('thumbnail'), data: z.string().max(20_000_000) }),
 ]);
 export type WebviewMessage = z.infer<typeof WebviewMessage>;
 
@@ -123,4 +125,6 @@ export type HostMessage =
   | { type: 'rejected'; txId: string; reason: string; conflict: boolean }
   | { type: 'notice'; level: 'info' | 'warning' | 'error'; message: string }
   | { type: 'reference'; slideIndex: number; url: string | null; message?: string }
+  /** Render the first slide to PNG and send it back (`thumbnail`). */
+  | { type: 'requestThumbnail' }
   | { type: 'masters'; master: unknown; assetUrls: Record<string, string>; thumbnails: Record<string, string>; focusLayout?: string };

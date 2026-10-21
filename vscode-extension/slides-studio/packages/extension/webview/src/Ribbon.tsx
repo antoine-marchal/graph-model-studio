@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { isDiagramSrc, paletteTokens, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
+import { findLayout, findPlaceholder, isDiagramSrc, paletteTokens, placeholderTable, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
@@ -83,7 +83,12 @@ function useActions() {
   return {
     addText: () => add({ type: 'text', ...center(5, 1), paragraphs: [{ runs: [{ text: tr('Nouveau texte', 'New text') }] }] } as never),
     addShape: (shape: ShapeKind) => add({ type: 'shape', shape, ...(shape === 'line' ? center(3, 0) : SQUARE.has(shape) ? center(2, 2) : shape === 'can' ? center(1.6, 2) : center(3, 1.5)) } as never),
-    addTable: () => add({ type: 'table', ...center(8, 2), header: true, rows: [[tr('Colonne 1', 'Column 1'), tr('Colonne 2', 'Column 2'), tr('Colonne 3', 'Column 3')], ['', '', ''], ['', '', '']] } as never),
+    addTable: () => {
+      // An empty table placeholder of the layout takes the table, with its starting grid.
+      const layout = slide && master && !useEditor.getState().design ? findLayout(master, slide.layout) : undefined;
+      const ph = layout?.placeholders.find((p) => p.type === 'tbl' && !slide!.elements.some((e) => e.placeholder && findPlaceholder(layout, e.placeholder) === p));
+      add(ph ? ({ type: 'table', placeholder: ph.key, ...placeholderTable(ph) } as never) : ({ type: 'table', ...center(8, 2), ...placeholderTable(undefined) } as never));
+    },
   };
 }
 
@@ -303,12 +308,14 @@ function FontTools() {
     const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
     return el?.closest<HTMLElement>('[data-caps]')?.dataset.caps;
   };
-  const capsOn = (v: 'small' | 'all') => (runs ? (selCaps() ?? first?.caps) === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.caps === v));
+  const capsOn = (v: 'small' | 'all') => (runs ? (selCaps() ?? first?.caps) === v : cells ? cellLook?.caps === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.caps === v));
   const setCaps = (v: 'small' | 'all') => {
     if (runs) return void ed!.format({ caps: capsOn(v) ? (first?.caps === v ? 'none' : null) : v });
+    // Table being edited, no characters selected: the selected cells.
+    if (cells) return void cells.formatCells!({ caps: cellLook?.caps === v ? null : v });
     style({ caps: els.every((e) => e.style?.caps === v) ? null : v });
   };
-  const capsOff = off || (!runs && !!cells) || els.every((e) => e.type === 'table');
+  const capsOff = off;
   const fonts = master ? [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])] : [];
   const face = els[0]?.style?.fontFace;
   const faceLabel = face === 'theme.heading' ? master?.theme.fonts.heading : face === 'theme.body' ? master?.theme.fonts.body : face ?? first?.fontFace ?? '—';

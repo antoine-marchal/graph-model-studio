@@ -331,6 +331,7 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
       case 'table': {
         const header = el.header !== false;
         const head = resolveColor('theme.accent1', master) ?? '3E4A83';
+        const headTint = resolveColor('theme.accent1.lighter80', master) ?? 'DDE1EE';
         const border = (line: string | undefined, width: number | undefined, dash: string | undefined, fallback: string) =>
           line === 'none' ? { type: 'none' } : { type: dash && dash !== 'solid' ? 'dash' : 'solid', pt: width ?? 0.5, color: resolveColor(line, master) ?? fallback };
         const grid = resolveColor('theme.dk1.lighter60', master) ?? 'A8A8A8';
@@ -342,12 +343,17 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
             // Formatted cells: pptxgenjs takes an array of runs as the cell text.
             const runs = el.cellRuns?.[ri]?.[ci];
             const rich = runs && runs.map((x) => x.text).join('') === text
-              ? runs.map((x) => ({ text: x.text, options: { ...(x.bold ? { bold: true } : {}), ...(x.italic ? { italic: true } : {}), ...(x.underline ? { underline: { style: 'sng' } } : {}), ...(x.color ? { color: resolveColor(x.color, master) ?? undefined } : {}), ...(x.size ? { fontSize: x.size } : {}) } }))
+              ? runs.map((x) => ({ text: x.text, options: { ...(x.bold ? { bold: true } : {}), ...(x.italic ? { italic: true } : {}), ...(x.underline ? { underline: { style: 'sng' } } : {}), ...(x.color ? { color: resolveColor(x.color, master) ?? undefined } : {}), ...(x.size ? { fontSize: x.size } : {}), ...((x.caps ?? cs?.caps ?? el.style?.caps) && (x.caps ?? cs?.caps ?? el.style?.caps) !== 'none' ? { caps: x.caps ?? cs?.caps ?? el.style?.caps } : {}) } }))
               : null;
+            const caps = cs?.caps ?? el.style?.caps;
             return {
-              text: rich ?? text,
+              // Caps live on runs in pptxgenjs: a plain cell with caps becomes a single run.
+              text: rich ?? (caps && caps !== 'none' ? [{ text, options: { caps } }] : text),
               options: {
-                ...(ri === 0 && header ? { bold: true, color: 'FFFFFF', fill: { color: head } } : {}),
+                ...(el.style?.bold ? { bold: true } : {}),
+                ...(el.style?.italic ? { italic: true } : {}),
+                ...(el.style?.underline ? { underline: { style: 'sng' } } : {}),
+                ...(ri === 0 && header ? { bold: true, color: 'FFFFFF', fill: { color: head } } : ci === 0 && el.headerColumn ? { bold: true, fill: { color: headTint } } : {}),
                 ...(el.colAlign?.[ci] ? { align: el.colAlign[ci] } : {}),
                 ...(fill ? { fill: { color: fill } } : {}),
                 ...(cs?.color ? { color: resolveColor(cs.color, master) ?? undefined } : {}),

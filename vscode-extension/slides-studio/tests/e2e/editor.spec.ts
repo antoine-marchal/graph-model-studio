@@ -205,9 +205,18 @@ test('table: typing then clicking outside keeps the text; column borders resize'
   await cell.click();
   await page.keyboard.type('42');
   await expect(cell).toHaveText('42');
+  // Grips sit on the borders as rendered, even when a row grows with its text.
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('x');
+  const first = (await page.getByTestId('table-editor').locator('[data-cell="1:0"]').boundingBox())!;
+  const rowGrip = (await page.getByTestId('row-resize').nth(1).boundingBox())!;
+  expect(Math.abs(rowGrip.y + rowGrip.height / 2 - (first.y + first.height))).toBeLessThan(3);
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Backspace');
   // Resize the first column border by +60px, then leave by clicking the empty slide area.
   const grip = page.getByTestId('col-resize').first();
   const b = (await grip.boundingBox())!;
+  expect(Math.abs(b.x + b.width / 2 - (first.x + first.width))).toBeLessThan(3);
   await page.mouse.move(b.x + b.width / 2, b.y + 20);
   await page.mouse.down();
   await page.mouse.move(b.x + b.width / 2 + 60, b.y + 20, { steps: 4 });
@@ -215,7 +224,8 @@ test('table: typing then clicking outside keeps the text; column borders resize'
   await page.getByTestId('slide-canvas').click({ position: { x: 5, y: 5 } });
   await synced(page);
   const src = await source(page);
-  expect(src).toMatch(/- "?42"?\n/);
+  // The table's text lives in a `::: table-1` Markdown block.
+  expect(src).toMatch(/::: table-1\n[\s\S]*\| 42 /);
   expect(src).toMatch(/colWidths:/);
 });
 

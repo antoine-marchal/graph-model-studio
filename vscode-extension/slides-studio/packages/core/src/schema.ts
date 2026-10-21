@@ -193,6 +193,7 @@ export const CellStyle = z
     underline: z.boolean().optional(),
     /** Font size in points. */
     size: z.number().min(4).max(400).optional(),
+    caps: Caps.optional(),
     align: HAlign.optional(),
     valign: VAlign.optional(),
   })
@@ -207,7 +208,10 @@ export const TableElement = z.object({
   ...ElementBase,
   type: z.literal('table'),
   rows: z.array(z.array(z.string())).min(1),
+  /** First row is a header row (default true). */
   header: z.boolean().optional(),
+  /** First column is a header column. */
+  headerColumn: z.boolean().optional(),
   /** Horizontal alignment per column (GFM `:---:` in Markdown); null = default. */
   colAlign: z.array(ColAlign.nullable()).optional(),
   /** Relative column widths / row heights (weights, normalised to the box); absent = even. */
@@ -358,6 +362,24 @@ export const PlaceholderDef = z.object({
   }),
   levels: z.array(LevelStyle).optional(),
   prompt: z.string().optional(),
+  /**
+   * Table placeholder (`tbl`): the grid a slide starts from. Header cells hold their labels, the
+   * other cells are what slides fill in; slides add and delete rows freely.
+   */
+  table: z
+    .object({
+      rows: z.array(z.array(z.string())).min(1),
+      header: z.boolean().optional(),
+      headerColumn: z.boolean().optional(),
+      colWidths: z.array(z.number().positive()).optional(),
+      rowHeights: z.array(z.number().positive()).optional(),
+      /** Suggested look: table style, column alignment, cell styles and formatted cells of the grid. */
+      style: ElementStyle.optional(),
+      colAlign: z.array(ColAlign.nullable()).optional(),
+      cellStyles: z.array(z.array(CellStyle.nullable())).optional(),
+      cellRuns: z.array(z.array(z.array(TextRun).nullable())).optional(),
+    })
+    .optional(),
 });
 export type PlaceholderDef = z.infer<typeof PlaceholderDef>;
 

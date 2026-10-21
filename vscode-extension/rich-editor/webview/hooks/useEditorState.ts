@@ -5,6 +5,7 @@ import {
   markdownToHtml,
   htmlToMarkdown,
   htmlToMarkdownSync,
+  restoreTabs,
 } from "./useVSCodeSync";
 import {
   extractFrontmatter,
@@ -147,6 +148,7 @@ export function useEditorState({
             setFrontmatterState(frontmatterBody(frontmatter));
             const html = await markdownToHtml(noFm, baseUri.current);
             editor.commands.setContent(html, { emitUpdate: false });
+            restoreTabs(editor);
             // Place the caret: restore the last-known position for this
             // file if we have one, otherwise drop it inside the first
             // heading (usually the title). Falls back to doc start.
@@ -197,6 +199,7 @@ export function useEditorState({
           // host → dirty-after-save. The host just told us the content;
           // echoing it back as an edit is redundant.
           editor.commands.setContent(html, { emitUpdate: false });
+            restoreTabs(editor);
           const maxPos = editor.state.doc.content.size;
           editor.commands.setTextSelection({
             from: Math.min(from, maxPos),

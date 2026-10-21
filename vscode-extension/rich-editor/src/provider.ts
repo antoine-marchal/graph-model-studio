@@ -93,6 +93,14 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           wv.postMessage({ type: "settingsUpdated", settings });
         }
       }),
+      // Deck thumbnails are rewritten in place: deck blocks reload their image.
+      (() => {
+        const watcher = vscode.workspace.createFileSystemWatcher("**/*.deck.png");
+        const notify = () => { for (const wv of this.openWebviews) void wv.postMessage({ type: "deckThumbnailChanged" }); };
+        watcher.onDidCreate(notify);
+        watcher.onDidChange(notify);
+        return watcher;
+      })(),
       onCustomCssChange(async () => {
         const css = await readCustomCss();
         for (const wv of this.openWebviews) {
@@ -521,6 +529,43 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
             // If file doesn't exist, ignore
           }
         }
+      } else if (msg.type === "openDeck") {
+        // Deck block: always the Slides Studio editor (not the .deck text view).
+        const target = vscode.Uri.file(path.resolve(path.dirname(document.uri.fsPath), String(msg.href)));
+        try {
+          await vscode.commands.executeCommand("vscode.openWith", target, "corporateSlides.editor");
+        } catch (err) {
+          vscode.window.showErrorMessage(`Markdown Studio: could not open ${msg.href}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else if (msg.type === "pickDeck") {
+        // Slash menu "Slide Deck": pick a .deck; its thumbnail is `<deck>.png`.
+        const picked = await vscode.window.showOpenDialog({
+          defaultUri: vscode.Uri.file(docFolderPath),
+          canSelectMany: false,
+          filters: { "Slide decks": ["deck"] },
+          openLabel: "Insert deck",
+        });
+        const deck = picked?.[0];
+        let reply: Record<string, unknown> = {};
+        if (deck) {
+          const rel = path.relative(docFolderPath, deck.fsPath).replace(/\\/g, "/");
+          const href = rel.startsWith(".") ? rel : `./${rel}`;
+          let title = path.basename(deck.fsPath, ".deck");
+          try {
+            const head = Buffer.from(await vscode.workspace.fs.readFile(deck)).toString("utf8").slice(0, 4000);
+            title = /^---\r?\n[\s\S]*?^title:\s*["']?(.+?)["']?\s*$/m.exec(head)?.[1] ?? title;
+          } catch {
+            // Unreadable deck: keep the file name.
+          }
+          reply = { href, title, src: `${baseUri}/${rel}.png` };
+          // No thumbnail yet: Slides Studio writes it when it opens the deck.
+          try {
+            await vscode.workspace.fs.stat(vscode.Uri.file(`${deck.fsPath}.png`));
+          } catch {
+            void vscode.commands.executeCommand("vscode.openWith", deck, "corporateSlides.editor", { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true });
+          }
+        }
+        webview.postMessage({ type: "pickDeckResult", requestId: msg.requestId, ...reply });
       } else if (msg.type === "promptImageUrl") {
         const url = await vscode.window.showInputBox({
           prompt: "Image URL",

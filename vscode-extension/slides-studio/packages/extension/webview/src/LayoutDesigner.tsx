@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { placeholderTypeOf, resolveColor, tr, uniqueId, type LayoutDef, type PlaceholderDef, type SlideElement } from '@corporate-slides/core';
+import { placeholderTable, placeholderTypeOf, resolveColor, tr, uniqueId, type LayoutDef, type PlaceholderDef, type SlideElement } from '@corporate-slides/core';
 import { SlideView } from '@corporate-slides/renderer';
 import { useAssets } from './Canvas';
 import { currentSlide, updateDesignLayout, useEditor } from './store';
@@ -31,7 +31,11 @@ export function addPlaceholder(type: PlaceholderDef['type']) {
   const id = taken.includes(type) ? uniqueId(type, taken) : type;
   const { width: W, height: H } = st.master.dimensions;
   const [w, h] = type === 'title' ? [W * 0.8, 1] : type === 'subtitle' ? [W * 0.8, 0.6] : [W * 0.4, H * 0.4];
-  const el: SlideElement = { id, type: 'text', placeholder: id, x: Math.round(((W - w) / 2) * 100) / 100, y: Math.round(((H - h) / 2) * 100) / 100, w, h, paragraphs: [{ runs: [{ text: id }] }] };
+  const box = { x: Math.round(((W - w) / 2) * 100) / 100, y: Math.round(((H - h) / 2) * 100) / 100, w, h };
+  // A table zone is drawn as its starting grid (header labels, empty cells to fill in slides).
+  const el: SlideElement = type === 'tbl'
+    ? { id, type: 'table', placeholder: id, ...box, ...placeholderTable(undefined) }
+    : { id, type: 'text', placeholder: id, ...box, paragraphs: [{ runs: [{ text: id }] }] };
   st.mutate([{ kind: 'addElement', slideId: slide.id, element: el }]);
   st.select(slide.id, [id]);
 }
@@ -123,7 +127,9 @@ export function PlaceholderSection({ el }: { el: SlideElement }) {
     <Section title={tr('Espace réservé', 'Placeholder')}>
       <p className="hint">
         <code>{el.placeholder}</code> · {PLACEHOLDER_KINDS.find((k) => k.type === type)?.label ?? type} —{' '}
-        {tr('le texte affiché est l’invite montrée dans PowerPoint ; police, couleurs et position sont héritées par les diapositives.', 'the text shown is the prompt PowerPoint displays; font, colors and position are inherited by slides.')}
+        {type === 'tbl'
+          ? tr('la grille est celle de départ des diapositives : en-têtes (1re ligne ou 1re colonne, double-cliquez pour les éditer) et cellules à remplir ; les diapositives ajoutent ou suppriment des lignes.', 'the grid is what slides start from: headers (first row or first column; double-click to edit) and cells to fill in; slides add or delete rows.')
+          : tr('le texte affiché est l’invite montrée dans PowerPoint ; police, couleurs et position sont héritées par les diapositives.', 'the text shown is the prompt PowerPoint displays; font, colors and position are inherited by slides.')}
       </p>
     </Section>
   );

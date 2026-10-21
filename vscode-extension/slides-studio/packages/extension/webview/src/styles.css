@@ -499,10 +499,18 @@ body.is-dragging-end, body.is-dragging-end * { cursor: grabbing !important; }
 .tbl-range-frame.is-filling { box-shadow: none; outline: 2px dashed var(--accent); outline-offset: -2px; }
 .tbl-fill-handle { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; box-sizing: border-box; background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 1px var(--accent); cursor: crosshair; pointer-events: auto; z-index: 3; }
 .tbl-fill-handle:hover { transform: scale(1.3); }
-.tbl-resize { position: absolute; z-index: 4; }
-.tbl-resize.is-col { top: 0; bottom: 0; width: 7px; margin-left: -3px; cursor: col-resize; }
-.tbl-resize.is-row { left: 0; right: 0; height: 7px; margin-top: -3px; cursor: row-resize; }
-.tbl-resize:hover { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.tbl-resize { position: absolute; z-index: 4; pointer-events: auto; }
+.tbl-resize.is-col { top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: col-resize; }
+.tbl-resize.is-row { left: 0; right: 0; height: 9px; margin-top: -4px; cursor: row-resize; }
+/* The grip is a hairline that thickens into the accent on hover / drag. */
+.tbl-resize::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity 120ms ease-out, transform 160ms cubic-bezier(0.16, 1, 0.3, 1); }
+.tbl-resize.is-col::after { top: 0; bottom: 0; left: 3px; width: 3px; transform: scaleX(0.4); }
+.tbl-resize.is-row::after { left: 0; right: 0; top: 3px; height: 3px; transform: scaleY(0.4); }
+.tbl-resize:hover::after, body.is-col-resizing .tbl-resize.is-col:active::after, body.is-row-resizing .tbl-resize.is-row:active::after { opacity: 1; transform: none; }
+.tbl-grid-handles .tbl-resize:not(:hover)::after { opacity: 0.25; }
+.table-editor td:focus-visible { outline: none; }
+.tbl-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tbl-btn.is-active:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
 body.is-filling, body.is-filling * { cursor: crosshair !important; }
 body.is-col-resizing, body.is-col-resizing * { cursor: col-resize !important; }
 body.is-row-resizing, body.is-row-resizing * { cursor: row-resize !important; }

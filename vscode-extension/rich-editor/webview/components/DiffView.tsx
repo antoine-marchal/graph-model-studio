@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { diffWordsWithSpace, structuredPatch } from "diff";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useEditor, EditorContent } from "@tiptap/react";
-import { markdownToHtml } from "../hooks/useVSCodeSync";
+import { markdownToHtml, restoreTabs } from "../hooks/useVSCodeSync";
 import { contentExtensions } from "../editorExtensions";
 import { DiffBlock, DiffWords } from "../extensions/DiffBlock";
 import { diffBlocks, similarity, type DiffEntry } from "../renderedDiff";
@@ -287,7 +287,10 @@ export function DiffView({
 
   const renderedHtml = rendered?.html ?? "";
   useEffect(() => {
-    if (diffEditor && renderedHtml) diffEditor.commands.setContent(renderedHtml, { emitUpdate: false });
+    if (diffEditor && renderedHtml) {
+      diffEditor.commands.setContent(renderedHtml, { emitUpdate: false });
+      restoreTabs(diffEditor);
+    }
   }, [diffEditor, renderedHtml]);
 
   // --- Navigation through rendered-diff hunks (Prev / Next, j / k, ↑ / ↓) ---

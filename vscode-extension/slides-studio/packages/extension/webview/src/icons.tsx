@@ -83,6 +83,7 @@ const P: Record<string, string> = {
   colDelete: 'M5.5 2.5h5v11h-5zM6.5 6l3 4M9.5 6l-3 4',
   eraser: 'M6 13.5h7.5M3.2 9.8l5.6-5.6a1.5 1.5 0 0 1 2.1 0l1.4 1.4a1.5 1.5 0 0 1 0 2.1L7 13.5H5L3.2 11.7a1.4 1.4 0 0 1 0-1.9zM5.5 7.5l3.5 3.5',
   tableHeader: 'M2.5 3.5h11v9h-11zM2.5 6.5h11M3.5 5h9',
+  tableHeaderCol: 'M2.5 3.5h11v9h-11zM5.5 3.5v9M4 4.5v7',
   fillColor: 'M3 8.5L8 3.5l4.5 4.5-5 5zM3 8.5h9.5M13.5 10.5s1 1.3 1 2a1 1 0 0 1-2 0c0-.7 1-2 1-2z',
   borders: 'M2.5 2.5h11v11h-11zM8 2.5v11M2.5 8h11',
   clearFormat: 'M4 3.5h8M8 3.5l-2 9M10 10l4 4M14 10l-4 4',

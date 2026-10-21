@@ -1,3 +1,4 @@
+import { Extension } from "@tiptap/core";
 import { StarterKit } from "@tiptap/starter-kit";
 import { Code } from "@tiptap/extension-code";
 import { Link } from "@tiptap/extension-link";
@@ -14,6 +15,7 @@ import { MathInline } from "./extensions/MathInline";
 import { MathBlock } from "./extensions/MathBlock";
 import { MermaidBlock } from "./extensions/MermaidBlock";
 import { GmcBlock } from "./extensions/GmcBlock";
+import { DeckBlock } from "./extensions/DeckBlock";
 import { RawHtmlBlock } from "./extensions/RawHtmlBlock";
 import { DirectiveBlock } from "./extensions/DirectiveBlock";
 import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/BlockStyle";
@@ -22,6 +24,29 @@ import { GitHubEmbed } from "./extensions/GitHubEmbed";
 import { HeadingIndent } from "./extensions/HeadingIndent";
 
 const lowlight = createLowlight(common);
+
+/**
+ * Tab typed inside a line inserts a tab character instead of indenting the
+ * list item or jumping to the next table cell. At the start of a line (or
+ * at the end of a table cell, or with a selection) the usual indent / cell
+ * navigation still applies.
+ */
+const TabCharacter = Extension.create({
+  name: "tabCharacter",
+  priority: 1000,
+  addKeyboardShortcuts() {
+    return {
+      Tab: ({ editor }) => {
+        const { empty, $from } = editor.state.selection;
+        if (!empty || !$from.parent.isTextblock || $from.parentOffset === 0) return false;
+        const cell = $from.depth > 1 && /^table(Cell|Header)$/.test($from.node($from.depth - 1).type.name);
+        if (cell && $from.parentOffset === $from.parent.content.size) return false;
+        // insertText, not insertContent: a string goes through the HTML parser, which collapses "\t".
+        return editor.commands.command(({ tr }) => (tr.insertText("\t"), true));
+      },
+    };
+  },
+});
 
 /**
  * Everything that renders document content — shared by the rich editor and
@@ -48,6 +73,7 @@ export function contentExtensions() {
     TaskItem.configure({ nested: true }),
     MermaidBlock,
     GmcBlock,
+    DeckBlock,
     RawHtmlBlock,
     DirectiveBlock,
     AlignBlock,
@@ -61,5 +87,6 @@ export function contentExtensions() {
     MathBlock,
     GitHubEmbed,
     HeadingIndent,
+    TabCharacter,
   ];
 }

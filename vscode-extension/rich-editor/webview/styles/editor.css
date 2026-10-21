@@ -573,6 +573,68 @@ html, body, #root {
   gap: 4px;
 }
 
+/* Slide deck — first-slide thumbnail card linking to the .deck */
+.deck-block {
+  margin: 12px 0;
+}
+.deck-block figure {
+  margin: 0 auto;
+  max-width: 560px;
+  border: 1px solid var(--vscode-widget-border, #444);
+  border-radius: 6px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--vscode-editorWidget-background, rgba(255, 255, 255, 0.03));
+  transition: border-color 140ms ease-out;
+}
+.deck-block figure:hover,
+.deck-block.selected figure {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+.deck-block img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #fff;
+}
+.deck-block-empty {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--vscode-descriptionForeground, #888);
+}
+.deck-block figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--vscode-widget-border, #444);
+  font-size: 13px;
+}
+.deck-block-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deck-block-file {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground, #888);
+  font-size: 12px;
+}
+
 .image-placeholder-icon {
   font-size: 28px;
   opacity: 0.6;

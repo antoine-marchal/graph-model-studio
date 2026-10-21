@@ -631,7 +631,8 @@ export function layoutSnakeGraph(
   }
   const links = [...linkByPair.values()]
   const explicitLinks = relations
-    .filter(relation => bulletIds.has(relation.sourceId) && bulletIds.has(relation.targetId))
+    // A self-loop is decoration on one bullet, not topology: the backbone stays.
+    .filter(relation => bulletIds.has(relation.sourceId) && bulletIds.has(relation.targetId) && relation.sourceId !== relation.targetId)
     .map(relation => ({ sourceId: relation.sourceId, targetId: relation.targetId }))
 
   // Declaration order defines the permanent implicit snake. User-created
@@ -644,6 +645,20 @@ export function layoutSnakeGraph(
   const ROW = 126
   const TOP = TITLE + 36
   const SIDE = 116
+  // Row-end U-turns must clear the 140px caption block of the last bullet.
+  const TURN = 96
+  // A self-loop rises above its bullet; its row gets extra headroom so the
+  // loop clears the previous row's captions (and the graph title).
+  const LOOP_SPACE = 60
+  const rows = Math.ceil(ordered.length / columns)
+  const loopRows = new Set(relations
+    .filter(relation => relation.sourceId === relation.targetId && bulletIds.has(relation.sourceId))
+    .map(relation => Math.floor(ordered.indexOf(relation.sourceId) / columns)))
+  const rowY: number[] = []
+  for (let row = 0, y = TOP; row < rows; row++, y += ROW) {
+    if (loopRows.has(row)) y += LOOP_SPACE
+    rowY.push(y)
+  }
   const centers = new Map<string, { x: number; y: number; row: number; col: number }>()
   ordered.forEach((id, i) => {
     const row = Math.floor(i / columns)
@@ -652,7 +667,7 @@ export function layoutSnakeGraph(
     const bullet = bullets[index.get(id)!]
     const size = defSize(bullet, 38, 38)
     const x = SIDE + col * COL
-    const y = TOP + row * ROW
+    const y = rowY[row]
     centers.set(id, { x, y, row, col })
     out.placements[id] = { x: x - size.width / 2, y: y - size.height / 2, width: size.width, height: size.height }
   })
@@ -663,7 +678,7 @@ export function layoutSnakeGraph(
       arrow: { x: (from.x + to.x) / 2, y: from.y, angle: to.x >= from.x ? 0 : 180 },
     }
     const direction = from.row % 2 === 0 ? 1 : -1
-    const turnX = from.x + direction * 48
+    const turnX = from.x + direction * TURN
     const midY = (from.y + to.y) / 2
     return {
       d: `M ${from.x} ${from.y} C ${turnX} ${from.y}, ${turnX} ${midY}, ${turnX} ${midY} C ${turnX} ${to.y}, ${to.x} ${to.y}, ${to.x} ${to.y}`,
@@ -717,8 +732,7 @@ export function layoutSnakeGraph(
     }
   }
 
-  const rows = Math.ceil(ordered.length / columns)
   out.width = SIDE * 2 + Math.max(0, columns - 1) * COL
-  out.height = TOP + Math.max(0, rows - 1) * ROW + 76
+  out.height = rowY[rows - 1] + 76
   return out
 }

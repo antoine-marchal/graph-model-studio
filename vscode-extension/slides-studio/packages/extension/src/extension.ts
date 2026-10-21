@@ -151,7 +151,11 @@ export function activate(context: vscode.ExtensionContext) {
       .filter((u) => !basename(u.fsPath).startsWith('~$'))
       .map((u) => ({ label: basename(u.fsPath), description: folder ? relative(folder.uri.fsPath, dirname(u.fsPath)) || '.' : dirname(u.fsPath), path: u.fsPath }));
     items.push({ label: `$(folder-opened) ${tr('Parcourir…', 'Browse…')}` });
-    const pick = items.length === 2 && items[0]!.path ? items[0] : await vscode.window.showQuickPick(items, { title });
+    // Always asked, even with a single candidate: the workspace file is a suggestion, not a choice.
+    const pick = await vscode.window.showQuickPick(items, {
+      title,
+      placeHolder: found.length ? tr('Fichier PowerPoint du projet, ou Parcourir…', 'A PowerPoint file of the project, or Browse…') : tr('Aucun fichier PowerPoint dans le projet : Parcourir…', 'No PowerPoint file in the project: Browse…'),
+    });
     if (!pick) return undefined;
     return pick.path ?? (await vscode.window.showOpenDialog({ filters: { PowerPoint: ['pptx', 'potx'] }, canSelectMany: false, title }))?.[0]?.fsPath;
   };

@@ -236,8 +236,8 @@ describe('tables and connectors in sources', () => {
     const t = doc.slides[0]!.elements.find((e) => e.type === 'table')!;
     expect(t.type === 'table' && t.colAlign).toEqual([null, 'right']);
     const out = applyMutations(md, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: t.id, patch: { colAlign: ['center', null], rows: [['A', 'B'], ['1', '2'], ['3', '4']] } }]);
-    expect(out).toContain('| :---: | --- |');
-    expect(out).toContain('| 3 | 4 |');
+    expect(out).toContain('| :-: | --- |');
+    expect(out).toContain('|  3  | 4   |');
   });
   it('stores resized column widths / row heights of a Markdown table in the front matter', () => {
     const t = parseMarkdown(md).doc.slides[0]!.elements.find((e) => e.type === 'table')!;
@@ -246,6 +246,44 @@ describe('tables and connectors in sources', () => {
     expect(t2.type === 'table' && [t2.colWidths, t2.rowHeights]).toEqual([[0.7, 0.3], [0.4, 0.6]]);
     expect(tableWeights([0.7], 3).map((x) => Math.round(x * 100))).toEqual([33, 33, 33]);
     expect(tableWeights([2, 1], 2)).toEqual([2 / 3, 1 / 3]);
+  });
+  it('writes new tables as Markdown in a `::: id` block, edits them there, keeps runs and headers', () => {
+    const rows = [['Name', 'Value'], ['a|b', 'x\ty'], ['*star*', '']];
+    const added = applyMutations(md, 'markdown', [{ kind: 'addElement', slideId: 's', element: { id: 'kpi', type: 'table', x: 1, y: 2, w: 6, h: 2, rows, headerColumn: true } }]);
+    // Prettified: every column padded to its widest cell.
+    expect(added).toContain('::: kpi\n| Name     | Value |\n| -------- | ----- |\n| a\\|b     | x\ty   |\n| \\*star\\* |       |\n:::');
+    expect(added).not.toMatch(/rows:/);
+    const t = parseMarkdown(added).doc.slides[0]!.elements.find((e) => e.id === 'kpi')!;
+    expect(t).toMatchObject({ type: 'table', rows, headerColumn: true, x: 1, w: 6 });
+    expect(t.placeholder).toBeUndefined();
+    // Shift+Enter line breaks travel as `<br>`.
+    const br = applyMutations(added, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'kpi', patch: { rows: [['Name', 'Value'], ['two\nlines', ''], ['', '']] } }]);
+    expect(br).toContain('| two<br>lines |       |');
+    expect(parseMarkdown(br).doc.slides[0]!.elements.find((e) => e.id === 'kpi')).toMatchObject({ rows: [['Name', 'Value'], ['two\nlines', ''], ['', '']] });
+    const bold = [[null, null], [[{ text: 'a|b', bold: true }], null], [null, null]];
+    const edited = applyMutations(added, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'kpi', patch: { rows: [...rows, ['n', '3']], cellRuns: bold, header: false } }]);
+    expect(edited).toContain('| **a\\|b** | x\ty   |');
+    expect(edited).toContain('| n        | 3     |');
+    expect(edited).not.toMatch(/cellRuns/);
+    const t2 = parseMarkdown(edited).doc.slides[0]!.elements.find((e) => e.id === 'kpi')!;
+    expect(t2).toMatchObject({ rows: [...rows, ['n', '3']], header: false, headerColumn: true });
+    expect(t2.type === 'table' && t2.cellRuns?.[1]?.[0]).toEqual([{ text: 'a|b', bold: true }]);
+    // Colors have no Markdown syntax: the runs stay in the frontmatter, the text in the block.
+    const red = applyMutations(edited, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'kpi', patch: { cellRuns: [[null, null], [[{ text: 'a|b', color: '#FF0000' }], null], [null, null], [null, null]] } }]);
+    expect(red).toMatch(/cellRuns:/);
+    expect(parseMarkdown(red).doc.slides[0]!.elements.find((e) => e.id === 'kpi')).toMatchObject({ cellRuns: [[null, null], [[{ text: 'a|b', color: '#FF0000' }], null], [null, null], [null, null]] });
+  });
+  it('binds a `::: tbl {#id}` table block to the table placeholder', () => {
+    const src = md.replace('| A | B |', '::: tbl {#budget}\n| A | B |').replace('| 1 | 2 |\n', '| 1 | 2 |\n:::\n');
+    const t = parseMarkdown(src).doc.slides[0]!.elements.find((e) => e.type === 'table')!;
+    expect(t).toMatchObject({ id: 'budget', placeholder: 'tbl', rows: [['A', 'B'], ['1', '2']] });
+    const renamed = applyMutations(src, 'markdown', [{ kind: 'renameElement', slideId: 's', elementId: 'budget', newId: 'costs' }]);
+    expect(renamed).toContain('::: tbl {#costs}');
+    // Filling an empty table placeholder writes the block only (no frontmatter entry).
+    const filled = applyMutations(md, 'markdown', [{ kind: 'addElement', slideId: 's', element: { id: 'table', type: 'table', placeholder: 'tbl', rows: [['Q', 'Total'], ['1', '']] } }]);
+    expect(filled).toContain('::: tbl {#table}\n| Q   | Total |');
+    expect(filled).not.toContain('elements:');
+    expect(parseMarkdown(filled).doc.slides[0]!.elements.find((e) => e.id === 'table')).toMatchObject({ placeholder: 'tbl', rows: [['Q', 'Total'], ['1', '']] });
   });
   it('stores connectors and arrow/bullet styles in the front matter', () => {
     const add: Mutation[] = [

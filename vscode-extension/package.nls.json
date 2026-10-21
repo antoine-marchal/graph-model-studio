@@ -103,5 +103,6 @@
   "s127.render.reference.thumbnails.with.powerpoint": "Render reference thumbnails with PowerPoint during import (Windows, if installed).",
   "s128.export.folder.relative.to.the": "Export folder, relative to the source file.",
   "s129.merge.request.target.branch.for": "Merge request target branch for the “MR base” comparison (empty: origin's default branch).",
-  "s130.no.template.imported.yet.import": "No template imported yet. [Import a PowerPoint Template](command:corporateSlides.importTemplate)\n[Import a PowerPoint Presentation](command:corporateSlides.importPresentation)"
+  "s130.no.template.imported.yet.import": "No template imported yet. [Import a PowerPoint Template](command:corporateSlides.importTemplate)\n[Import a PowerPoint Presentation](command:corporateSlides.importPresentation)",
+  "s200.deck.thumbnail": "Write <deck>.png (first slide) next to the deck when it is saved; Markdown Studio deck blocks show it."
 }

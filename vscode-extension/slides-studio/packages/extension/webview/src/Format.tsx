@@ -546,6 +546,29 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
         </Section>
       )}
 
+      {el.type === 'table' && (
+        <Section title={tr('Tableau', 'Table')}>
+          <div className="seg" role="radiogroup" aria-label={tr('En-tête', 'Header')}>
+            {([
+              ['none', tr('Aucun', 'None'), false, false],
+              ['row', tr('1re ligne', '1st row'), true, false],
+              ['column', tr('1re colonne', '1st column'), false, true],
+              ['both', tr('Les deux', 'Both'), true, true],
+            ] as const).map(([k, label, row, col]) => {
+              const on = (el.header !== false) === row && !!el.headerColumn === col;
+              return (
+                <button key={k} type="button" role="radio" aria-checked={on} className={`ibtn has-label${on ? ' is-active' : ''}`} onClick={() => upd({ header: row, headerColumn: col })} data-testid={`table-header-${k}`}>
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="hint">
+            {el.rows.length} × {Math.max(...el.rows.map((x) => x.length))} — {tr('double-cliquez pour éditer ; glissez les bordures pour redimensionner (en édition, double-clic sur une bordure : tailles égales).', 'double-click to edit; drag the borders to resize (while editing, double-click a border: even sizes).')}
+          </p>
+        </Section>
+      )}
+
       {(el.type === 'text' || (el.type === 'shape' && !isLine)) && (
         <Section
           title={tr('Marges intérieures', 'Inner margins')}

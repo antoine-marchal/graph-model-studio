@@ -9,6 +9,7 @@ import {
   mergeRuns,
   numberLabel,
   paragraphLook,
+  placeholderTable,
   resolveSlide,
   round4,
   staticObjectBox,
@@ -26,7 +27,7 @@ import { currentSlide, useEditor } from './store';
 import { useAnchors, useDiff } from './Review';
 import { Icon } from './icons';
 import { connectMutation, deleteMutations, duplicateMutations, groupMutations, inlineEditor, type RunFormat } from './Format';
-import { TableEditor } from './TableEditor';
+import { TableEditor, TableGridHandles } from './TableEditor';
 import { AdjustHandles } from './Adjust';
 import { post } from './host';
 import { applyMaster, MasterSelection, MasterTextEditor, masterContext, masterTextEditable, startMasterDrag } from './MasterEdit';
@@ -555,6 +556,7 @@ export function Canvas() {
                 );
               })}
             {single && <AdjustHandles r={r} zoom={zoom} />}
+            {single && !readOnly && r.element.type === 'table' && <TableGridHandles r={r} slideId={slide.id} />}
             {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>{tr('verrouillé', 'locked')}</span>}
             {fit?.overflows && (
               <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title={tr("Estimation : le texte risque de déborder dans PowerPoint", "Estimate: the text may overflow in PowerPoint")}>
@@ -713,7 +715,16 @@ export function Canvas() {
             const bound = new Set(resolved?.elements.map((r) => r.placeholder?.key));
             const ph = resolved?.layout?.placeholders.find((p) => !bound.has(p.key) && p.type !== 'pic' && x >= p.x && x <= p.x + p.w && y >= p.y && y <= p.y + p.h);
             if (!ph || findPlaceholder(resolved?.layout, ph.key) !== ph) return;
-            const id = uniqueId(ph.key.replace(/[^A-Za-z0-9_-]/g, '') || 'text', slide.elements.map((x) => x.id));
+            const taken = slide.elements.map((x) => x.id);
+            // A table placeholder gets a table with the layout's grid (id generated: table, table-2…).
+            if (ph.type === 'tbl') {
+              const id = uniqueId('table', taken);
+              mutate([{ kind: 'addElement', slideId: slide.id, element: { id, type: 'table', placeholder: ph.key, ...placeholderTable(ph) } }]);
+              select(slide.id, [id]);
+              setEditing(id);
+              return;
+            }
+            const id = uniqueId(ph.key.replace(/[^A-Za-z0-9_-]/g, '') || 'text', taken);
             mutate([{ kind: 'addElement', slideId: slide.id, element: { id, type: 'text', placeholder: ph.key, paragraphs: [] } }]);
             fresh.current = id;
             select(slide.id, [id]);
@@ -1033,6 +1044,11 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
       ref.current?.blur();
     } else if (e.key === 'Tab') {
       e.preventDefault();
+      // Inside a line: a tab character. At the start of a line or over several lines: list level.
+      if (!e.shiftKey && textBeforeCaret(ref.current!, (n) => n.parentNode === ref.current)) {
+        document.execCommand('insertText', false, '\t');
+        return;
+      }
       const ed = inlineEditor.current!;
       const { paragraphs, from, to } = ed.read();
       ed.replace(paragraphs.map((p, i) => {
@@ -1081,6 +1097,21 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
       ))}
     </div>
   );
+}
+
+/**
+ * Text between the start of the caret's block and a collapsed caret ('' when the selection is not
+ * collapsed or outside `root`). `isBlock` tells which ancestor is the block (a line, a cell).
+ */
+export function textBeforeCaret(root: HTMLElement, isBlock: (n: Node) => boolean): string {
+  const s = window.getSelection();
+  if (!s || !s.isCollapsed || !s.anchorNode || !root.contains(s.anchorNode)) return '';
+  let block: Node | null = s.anchorNode;
+  while (block && block !== root && !isBlock(block)) block = block.parentNode;
+  const range = document.createRange();
+  range.selectNodeContents(block ?? root);
+  range.setEnd(s.anchorNode, s.anchorOffset);
+  return range.toString();
 }
 
 /* ------------------------------ visual diff ------------------------------ */

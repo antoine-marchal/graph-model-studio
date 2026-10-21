@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { fmtNumber, mergeRuns, tableWeights, tr, type CellStyle, type ElementPatch, type ResolvedElement, type TextRun } from '@corporate-slides/core';
-import { PPI, tableCellStyle, tokenHex } from '@corporate-slides/renderer';
+import { PPI, tableCellStyle, tableTextCss, tokenHex } from '@corporate-slides/renderer';
 import { useEditor } from './store';
 import { Icon, type IconName } from './icons';
 import { Menu, PaletteGrid, PaletteMenu } from './Panels';
 import { htmlTableGrid, tsvRows } from './clipboard';
-import { formatSelection, RunView } from './Canvas';
+import { formatSelection, RunView, textBeforeCaret } from './Canvas';
 import { inlineEditor } from './Format';
 
 /*
@@ -42,18 +42,20 @@ const fmt = (n: number) => fmtNumber(n);
 /** Cell look plus, while editing, its formatted text runs (split into `cellStyles` / `cellRuns` on commit). */
 type Cell = (CellStyle & { runs?: TextRun[] }) | null;
 const plain = (runs: TextRun[]) => runs.map((r) => r.text).join('');
-const marked = (runs: TextRun[]) => runs.some((r) => r.bold || r.italic || r.underline || r.color || r.size);
+const marked = (runs: TextRun[]) => runs.some((r) => r.bold || r.italic || r.underline || r.color || r.size || r.caps);
 
 /** Runs of a contentEditable cell: bold / italic / underline tags, `data-color`, `data-size` spans. */
 function cellRuns(td: HTMLElement): TextRun[] {
   const out: TextRun[] = [];
   const walk = (n: Node, m: Omit<TextRun, 'text'>) => {
     if (n.nodeType === Node.TEXT_NODE) {
-      const text = (n.textContent ?? '').replace(/\n/g, ' ');
+      const text = n.textContent ?? '';
       if (text) out.push({ text, ...m });
       return;
     }
     if (!(n instanceof HTMLElement)) return;
+    // Shift+Enter line breaks.
+    if (n.tagName === 'BR') return void out.push({ text: '\n', ...m });
     const st = n.style;
     const next: Omit<TextRun, 'text'> = { ...m };
     if (n.tagName === 'B' || n.tagName === 'STRONG' || Number(st.fontWeight) >= 600 || st.fontWeight === 'bold') next.bold = true;
@@ -61,6 +63,7 @@ function cellRuns(td: HTMLElement): TextRun[] {
     if (n.tagName === 'U' || st.textDecoration.includes('underline')) next.underline = true;
     if (n.dataset.color) next.color = n.dataset.color as TextRun['color'];
     if (n.dataset.size) next.size = Number(n.dataset.size);
+    if (n.dataset.caps) next.caps = n.dataset.caps as TextRun['caps'];
     n.childNodes.forEach((c) => walk(c, next));
   };
   td.childNodes.forEach((c) => walk(c, {}));
@@ -102,6 +105,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   const [colAlign, setColAlign] = useState<Align[]>(() => Array.from({ length: width }, (_, i) => el.colAlign?.[i] ?? null));
   const [valign, setValign] = useState<VAlign>(el.style?.valign ?? 'middle');
   const [header, setHeader] = useState(el.header !== false);
+  const [headerColumn, setHeaderColumn] = useState(!!el.headerColumn);
   const [colW, setColW] = useState(() => tableWeights(el.colWidths, width));
   const [rowH, setRowH] = useState(() => tableWeights(el.rowHeights, el.rows.length));
   const initialCells = (): Cell[][] =>
@@ -121,8 +125,8 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
   const dragging = useRef(false);
   const done = useRef(false);
   const focusCell = useRef<{ r: number; c: number; select?: boolean } | null>(null);
-  const state = useRef({ rows, colAlign, valign, header, colW, rowH, cells });
-  state.current = { rows, colAlign, valign, header, colW, rowH, cells };
+  const state = useRef({ rows, colAlign, valign, header, headerColumn, colW, rowH, cells });
+  state.current = { rows, colAlign, valign, header, headerColumn, colW, rowH, cells };
   /** Text as typed, kept current on every keystroke: the DOM is gone when a click outside unmounts us. */
   const typed = useRef(rows);
   useLayoutEffect(() => {
@@ -152,7 +156,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
         cs[ri]![ci] = Object.keys(rest).length ? rest : null;
       }
     }
-    const text = plain(runs).trimEnd() || td.innerText.replace(/\n/g, ' ').trimEnd();
+    const text = plain(runs).trimEnd() || td.innerText.trimEnd();
     const row = typed.current[ri];
     if (row) row[ci] = text;
     return text;
@@ -192,6 +196,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     if (JSON.stringify(ca) !== JSON.stringify(Array.from({ length: ca.length }, (_, i) => el.colAlign?.[i] ?? null))) patch.colAlign = ca;
     if (s.valign !== (el.style?.valign ?? 'middle')) patch.style = { valign: s.valign === 'middle' ? null : s.valign };
     if (s.header !== (el.header !== false)) patch.header = s.header;
+    if (s.headerColumn !== !!el.headerColumn) patch.headerColumn = s.headerColumn;
     const round = (w: number[]) => w.map((x) => Math.round(x * 1000) / 1000);
     const same = (a: number[], b: number[]) => JSON.stringify(round(a)) === JSON.stringify(round(b));
     if (!same(s.colW, tableWeights(el.colWidths, next[0]?.length ?? 1))) patch.colWidths = round(s.colW);
@@ -248,7 +253,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
       },
       restoreRange,
       hasSelection: () => !!focusedCell() && !window.getSelection()!.isCollapsed,
-      formatCells: (patch) => styleRangeRef.current(patch === 'clear' ? { color: null, bold: null, italic: null, underline: null, size: null } : patch),
+      formatCells: (patch) => styleRangeRef.current(patch === 'clear' ? { color: null, bold: null, italic: null, underline: null, size: null, caps: null } : patch),
       cellStyle: () => activeRef.current,
       selectionSize() {
         const n = window.getSelection()?.anchorNode;
@@ -313,6 +318,12 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
       commit();
     } else if (e.key === 'Tab') {
       e.preventDefault();
+      // Caret inside the text: a tab character. At the start or end of the cell: next / previous cell.
+      if (!e.shiftKey && textBeforeCaret(cell, (n) => n === cell) && !caretAtEdge(cell, true)) {
+        document.execCommand('insertText', false, '\t');
+        void syncCell(cell, ri, ci);
+        return;
+      }
       const idx = ri * C + ci + (e.shiftKey ? -1 : 1);
       if (idx >= R * C) {
         const next = read();
@@ -321,10 +332,15 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
         setRows(read());
         go(Math.floor(idx / C), idx % C);
       }
+    } else if (e.key === 'Enter' && e.shiftKey) {
+      // A line break inside the cell.
+      e.preventDefault();
+      document.execCommand('insertLineBreak');
+      void syncCell(cell, ri, ci);
     } else if (e.key === 'Enter') {
       e.preventDefault();
       setRows(read());
-      go(ri + (e.shiftKey ? -1 : 1), ci);
+      go(ri + 1, ci);
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       e.preventDefault();
       setRows(read());
@@ -544,7 +560,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
 
   return (
     <div ref={wrapRef} className="table-editor" style={{ position: 'absolute', inset: 0 }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} data-testid="table-editor">
-      <table ref={tableRef} key={gen} style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ((el.style?.fontSize ?? 12) / 72) * PPI, color: `#${s.color}` }}>
+      <table ref={tableRef} key={gen} style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontFamily: `"${s.fontFace}", Arial, sans-serif`, fontSize: ((el.style?.fontSize ?? 12) / 72) * PPI, color: `#${s.color}`, ...tableTextCss(el) }}>
         <colgroup>
           {colW.map((f, ci) => (
             <col key={ci} style={{ width: `${f * 100}%` }} />
@@ -554,7 +570,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
           {rows.map((row, ri) => (
             <tr key={ri} style={{ height: `${(rowH[ri] ?? 0) * 100}%` }}>
               {row.map((v, ci) => {
-                const style: CSSProperties = { ...tableCellStyle(el, ri, ci, master, { header, valign, align: colAlign[ci] ?? null, cell: cells[ri]?.[ci] ?? null }), outline: 'none' };
+                const style: CSSProperties = { ...tableCellStyle(el, ri, ci, master, { header, headerColumn, valign, align: colAlign[ci] ?? null, cell: cells[ri]?.[ci] ?? null }), outline: 'none' };
                 return (
                   <td
                     key={ci}
@@ -587,7 +603,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
           ))}
         </tbody>
       </table>
-      <ResizeHandles colW={colW} rowH={rowH} wrapRef={wrapRef} onCols={setColW} onRows={setRowH} />
+      <ResizeHandles table={() => tableRef.current} onCols={setColW} onRows={setRowH} />
       <RangeFrame tableRef={tableRef} rect={fill ?? rect} dashed={!!fill} onFillStart={() => setFill(rect)} />
       {pos &&
         createPortal(
@@ -624,7 +640,8 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
             <BorderMenu cell={active} onChange={styleRange} />
             {btn('clearFormat', tr('Effacer la mise en forme des cellules', 'Clear cell formatting'), () => styleRange(null), false, !cells.some((row, ri) => row.some((c, ci) => c && inRect(rect, ri, ci))))}
             <span className="tbl-sep" />
-            {btn('tableHeader', tr("Ligne d'en-tête", 'Header row'), () => setHeader(!header), header)}
+            {btn('tableHeader', tr("En-tête : première ligne", 'Header: first row'), () => setHeader(!header), header)}
+            {btn('tableHeaderCol', tr("En-tête : première colonne", 'Header: first column'), () => setHeaderColumn(!headerColumn), headerColumn)}
             {stats && (
               <>
                 <span className="tbl-sep" />
@@ -644,44 +661,121 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
 }
 
 
-const MIN_FRACTION = 0.03;
+const even = (w: number[]) => w.map(() => 1 / w.length);
 
-/** Drag handles on the inner column and row borders; dragging moves weight between the two neighbours. */
-function ResizeHandles({ colW, rowH, wrapRef, onCols, onRows }: { colW: number[]; rowH: number[]; wrapRef: React.RefObject<HTMLDivElement | null>; onCols: (w: number[]) => void; onRows: (h: number[]) => void }) {
+/**
+ * Column and row borders of a selected (not edited) table, dragged on the slide: the slide
+ * previews live, the release writes `colWidths` / `rowHeights`. Double-click: edit the table (in it, a border's double-click evens the sizes).
+ */
+export function TableGridHandles({ r, slideId }: { r: ResolvedElement; slideId: string }) {
+  const el = r.element;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  if (el.type !== 'table') return null;
+  const st = useEditor.getState();
+  const patchOf = (axis: 'col' | 'row', w: number[]): ElementPatch => (axis === 'col' ? { colWidths: w.map((x) => Math.round(x * 1000) / 1000) } : { rowHeights: w.map((x) => Math.round(x * 1000) / 1000) });
+  const live = (axis: 'col' | 'row') => (w: number[]) => st.preview([{ kind: 'updateElement', slideId, elementId: el.id, patch: patchOf(axis, w) }]);
+  return (
+    <div ref={wrapRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} className="tbl-grid-handles" data-testid="table-grid-handles">
+      <ResizeHandles
+        // The table drawn by the slide renderer, under this overlay.
+        table={() => document.querySelector<HTMLTableElement>(`.css-slide [data-element-id="${CSS.escape(el.id)}"] table`)}
+        onCols={live('col')}
+        onRows={live('row')}
+        onEnd={(axis, w) => st.mutate([{ kind: 'updateElement', slideId, elementId: el.id, patch: patchOf(axis, w) }])}
+        // A double-click on the table opens it for editing, wherever it lands.
+        onDoubleClick={() => st.setEditing(el.id)}
+      />
+    </div>
+  );
+}
+
+/** Rendered grid of a table, in its own (unscaled) pixels: inner borders and each row's content height. */
+interface Grid { cols: number[]; rows: number[]; colPx: number[]; rowPx: number[]; rowMin: number[] }
+function measureGrid(t: HTMLTableElement): Grid {
+  const trs = [...t.rows];
+  const cells = [...(trs[0]?.cells ?? [])];
+  const colPx = cells.map((c) => c.offsetWidth);
+  const rowPx = trs.map((r) => r.offsetHeight);
+  const edges = (xs: number[], from: number) => xs.slice(0, -1).map((_, i) => from + xs.slice(0, i + 1).reduce((a, b) => a + b, 0));
+  // A row never gets smaller than its text: the tallest cell content (one line when empty).
+  const rowMin = trs.map((r) =>
+    Math.max(
+      ...[...r.cells].map((td) => {
+        const scale = td.offsetHeight / (td.getBoundingClientRect().height || td.offsetHeight || 1);
+        const range = document.createRange();
+        range.selectNodeContents(td);
+        const cs = getComputedStyle(td);
+        const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2;
+        return Math.max(line, range.getBoundingClientRect().height * scale) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + 2;
+      }),
+    ),
+  );
+  return { cols: edges(colPx, cells[0]?.offsetLeft ?? 0), rows: edges(rowPx, trs[0]?.offsetTop ?? 0), colPx, rowPx, rowMin };
+}
+
+/**
+ * Drag handles on the inner column and row borders, placed on the borders as rendered (rows grow
+ * with their text, so the stored weights alone do not say where a border is). Dragging moves size
+ * between the two neighbours; a row stops at its text, a column at 24 px.
+ */
+export function ResizeHandles({ table, onCols, onRows, onEnd, onDoubleClick }: { table: () => HTMLTableElement | null; onCols: (w: number[]) => void; onRows: (h: number[]) => void; onEnd?: (axis: 'col' | 'row', w: number[]) => void; onDoubleClick?: () => void }) {
+  const [grid, setGrid] = useState<Grid | null>(null);
+  const refresh = () => {
+    const t = table();
+    const next = t ? measureGrid(t) : null;
+    setGrid((g) => (JSON.stringify(g) === JSON.stringify(next) ? g : next));
+  };
+  // Every render (typing, previews, restructuring) and on any size change of the table.
+  useLayoutEffect(refresh);
+  useEffect(() => {
+    const t = table();
+    if (!t) return;
+    const ro = new ResizeObserver(refresh);
+    ro.observe(t);
+    return () => ro.disconnect();
+  });
   const start = (e: React.PointerEvent, i: number, axis: 'col' | 'row') => {
     e.preventDefault();
     e.stopPropagation();
-    const box = wrapRef.current?.getBoundingClientRect();
-    if (!box) return;
-    const w0 = axis === 'col' ? colW : rowH;
-    const size = axis === 'col' ? box.width : box.height;
+    const t = table();
+    if (!t || !grid) return;
+    const px = axis === 'col' ? grid.colPx : grid.rowPx;
+    const total = px.reduce((a, b) => a + b, 0) || 1;
+    // Client pixels per table pixel (the slide is zoomed with a transform).
+    const scale = (axis === 'col' ? t.getBoundingClientRect().width / t.offsetWidth : t.getBoundingClientRect().height / t.offsetHeight) || 1;
+    const w0 = px.map((x) => x / total);
+    const min = (k: number) => (axis === 'col' ? 24 : grid.rowMin[k]!) / total;
     const origin = axis === 'col' ? e.clientX : e.clientY;
     const pair = w0[i]! + w0[i + 1]!;
     const cls = axis === 'col' ? 'is-col-resizing' : 'is-row-resizing';
     document.body.classList.add(cls);
+    let last = w0;
     const move = (ev: PointerEvent) => {
-      const a = Math.max(MIN_FRACTION, Math.min(pair - MIN_FRACTION, w0[i]! + ((axis === 'col' ? ev.clientX : ev.clientY) - origin) / size));
+      const delta = ((axis === 'col' ? ev.clientX : ev.clientY) - origin) / scale / total;
+      const a = Math.max(Math.min(min(i), pair / 2), Math.min(pair - Math.min(min(i + 1), pair / 2), w0[i]! + delta));
       const next = [...w0];
       next[i] = a;
       next[i + 1] = pair - a;
+      last = next;
       (axis === 'col' ? onCols : onRows)(next);
     };
     const up = () => {
       document.body.classList.remove(cls);
+      if (last !== w0) onEnd?.(axis, last);
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   };
-  const edges = (w: number[]) => w.slice(0, -1).map((_, i) => w.slice(0, i + 1).reduce((a, b) => a + b, 0));
+  if (!grid) return null;
   return (
     <>
-      {edges(colW).map((f, i) => (
-        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: `${f * 100}%` }} title={tr('Redimensionner la colonne', 'Resize column')} onPointerDown={(e) => start(e, i, 'col')} data-testid="col-resize" />
+      {grid.cols.map((x, i) => (
+        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: x, top: 0, bottom: 'auto', height: grid.rowPx.reduce((a, b) => a + b, 0) }} title={tr('Glisser pour redimensionner les colonnes', 'Drag to resize the columns')} onPointerDown={(e) => start(e, i, 'col')} onDoubleClick={(e) => (e.stopPropagation(), onDoubleClick ? onDoubleClick() : onEnd?.('col', even(grid.colPx)))} data-testid="col-resize" />
       ))}
-      {edges(rowH).map((f, i) => (
-        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: `${f * 100}%` }} title={tr('Redimensionner la ligne', 'Resize row')} onPointerDown={(e) => start(e, i, 'row')} data-testid="row-resize" />
+      {grid.rows.map((y, i) => (
+        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: y, right: 'auto', width: grid.colPx.reduce((a, b) => a + b, 0) }} title={tr('Glisser pour redimensionner les lignes', 'Drag to resize the rows')} onPointerDown={(e) => start(e, i, 'row')} onDoubleClick={(e) => (e.stopPropagation(), onDoubleClick ? onDoubleClick() : onEnd?.('row', even(grid.rowPx)))} data-testid="row-resize" />
       ))}
     </>
   );

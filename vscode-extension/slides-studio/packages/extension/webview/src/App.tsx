@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { toPng } from 'html-to-image';
+import { PPI, SlideView } from '@corporate-slides/renderer';
 import type { CorporateMaster, Diagnostic, HostMessage, SlideDocument, SlideElement } from '@corporate-slides/core';
 import { onHostMessage, post } from './host';
 import { useEditor } from './store';
@@ -108,6 +111,9 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
         case 'revealReviewComment':
           focusNote(m.noteId);
           break;
+        case 'requestThumbnail':
+          void sendThumbnail();
+          break;
       }
     });
     post({ type: 'ready' });
@@ -126,6 +132,39 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
 
   if (mode === 'masters') return masters ? <MasterBrowser data={masters} /> : <div className="loading">{tr('Chargement des masques…', 'Loading masters…')}</div>;
   return <Editor />;
+}
+
+/**
+ * First visible slide rendered off screen at 1 px per slide pixel (1280 px wide for 16:9) and
+ * sent as PNG: the host writes it next to the deck for Markdown Studio deck blocks.
+ */
+async function sendThumbnail() {
+  const st = useEditor.getState();
+  // The layout designer swaps in a virtual slide: the deck itself is kept in `design.real`.
+  const { doc, master } = st.design?.real ?? st;
+  const { assetUrls } = st;
+  const slide = doc?.slides.find((s) => !s.hidden) ?? doc?.slides[0];
+  if (!doc || !master || !slide) return;
+  const host = document.createElement('div');
+  host.style.cssText = 'position:fixed;left:-100000px;top:0;pointer-events:none';
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    const assets = { masterAsset: (id: string) => assetUrls[`master:${id}`] ?? null, image: (src: string) => assetUrls[`image:${src}`] ?? null };
+    root.render(<SlideView slide={slide} master={master} assets={assets} metadata={doc.metadata} slideNumber={1} />);
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await Promise.all([...host.querySelectorAll('img')].map((img) => img.decode().catch(() => undefined)));
+    await document.fonts.ready;
+    const target = host.firstElementChild as HTMLElement | null;
+    if (!target) return;
+    const url = await toPng(target, { width: master.dimensions.width * PPI, height: master.dimensions.height * PPI, pixelRatio: 1, cacheBust: true });
+    post({ type: 'thumbnail', data: url.slice(url.indexOf(',') + 1) });
+  } catch (e) {
+    console.warn('thumbnail failed', e);
+  } finally {
+    root.unmount();
+    host.remove();
+  }
 }
 
 /** Bring a review note into view: its slide, its element and the comments pane. */

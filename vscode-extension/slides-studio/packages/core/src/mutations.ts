@@ -28,6 +28,7 @@ export const ElementPatch = z
     fit: z.enum(['stretch', 'contain', 'cover']).optional(),
     rows: z.array(z.array(z.string())).optional(),
     header: z.boolean().optional(),
+    headerColumn: z.boolean().optional(),
     colAlign: z.array(ColAlign.nullable()).optional(),
     colWidths: z.array(z.number().positive()).optional(),
     rowHeights: z.array(z.number().positive()).optional(),

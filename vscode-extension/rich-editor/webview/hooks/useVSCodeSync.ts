@@ -24,6 +24,7 @@ import {
   protectTableCodePipes,
 } from "../conversion-utils";
 import { isGitHubUrl } from "../extensions/GitHubEmbed";
+import { isDeckHref } from "../extensions/DeckBlock";
 
 /**
  * Render markdown to plain HTML suitable for display (NOT for Tiptap
@@ -48,6 +49,27 @@ export async function markdownToDisplayHtml(md: string): Promise<string> {
     (_m, open, c, close) => open + c.replace(/\n$/, "") + close
   );
   return html;
+}
+
+/**
+ * Tabs typed in text survive neither ProseMirror's HTML parsing nor rehype-remark (both collapse
+ * whitespace): they cross the HTML as a private-use character, restored in the document by
+ * `restoreTabs`, and as a plain-letters placeholder on the way back to Markdown.
+ */
+const TAB_SENTINEL = "\uE009";
+const TAB_PH = "BTRMKTABCHAR";
+
+/** Sentinels left by markdownToHtml → real tabs, outside history and without an update event. */
+export function restoreTabs(editor: { state: any; view: { dispatch(tr: any): void } }): void {
+  const hits: number[] = [];
+  editor.state.doc.descendants((node: any, pos: number) => {
+    if (!node.isText || !node.text.includes(TAB_SENTINEL)) return;
+    for (let i = node.text.indexOf(TAB_SENTINEL); i >= 0; i = node.text.indexOf(TAB_SENTINEL, i + 1)) hits.push(pos + i);
+  });
+  if (!hits.length) return;
+  const tr = editor.state.tr;
+  for (const p of hits.reverse()) tr.insertText("\t", p, p + 1);
+  editor.view.dispatch(tr.setMeta("addToHistory", false).setMeta("preventUpdate", true));
 }
 
 export async function markdownToHtml(
@@ -141,6 +163,21 @@ export async function markdownToHtml(
       p.textContent = href;
     });
 
+    // `[![Title](x.deck.png)](x.deck)` alone in a paragraph → deck block. The
+    // <img> stays inside so its src gets the webview base URI below.
+    doc.querySelectorAll("p").forEach((p) => {
+      const a = p.firstElementChild;
+      const img = a?.firstElementChild;
+      if (p.childElementCount !== 1 || a?.tagName !== "A" || !isDeckHref(a.getAttribute("href"))) return;
+      if (a.childElementCount !== 1 || img?.tagName !== "IMG" || (p.textContent ?? "").trim()) return;
+      const div = doc.createElement("div");
+      div.setAttribute("data-type", "deckBlock");
+      div.setAttribute("data-href", a.getAttribute("href")!);
+      div.setAttribute("data-alt", img.getAttribute("alt") ?? "");
+      div.appendChild(img);
+      p.replaceWith(div);
+    });
+
     // Ensure each <img> is in its own <p> block (not inline with other images)
     doc.querySelectorAll("p").forEach((p) => {
       const imgs = p.querySelectorAll("img");
@@ -169,7 +206,7 @@ export async function markdownToHtml(
     );
   }
 
-  return html;
+  return html.replace(/\t/g, TAB_SENTINEL);
 }
 
 /**
@@ -177,6 +214,7 @@ export async function markdownToHtml(
  * either a sync or async stringify step.
  */
 function preprocessTiptapHtml(html: string): string {
+  html = html.replace(/\t/g, TAB_PH);
   // Convert Tiptap task list HTML to standard GFM format for rehype-remark
   {
     const doc = new DOMParser().parseFromString(html, "text/html");
@@ -252,6 +290,23 @@ function preprocessTiptapHtml(html: string): string {
   // Remove empty <p></p> between images
   html = html.replace(/<\/p>\s*<p>\s*<\/p>\s*<p>/g, "</p>\n<p>");
 
+  // Deck blocks back to a linked image (after the <img> wrapping above).
+  if (html.includes('data-type="deckBlock"')) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    doc.querySelectorAll('div[data-type="deckBlock"]').forEach((div) => {
+      const p = doc.createElement("p");
+      const a = doc.createElement("a");
+      const img = doc.createElement("img");
+      a.setAttribute("href", div.getAttribute("data-href") ?? "");
+      img.setAttribute("src", div.getAttribute("data-src") ?? "");
+      img.setAttribute("alt", div.getAttribute("data-alt") ?? "");
+      a.appendChild(img);
+      p.appendChild(a);
+      div.replaceWith(p);
+    });
+    html = doc.body.innerHTML;
+  }
+
   return html;
 }
 
@@ -262,6 +317,7 @@ function postprocessMarkdown(
   docFolderPath?: string
 ): string {
   md = normalizeMarkdown(md, settings);
+  md = md.replace(new RegExp(TAB_PH, "g"), "\t");
   md = restoreFenceMeta(md);
   md = restoreRawHtml(md);
   // Restore math from code/pre placeholders (after normalizeMarkdown to avoid interference)

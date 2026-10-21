@@ -279,8 +279,10 @@ export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | '
   const dx = Math.abs(target.x - source.x)
   const dy = Math.abs(target.y - source.y)
   const sameSide = sourceSide === targetSide
+  // Same-side U-turns peak at 0.75 * offset: 128 keeps the rail ~96px out,
+  // clear of the last bullet's 140px caption block.
   const offset = sameSide
-    ? Math.max(80, dy * 0.45, dx * 0.35)
+    ? Math.max(128, dy * 0.45, dx * 0.35)
     : Math.max(40, Math.min(110, dx * 0.42 + dy * 0.18))
   const sourceDirection = sourceSide === 'r' ? 1 : -1
   const targetDirection = targetSide === 'l' ? 1 : -1
@@ -302,6 +304,49 @@ export function snakeFlowCurve(source: Point, target: Point, sourceSide: 'l' | '
     targetLabelPoint: cubicPoint(source, c1, c2, target, 0.88),
     angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
     controls: [c1, c2] as const,
+  }
+}
+
+/**
+ * One rail of a Snake A→B / B→A pair: a symmetric arc bowed to the left of its
+ * own direction, so the two rails part into an eye and both stay visible.
+ */
+export function snakeArcCurve(source: Point, target: Point) {
+  const dx = target.x - source.x, dy = target.y - source.y
+  const len = Math.hypot(dx, dy) || 1
+  const bow = Math.min(64, Math.max(30, len * 0.3))
+  const nx = dy / len * bow, ny = -dx / len * bow
+  const c1 = { x: source.x + dx / 3 + nx, y: source.y + dy / 3 + ny }
+  const c2 = { x: source.x + dx * 2 / 3 + nx, y: source.y + dy * 2 / 3 + ny }
+  const before = cubicPoint(source, c1, c2, target, 0.47)
+  const after = cubicPoint(source, c1, c2, target, 0.53)
+  return {
+    path: `M ${source.x},${source.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${target.x},${target.y}`,
+    midpoint: cubicPoint(source, c1, c2, target, 0.5),
+    sourceLabelPoint: cubicPoint(source, c1, c2, target, 0.2),
+    targetLabelPoint: cubicPoint(source, c1, c2, target, 0.8),
+    angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
+  }
+}
+
+/**
+ * Snake self-loop: a round teardrop rising above the bullet. Captions sit
+ * below the bullet and lanes enter from the sides, so the top is the only
+ * free quadrant; the layout reserves headroom for it.
+ */
+export function snakeSelfLoopCurve(center: Point) {
+  const source = { x: center.x - 8, y: center.y }
+  const target = { x: center.x + 8, y: center.y }
+  const c1 = { x: center.x - 92, y: center.y - 84 }
+  const c2 = { x: center.x + 92, y: center.y - 84 }
+  const before = cubicPoint(source, c1, c2, target, 0.47)
+  const after = cubicPoint(source, c1, c2, target, 0.53)
+  return {
+    path: `M ${source.x},${source.y} C ${c1.x},${c1.y} ${c2.x},${c2.y} ${target.x},${target.y}`,
+    midpoint: cubicPoint(source, c1, c2, target, 0.5),
+    sourceLabelPoint: cubicPoint(source, c1, c2, target, 0.2),
+    targetLabelPoint: cubicPoint(source, c1, c2, target, 0.8),
+    angle: Math.atan2(after.y - before.y, after.x - before.x) * 180 / Math.PI,
   }
 }
 
@@ -515,6 +560,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     snakeRelation?: boolean
     snakeSourceSide?: 'l' | 'r'
     snakeTargetSide?: 'l' | 'r'
+    snakeReverse?: boolean
     chartRelation?: 'gantt' | 'git' | 'sequenceLoop'
     gitOrientation?: 'horizontal' | 'vertical'
     ganttTargetMilestone?: boolean
@@ -707,7 +753,15 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
   if (routed) routedEdges.set(id, routed)
   else routedEdges.delete(id)
 
-  if (selfCurve) {
+  if (selfCurve && edgeData?.snakeRelation) {
+    const curve = snakeSelfLoopCurve({ x: sx, y: sy })
+    path = curve.path
+    labelX = curve.midpoint.x
+    labelY = curve.midpoint.y
+    sourceLabelPoint = curve.sourceLabelPoint
+    targetLabelPoint = curve.targetLabelPoint
+    middleArrowAngle = curve.angle
+  } else if (selfCurve) {
     path = selfCurve.path
     labelX = selfCurve.label.x
     labelY = selfCurve.label.y
@@ -720,12 +774,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     sourceLabelPoint = sequenceCurve.sourceLabelPoint
     targetLabelPoint = sequenceCurve.targetLabelPoint
   } else if (snakeCurve) {
-    const curve = snakeFlowCurve(
-      { x: sx, y: sy },
-      { x: tx, y: ty },
-      edgeData!.snakeSourceSide!,
-      edgeData!.snakeTargetSide!,
-    )
+    const curve = edgeData!.snakeReverse
+      ? snakeArcCurve({ x: sx, y: sy }, { x: tx, y: ty })
+      : snakeFlowCurve(
+        { x: sx, y: sy },
+        { x: tx, y: ty },
+        edgeData!.snakeSourceSide!,
+        edgeData!.snakeTargetSide!,
+      )
     path = curve.path
     labelX = curve.midpoint.x
     labelY = curve.midpoint.y

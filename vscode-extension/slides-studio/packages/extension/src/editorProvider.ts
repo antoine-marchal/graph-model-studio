@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path';
 import { imageSize } from 'image-size';
@@ -13,6 +13,9 @@ import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
 import { loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
+
+/** Deck thumbnails (`<file>.png`, first slide) are written for local files when enabled. */
+const wantsThumbnail = (uri: vscode.Uri) => uri.scheme === 'file' && vscode.workspace.getConfiguration('corporateSlides').get<boolean>('deckThumbnail', true);
 
 const BROWSER_IMAGE = /\.(png|jpe?g|gif|svg|webp|bmp)$/i;
 
@@ -376,6 +379,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         void this.selectFromSource(document, kind, e.selections[0]!.active.line + 1).then((sel) => sel && send({ type: 'select', ...sel }));
       }),
       panel.webview.onDidReceiveMessage((raw) => void this.onMessage(raw, state, send, pushDocument)),
+      // Saving refreshes the first-slide thumbnail (Markdown Studio deck blocks).
+      vscode.workspace.onDidSaveTextDocument((d) => {
+        if (d.uri.toString() === key && wantsThumbnail(document.uri)) send({ type: 'requestThumbnail' });
+      }),
     ];
     panel.onDidDispose(() => {
       disposed = true;
@@ -477,6 +484,11 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'ready': {
           await this.pushDocument(state);
           await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null);
+          // Missing or older than the deck: render it now (a deck block may be waiting for it).
+          if (wantsThumbnail(document.uri)) {
+            const png = `${localPath(document.uri)}.png`;
+            if (!existsSync(png) || statSync(png).mtimeMs < statSync(localPath(document.uri)).mtimeMs) send({ type: 'requestThumbnail' });
+          }
           if (mrRef(document.uri) || mrTwin(document.uri)) void this.relayReview(document, send, { action: 'load' });
           break;
         }
@@ -510,6 +522,14 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'save':
           if (!readOnly) await document.save();
           break;
+        case 'thumbnail': {
+          if (!wantsThumbnail(document.uri)) return;
+          const png = `${localPath(document.uri)}.png`;
+          const data = Buffer.from(msg.data, 'base64');
+          if (data.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a') return;
+          if (!existsSync(png) || !readFileSync(png).equals(data)) writeFileSync(png, data);
+          break;
+        }
         case 'export':
           await this.commands.exportPptx(document.uri);
           break;
