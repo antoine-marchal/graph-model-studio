@@ -22,7 +22,7 @@ import { formatZodError } from './types.js';
 /* DSL ⇄ canonical element conversion                                 */
 /* ------------------------------------------------------------------ */
 
-const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'group', 'content', 'paragraphs', 'src', 'alt', 'fit', 'rows', 'header', 'headerColumn', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'cellRuns', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'adjust', 'style'];
+const ELEMENT_KEY_ORDER = ['id', 'type', 'placeholder', 'shape', 'x', 'y', 'w', 'h', 'rotation', 'z', 'locked', 'hidden', 'name', 'group', 'content', 'paragraphs', 'src', 'alt', 'fit', 'rows', 'header', 'headerColumn', 'colAlign', 'colWidths', 'rowHeights', 'cellStyles', 'cellRuns', 'from', 'to', 'route', 'fromSide', 'toSide', 'fromPoint', 'toPoint', 'flipH', 'flipV', 'adjust', 'geometry', 'crop', 'merges', 'style'];
 
 /** Canonical element → plain DSL object (deterministic key order, `content` sugar when lossless). */
 export function elementToDsl(el: SlideElement): Record<string, unknown> {

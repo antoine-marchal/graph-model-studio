@@ -302,9 +302,23 @@ class MarkdownEmbedder {
                     let title = path.basename(filename, path.extname(filename));
                     try {
                         const source = yield (0, utils_1.readSource)(document, attributes.file);
-                        const firstLine = source.content.replace(/^\uFEFF/, '').replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '').split(/\r?\n/, 1)[0];
-                        const heading = /^#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(firstLine);
-                        if (heading) title = heading[1];
+                        // First ATX heading after frontmatter, skipping HTML comments/tags and fenced code.
+                        const body = source.content.replace(/^\uFEFF/, '').replace(/^---[ \t]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[ \t]*(?:\r?\n|$)/, '').replace(/<!--[\s\S]*?-->/g, '');
+                        let fence = null;
+                        for (const line of body.split(/\r?\n/)) {
+                            const f = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+                            if (f) {
+                                if (!fence) fence = f[1];
+                                else if (f[1][0] === fence[0] && f[1].length >= fence.length) fence = null;
+                                continue;
+                            }
+                            if (fence) continue;
+                            const heading = /^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$/.exec(line);
+                            if (heading) {
+                                title = heading[1].replace(/<[^>]*>/g, '').trim() || title;
+                                break;
+                            }
+                        }
                     }
                     catch (_) {
                         // Keep links usable when the target cannot be read.

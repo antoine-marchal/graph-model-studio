@@ -178,7 +178,11 @@ function GraphEditorInner() {
     const selEl = new Set(useModelStore.getState().selectedElementIds)
     const selRel = useModelStore.getState().selectedRelationId
     setNodes(flow.nodes.map(n => (selEl.has(n.id) ? { ...n, selected: true } : n)))
-    setEdges(flow.edges.map(e => (e.id === selRel ? { ...e, selected: true } : e)))
+    // Relations selected together (Ctrl+click) stay selected across model edits (e.g. a pasted style).
+    const selEdges = new Set(getEdges().filter(e => e.selected).map(e => e.id))
+    if (!selRel || !selEdges.has(selRel)) selEdges.clear()
+    if (selRel) selEdges.add(selRel)
+    setEdges(flow.edges.map(e => (selEdges.has(e.id) ? { ...e, selected: true } : e)))
   }, [flow])
   // A view switch replaces the canvas contents. Frame the new view once its
   // nodes are in place, and keep it framed when the canvas is resized (panel
@@ -209,7 +213,10 @@ function GraphEditorInner() {
   useEffect(() => {
     const selEl = new Set(selectedElementIds)
     setNodes(nds => nds.map(n => (!!n.selected === selEl.has(n.id) ? n : { ...n, selected: selEl.has(n.id) })))
-    setEdges(eds => eds.map(e => (!!e.selected === (e.id === selectedRelationId) ? e : { ...e, selected: e.id === selectedRelationId })))
+    // A relation picked inside a multi-selection of relations keeps the others selected.
+    setEdges(eds => (selectedRelationId && eds.some(e => e.id === selectedRelationId && e.selected)
+      ? eds
+      : eds.map(e => (!!e.selected === (e.id === selectedRelationId) ? e : { ...e, selected: e.id === selectedRelationId }))))
   }, [selectedElementIds, selectedRelationId])
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -264,9 +271,9 @@ function GraphEditorInner() {
   // ── selection → highlight code (no focus) ──
   const commitSelection = useCallback(
     ({ nodes: selNodes, edges: selEdges }: { nodes: { id: string }[]; edges: { id: string }[] }) => {
-      if (selEdges.length === 1 && selNodes.length === 0) {
+      if (selEdges.length >= 1 && selNodes.length === 0) {
         selectRelation(selEdges[selEdges.length - 1].id)
-        requestHighlight('relation', selEdges[0].id)
+        if (selEdges.length === 1) requestHighlight('relation', selEdges[0].id)
       } else if (selNodes.length > 0) {
         const ids = selNodes.map(n => n.id)
         selectElements(ids)
@@ -648,9 +655,12 @@ function GraphEditorInner() {
     if (!model.relations[edge.id]) return
     e.preventDefault()
     setMenu(null)
-    selectRelation(edge.id)
-    setElementMenu({ kind: 'relation', x: e.clientX, y: e.clientY, id: edge.id })
-  }, [model.relations, selectRelation])
+    // Right-click inside a multi-selection of relations keeps it: the menu acts on all of them.
+    const selected = getEdges().filter(x => x.selected && model.relations[x.id]).map(x => x.id)
+    const ids = selected.length > 1 && selected.includes(edge.id) ? selected : [edge.id]
+    if (ids.length === 1) selectRelation(edge.id)
+    setElementMenu({ kind: 'relation', x: e.clientX, y: e.clientY, id: edge.id, ids })
+  }, [model.relations, selectRelation, getEdges])
   const openAddMenuFromButton = useCallback(() => {
     const rect = wrapperRef.current?.getBoundingClientRect()
     const cx = (rect?.left ?? 0) + 70
@@ -781,9 +791,13 @@ function GraphEditorInner() {
       } else if (mod && e.shiftKey && key === 'v') {
         e.preventDefault()
         const state = useModelStore.getState()
-        if (state.selectedRelationId) {
-          const format = relationFormatFor(state.model, state.selectedRelationId)
-          if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id: state.selectedRelationId, ...format } })
+        // Relations selected on the canvas (several with Shift / marquee), or the one in the store.
+        const relationIds = [...new Set([...getEdges().filter(x => x.selected && state.model.relations[x.id]).map(x => x.id), ...(state.selectedRelationId ? [state.selectedRelationId] : [])])]
+        if (relationIds.length) {
+          for (const id of relationIds) {
+            const format = relationFormatFor(useModelStore.getState().model, id)
+            if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id, ...format } })
+          }
         } else if (state.activeViewId && state.selectedElementIds.length) {
           const command = pasteElementFormatCommand(state.model, state.activeViewId, state.selectedElementIds)
           if (command) dispatch(command)

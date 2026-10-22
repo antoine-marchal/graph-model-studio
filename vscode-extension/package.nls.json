@@ -104,5 +104,6 @@
   "s128.export.folder.relative.to.the": "Export folder, relative to the source file.",
   "s129.merge.request.target.branch.for": "Merge request target branch for the “MR base” comparison (empty: origin's default branch).",
   "s130.no.template.imported.yet.import": "No template imported yet. [Import a PowerPoint Template](command:corporateSlides.importTemplate)\n[Import a PowerPoint Presentation](command:corporateSlides.importPresentation)",
-  "s200.deck.thumbnail": "Write <deck>.png (first slide) next to the deck when it is saved; Markdown Studio deck blocks show it."
+  "s200.deck.thumbnail": "Write <deck>.png (first slide) next to the deck when it is saved; Markdown Studio deck blocks show it.",
+  "s201.deck.foldFrontmatter": "Fold the YAML headers (deck and slides) when a .deck source opens in the text editor, so the slide text reads first."
 }

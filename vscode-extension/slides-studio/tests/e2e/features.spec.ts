@@ -94,7 +94,8 @@ test('text selection: right-click sets the size of the selected characters only'
   await page.getByTestId('context-submenu').getByTestId('ctx-size-36').click();
   await page.keyboard.press('Escape');
   await synced(page);
-  expect(await source(page)).toMatch(/size: 36/);
+  // Character formats stay in the Markdown body as `[text]{size=36}` spans.
+  expect(await source(page)).toContain(']{size=36}');
 });
 
 test('table: fill and border of a cell range', async ({ page }) => {
@@ -136,9 +137,9 @@ test('table cell: selected characters take size and bold, kept as cell runs', as
   await page.mouse.click(frame.x + 10, frame.y + frame.height - 10);
   await synced(page);
   const src = await source(page);
-  expect(src).toMatch(/cellRuns:/);
-  expect(src).toMatch(/bold: true/);
-  expect(src).toMatch(/size: 20/);
+  // Bold and size stay in the Markdown cell: `[**…**]{size=20}`.
+  expect(src).not.toMatch(/cellRuns:/);
+  expect(src).toMatch(/\[\*\*[^*]+\*\*\]\{size=20\}/);
 });
 
 test('picture: fit inside / fill modes and restore the original ratio', async ({ page }) => {
@@ -263,18 +264,17 @@ test('text box: its text lives in a `::: id` block', async ({ page }) => {
   expect(src).not.toContain("content: Nouveau texte");
 });
 
-test('shared placeholder value: hover toggle shares the text deck-wide, then detaches it', async ({ page }) => {
+test('shared placeholder value: the Layers share button shares the text deck-wide, then detaches it', async ({ page }) => {
   await open(page);
   await page.getByTestId('slide-thumb-principles').locator('.slide-button').click();
-  await canvasEl(page, 'left').hover();
-  const toggle = page.getByTestId('share-toggle');
+  await page.getByTestId('pane-layers').click();
+  const toggle = page.getByTestId('share-left');
   await expect(toggle).toHaveAttribute('aria-pressed', 'false');
   await toggle.click();
   await synced(page);
   let src = await source(page);
   expect(src).toMatch(/shared:\n  left: \|/);
   expect(src).not.toContain('::: left');
-  await canvasEl(page, 'left').hover();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   await toggle.click();
   await synced(page);
@@ -292,7 +292,7 @@ test('copy / paste of a placeholder pastes a placeholder with the original look'
   await page.keyboard.press('ControlOrMeta+v');
   await synced(page);
   const src = await source(page);
-  const entry = /- id: (text-\d+)\n    type: text\n([\s\S]*?)(?=\n  - |\n---)/.exec(src.slice(src.indexOf('id: landscape')));
+  const entry = /- id: (left|text-\d+)\n    type: text\n([\s\S]*?)(?=\n  - |\n---)/.exec(src.slice(src.indexOf('id: landscape')));
   expect(entry?.[2]).toMatch(/fontSize: \d+/);
   expect(entry?.[2]).toMatch(/color: "?#[0-9A-F]{6}/);
   expect(entry?.[2]).toContain('placeholder: left');
@@ -320,4 +320,14 @@ test('inner margins: linked sides, then one side with the + button, then back to
   await synced(page);
   expect(await source(page)).not.toContain('margin:');
   await expect(page.getByTestId('margin-reset')).toHaveCount(0);
+});
+
+test('warnings can be hidden: thumbnail badges and compliance list disappear', async ({ page }) => {
+  await open(page);
+  const badges = page.locator('.slide-list .badge-warn');
+  const before = await badges.count();
+  await page.getByTestId('toggle-warnings').click();
+  await expect(page.locator('.slide-list .badge-warn')).toHaveCount(0);
+  await page.getByTestId('toggle-warnings').click();
+  await expect(page.locator('.slide-list .badge-warn')).toHaveCount(before);
 });

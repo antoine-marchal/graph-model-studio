@@ -104,5 +104,6 @@
   "s128.export.folder.relative.to.the": "Dossier d'export, relatif au fichier source.",
   "s129.merge.request.target.branch.for": "Branche cible des merge requests pour la comparaison « base MR » (vide : branche par défaut d'origin).",
   "s130.no.template.imported.yet.import": "Aucun gabarit importé. [Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)\n[Importer une présentation PowerPoint](command:corporateSlides.importPresentation)",
-  "s200.deck.thumbnail": "Écrire <deck>.png (première diapositive) à côté de la présentation à chaque enregistrement ; les blocs « deck » de Markdown Studio l'affichent."
+  "s200.deck.thumbnail": "Écrire <deck>.png (première diapositive) à côté de la présentation à chaque enregistrement ; les blocs « deck » de Markdown Studio l'affichent.",
+  "s201.deck.foldFrontmatter": "Replier les en-têtes YAML (présentation et diapositives) à l'ouverture d'une source .deck dans l'éditeur de texte, pour lire d'abord le texte des diapositives."
 }

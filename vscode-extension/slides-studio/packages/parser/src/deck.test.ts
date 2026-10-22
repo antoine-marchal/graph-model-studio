@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { describe, expect, it, test } from 'vitest';
 import type { CorporateMaster } from '@corporate-slides/core';
 import { applyMarkdownMutations, documentToDeck, parseMarkdown, sourceKindOf } from './index.js';
 
@@ -80,4 +80,35 @@ test('shared placeholder values fill every slide with the placeholder; a slide c
   expect(tag(out, 1)).toMatchObject({ paragraphs: [{ runs: [{ text: 'Public' }] }] });
   expect(tag(out, 1)!.shared).toBeFalsy();
   expect(tag(out, 0)?.paragraphs).toEqual([{ runs: [{ text: 'Interne' }] }]);
+});
+
+describe('deck folding', () => {
+  it('folds YAML headers, element entries and nested ::: blocks', async () => {
+    const { deckFoldingRanges } = await import('./folding.js');
+    const src = ['---', 'title: T', 'master: corporate', '---', '', '---', 'id: s', 'layout: content', 'elements:', '  - id: a', '    type: text', '  - id: b', '    type: shape', 'hidden: true', '---', '', '# Title', '', ':::: box', '::: {align=center}', 'x', ':::', '::::', ''].join('\n');
+    expect(deckFoldingRanges(src)).toEqual([
+      { start: 1, end: 2, kind: 'frontmatter' },
+      { start: 6, end: 13, kind: 'frontmatter' },
+      { start: 8, end: 12, kind: 'elements' },
+      { start: 9, end: 10, kind: 'element' },
+      { start: 11, end: 12, kind: 'element' },
+      { start: 18, end: 22, kind: 'block' },
+      { start: 19, end: 21, kind: 'block' },
+    ]);
+  });
+});
+
+describe('stacking and shared texts', () => {
+  const master = { dimensions: { width: 13.33, height: 7.5 }, theme: { colors: {}, palette: {}, fonts: { heading: 'A', body: 'A' } }, layouts: [{ id: 'content', name: 'c', masterId: 'm', sourcePart: '', aliases: [], background: {}, objects: [], slideNumber: null, warnings: [], placeholders: [{ key: 'title', name: 't', type: 'title', x: 0, y: 0, w: 1, h: 1, style: {} }, { key: 'date', name: 'd', type: 'other', x: 0, y: 0, w: 1, h: 1, style: {} }] }] } as unknown as CorporateMaster;
+  it('draws `::: id` text boxes in the order of the frontmatter list', () => {
+    const src = '---\ntitle: T\n---\n\n---\nid: s\nlayout: content\nelements:\n  - id: back\n    type: shape\n    shape: rect\n    x: 1\n    y: 1\n    w: 2\n    h: 2\n  - id: label\n    type: text\n    x: 1\n    y: 1\n    w: 2\n    h: 1\n---\n\n::: label\nOn top\n:::\n';
+    expect(parseMarkdown(src).doc.slides[0]!.elements.map((e) => e.id)).toEqual(['back', 'label']);
+  });
+  it('never writes stacking for shared texts (no phantom elements)', () => {
+    const src = '---\ntitle: T\nshared:\n  date: Today\n---\n\n---\nid: s\nlayout: content\nelements:\n  - { id: box, type: shape, shape: rect, x: 1, y: 1, w: 1, h: 1 }\n---\n\n# Title\n';
+    const out = applyMarkdownMutations(src, [{ kind: 'reorderElement', slideId: 's', elementId: 'box', direction: 'back' }], { master });
+    expect(out).not.toMatch(/id: date/);
+    const ids = parseMarkdown(out, { master }).doc.slides[0]!.elements.map((e) => e.id);
+    expect(ids.filter((id) => id.startsWith('date'))).toEqual(['date']);
+  });
 });

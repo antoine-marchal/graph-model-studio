@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { findLayout, findPlaceholder, isDiagramSrc, paletteTokens, placeholderTable, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
+
+/** Line spacing multiples offered by the ribbon (PowerPoint's list). */
+const LINE_SPACINGS = [1, 1.15, 1.5, 2, 2.5, 3];
+import { fmtNumber, findLayout, findPlaceholder, isDiagramSrc, paletteTokens, placeholderTable, resolveSlide, round4, uniqueId, type DiffBaseKind, type ElementStyle, type Paragraph, type ShapeKind, type SlideElement, tr } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
 import { AddSlideMenu, Menu, PaletteMenu } from './Panels';
-import { alignMutations, connectMutation, groupMutations, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
+import { alignMutations, connectMutation, groupMutations, groupState, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
 import { copyFromRibbon, copyStyle, pasteFromRibbon } from './clipboard';
 import { useAnchors, useDiff } from './Review';
 import { MasterEditToggle, NewLayoutForm } from './MasterEdit';
@@ -275,7 +278,9 @@ function FontTools() {
   const readOnly = useEditor((s) => s.readOnly);
   const { slide, els, style, editing } = useTextTargets();
   const ed = editing ? inlineEditor.current : null;
-  const runs = !!ed?.hasSelection();
+  // While a text is edited, every format goes to the selected characters (or the word at the caret),
+  // never to the whole box; a table with no characters selected formats its selected cells.
+  const runs = !!ed && (!ed.formatCells || ed.hasSelection());
   const resolved = slide && master ? new Map(resolveSlide(slide, master).elements.map((r) => [r.element.id, r.style])) : new Map();
   const first = els[0] ? resolved.get(els[0].id) : undefined;
   const size = (ed?.formatCells && !ed.hasSelection() ? ed.cellStyle?.()?.size : undefined) ?? (runs || editing ? ed?.selectionSize() : null) ?? (els.length && els.every((e) => resolved.get(e.id)?.fontSize === first?.fontSize) ? first?.fontSize : undefined);
@@ -287,8 +292,7 @@ function FontTools() {
   const setColor = (v: string | null) => (runs ? ed!.format({ color: v }) : cells ? cells.formatCells!({ color: v }) : style({ color: v }));
   const toggle = (k: 'bold' | 'italic' | 'underline') => {
     if (cells) return cells.formatCells!({ [k]: cellLook?.[k] ? null : true });
-    // execCommand is deprecated but remains the only native way to format a contentEditable selection.
-    if (editing) document.execCommand(k);
+    if (runs) return void ed!.format({ [k]: true });
     else style({ [k]: els.every((e) => !!e.style?.[k]) ? null : true });
   };
   const on = (k: 'bold' | 'italic' | 'underline') => {
@@ -317,7 +321,13 @@ function FontTools() {
   };
   const capsOff = off;
   const fonts = master ? [...new Set([master.theme.fonts.heading, master.theme.fonts.body, ...master.constraints.allowedFonts])] : [];
-  const face = els[0]?.style?.fontFace;
+  const setFace = (v: string | null) => (runs ? ed!.format({ font: v }) : style({ fontFace: v }));
+  const selFace = runs ? (() => {
+    const n = window.getSelection()?.anchorNode;
+    const el = n ? (n.nodeType === Node.TEXT_NODE ? n.parentElement : (n as HTMLElement)) : null;
+    return el?.closest<HTMLElement>('[data-font]')?.dataset.font;
+  })() : undefined;
+  const face = selFace ?? els[0]?.style?.fontFace;
   const faceLabel = face === 'theme.heading' ? master?.theme.fonts.heading : face === 'theme.body' ? master?.theme.fonts.body : face ?? first?.fontFace ?? '—';
   const color = els[0]?.style?.color;
   const colorHex = master && color ? (color.startsWith('theme.') ? paletteTokens(master).find((t) => t.token === color)?.hex : color.replace('#', '')) : undefined;
@@ -331,10 +341,10 @@ function FontTools() {
         )}>
           {(close) => (
             <>
-              <button type="button" role="menuitem" className="menu-item" onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: null }))}>{tr('Police de la disposition', 'Layout font')}</button>
-              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.heading }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: 'theme.heading' }))}>{tr('Titres', 'Headings')} — {master.theme.fonts.heading}</button>}
-              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.body }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: 'theme.body' }))}>{tr('Corps', 'Body')} — {master.theme.fonts.body}</button>}
-              {fonts.map((f) => <button key={f} type="button" role="menuitem" className="menu-item" style={{ fontFamily: f }} onMouseDown={keepFocus} onClick={() => (close(), style({ fontFace: f }))}>{f}</button>)}
+              <button type="button" role="menuitem" className="menu-item" onMouseDown={keepFocus} onClick={() => (close(), setFace(null))}>{tr('Police de la disposition', 'Layout font')}</button>
+              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.heading }} onMouseDown={keepFocus} onClick={() => (close(), setFace('theme.heading'))}>{tr('Titres', 'Headings')} — {master.theme.fonts.heading}</button>}
+              {master && <button type="button" role="menuitem" className="menu-item" style={{ fontFamily: master.theme.fonts.body }} onMouseDown={keepFocus} onClick={() => (close(), setFace('theme.body'))}>{tr('Corps', 'Body')} — {master.theme.fonts.body}</button>}
+              {fonts.map((f) => <button key={f} type="button" role="menuitem" className="menu-item" style={{ fontFamily: f }} onMouseDown={keepFocus} onClick={() => (close(), setFace(f))}>{f}</button>)}
             </>
           )}
         </Menu>
@@ -382,9 +392,35 @@ function AlignTools() {
   const ed = editing ? inlineEditor.current : null;
   const resolved = slide && master ? new Map(resolveSlide(slide, master).elements.map((r) => [r.element.id, r.style])) : new Map();
   const look = ed?.formatCells ? ed.cellStyle?.() : undefined;
-  const style = (p: { align?: string; valign?: string }) => (ed?.formatCells ? ed.formatCells(p) : elStyle(p));
-  const all = (k: 'align' | 'valign', v: string) => (look !== undefined ? (look?.[k] ?? (k === 'valign' ? 'middle' : 'left')) === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.[k] === v));
+  const style = (p: { align?: string; valign?: string }) => {
+    if (ed?.formatCells) return ed.formatCells(p);
+    // Editing a text: the alignment belongs to the paragraphs under the caret / selection only.
+    if (ed && p.align) {
+      const { paragraphs, from, to } = ed.read();
+      return ed.replace(paragraphs.map((x, i) => (i < from || i > to ? x : { ...x, align: p.align as Paragraph['align'] })));
+    }
+    elStyle(p);
+  };
+  const caretAlign = ed && !ed.formatCells ? (() => {
+    const { paragraphs, from } = ed.read();
+    return paragraphs[from]?.align;
+  })() : undefined;
+  const all = (k: 'align' | 'valign', v: string) => (k === 'align' && caretAlign ? caretAlign === v : look !== undefined ? (look?.[k] ?? (k === 'valign' ? 'middle' : 'left')) === v : els.length > 0 && els.every((e) => resolved.get(e.id)?.[k] === v));
   const off = readOnly || !els.length;
+  // Line spacing: the paragraphs under the caret / selection while editing, else the elements' text.
+  const inText = ed && !ed.formatCells ? ed.read() : null;
+  const spacing = inText ? (inText.paragraphs[inText.from]?.lineSpacing ?? resolved.get(els[0]?.id)?.lineSpacing) : els.length && els.every((e) => resolved.get(e.id)?.lineSpacing === resolved.get(els[0]!.id)?.lineSpacing) ? resolved.get(els[0]!.id)?.lineSpacing : undefined;
+  const setSpacing = (v: number) => {
+    if (inText) {
+      const own = resolved.get(els[0]?.id)?.lineSpacing ?? 1;
+      return ed!.replace(inText.paragraphs.map((x, i) => {
+        if (i < inText.from || i > inText.to) return x;
+        const { lineSpacing: _l, ...rest } = x;
+        return v === own ? rest : { ...rest, lineSpacing: v };
+      }));
+    }
+    elStyle({ lineSpacing: v === 1 ? null : v } as never);
+  };
   return (
     <div className="rb-col">
       <div className="rb-row">
@@ -396,6 +432,13 @@ function AlignTools() {
         {(['top', 'middle', 'bottom'] as const).map((a) => (
           <Small key={a} iconOnly icon={a === 'top' ? 'vTop' : a === 'middle' ? 'vMiddle' : 'vBottom'} label={{ top: tr('Texte en haut', 'Text at top'), middle: tr('Texte au milieu', 'Text in the middle'), bottom: tr('Texte en bas', 'Text at bottom') }[a]} active={all('valign', a)} disabled={off} testId={`text-valign-${a}`} onClick={() => style({ valign: a })} />
         ))}
+        <Menu testId="line-spacing-menu" trigger={(open) => <Small iconOnly icon="lineSpacing" label={tr('Interligne', 'Line spacing')} title={tr('Interligne : paragraphes sous le curseur ou la sélection pendant la saisie, sinon tout le texte de l’objet', 'Line spacing: the paragraphs under the caret or selection while typing, else the whole text of the object')} disabled={off || els.every((e) => e.type === 'table')} testId="line-spacing" onClick={open} />}>
+          {(close) => LINE_SPACINGS.map((v) => (
+            <button key={v} type="button" role="menuitem" className={`menu-item${v === spacing ? ' is-current' : ''}`} onMouseDown={keepFocus} onClick={() => (close(), setSpacing(v))} data-testid={`line-spacing-${v}`}>
+              {fmtNumber(v, 2)}
+            </button>
+          ))}
+        </Menu>
       </div>
     </div>
   );
@@ -432,8 +475,8 @@ function ArrangeTools() {
       <Menu testId="group-menu" trigger={(open) => <Small icon="group" label={tr('Grouper', 'Group')} caret disabled={off} testId="group" onClick={open} />}>
         {(close) => (
           <>
-            {rs.length > 1 && item('group', tr('Grouper (Ctrl+G)', 'Group (Ctrl+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), true)), close, 'group-on')}
-            {rs.some((r) => r.element.group) && item('ungroup', tr('Dissocier (Ctrl+Maj+G)', 'Ungroup (Ctrl+Shift+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), false)), close, 'group-off')}
+            {groupState(rs, useEditor.getState().groupScope).canGroup && item('group', tr('Grouper (Ctrl+G)', 'Group (Ctrl+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), true, useEditor.getState().groupScope)), close, 'group-on')}
+            {groupState(rs, useEditor.getState().groupScope).canUngroup && item('ungroup', tr('Dissocier (Ctrl+Maj+G)', 'Ungroup (Ctrl+Shift+G)'), () => slide && mutate(groupMutations(slide, rs.map((r) => r.element.id), false, useEditor.getState().groupScope)), close, 'group-off')}
           </>
         )}
       </Menu>
@@ -615,6 +658,7 @@ function ViewTab() {
   const showGrid = useEditor((s) => s.showGrid);
   const snap = useEditor((s) => s.snap);
   const showHidden = useEditor((s) => s.showHidden);
+  const showWarnings = useEditor((s) => s.showWarnings);
   const hiddenCount = useEditor((s) => currentSlide(s)?.elements.filter((e) => e.hidden).length ?? 0);
   const doc = useEditor((s) => s.doc);
   const { toggleGrid, toggleSnap, set } = useEditor.getState();
@@ -633,6 +677,9 @@ function ViewTab() {
             title={tr('Afficher en transparence les éléments masqués de la diapositive pour les sélectionner et les réafficher', 'Show the slide’s hidden elements ghosted, to select and unhide them')}
             onClick={() => set({ showHidden: !showHidden })}
           />
+        </Col>
+        <Col>
+          <Small icon="warn" label={tr('Avertissements', 'Warnings')} active={showWarnings} testId="ribbon-toggle-warnings" title={tr('Afficher les avertissements de la charte : badges des miniatures, débordements, conformité', 'Show brand warnings: thumbnail badges, overflows, compliance')} onClick={() => set({ showWarnings: !showWarnings })} />
         </Col>
       </Group>
       <Group label="Source">

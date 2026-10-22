@@ -6,6 +6,13 @@ import type { Root, RootContent, PhrasingContent, Table } from 'mdast';
 import {
   applyToDocument,
   assertFreeId,
+  attrsToParagraph,
+  attrsToRun,
+  fenceFor,
+  parseAttrs,
+  spanPairs,
+  withDefaults,
+  type Attrs,
   mergeRuns,
   findLayout,
   findPlaceholder,
@@ -72,8 +79,11 @@ const SLIDE_FM_KEYS = new Set(['id', 'layout', 'notes', 'hidden', 'masterOverrid
 const DOC_FM_KEYS = new Set(['title', 'author', 'subject', 'footer', 'date', 'master', 'theme', 'constraints', 'shared']);
 const SEP_RE = /^---[ \t]*$/;
 const FENCE_RE = /^\s*(```|~~~)/;
-const SLOT_OPEN_RE = /^:::[ \t]*([A-Za-z][\w-]*)(?:[ \t]*\{#([A-Za-z0-9][\w-]*)\})?[ \t]*$/;
-const SLOT_CLOSE_RE = /^:::[ \t]*$/;
+/** `::: name`, `:::: name {#id}`… (any fence of 3+ colons; blocks nest, each `:::` closes the innermost). */
+const SLOT_OPEN_RE = /^:{3,}[ \t]*([A-Za-z][\w-]*)(?:[ \t]*\{#([A-Za-z0-9][\w-]*)\})?[ \t]*$/;
+const SLOT_CLOSE_RE = /^:{3,}[ \t]*$/;
+/** `::: {align=center color=theme.accent2}`: paragraphs sharing a format. */
+const DIV_OPEN_RE = /^:{3,}[ \t]*\{([^{}]*)\}[ \t]*$/;
 const ID_SUFFIX_RE = /\s*\{#([A-Za-z0-9][\w-]*)\}\s*$/;
 
 interface Line {
@@ -175,12 +185,91 @@ export function buildMdModel(text: string): MdModel {
 
 const md = unified().use(remarkParse).use(remarkGfm);
 
+/*
+ * `[text]{attrs}` spans and `::: {attrs}` blocks are not Markdown: before remark parses a body, block
+ * fences are blanked and span brackets replaced by private-use sentinels of the same length (source
+ * offsets stay exact). `runsOf` turns the sentinels back into run formats.
+ */
+const SPAN_OPEN = '';
+const SPAN_CLOSE = '';
+const SPAN_PAD = '';
+const SPAN_RE = /(|[-])/;
+/** Attributes of the spans masked since the last `parseMarkdown` (sentinel index → attributes). */
+let spanStore: Attrs[] = [];
+
+interface Flow {
+  masked: string;
+  /** Inner ranges (local offsets) of `::: {attrs}` blocks, outer ranges too (fences included). */
+  divs: { start: number; end: number; outer: Range; attrs: Attrs }[];
+}
+
+/** Blank `::: {attrs}` fences (outside code fences) and mask spans; offsets are local to `src`. */
+function maskFlow(src: string): Flow {
+  const divs: Flow['divs'] = [];
+  const open: { start: number; outer: number; attrs: Attrs }[] = [];
+  let masked = src;
+  const blank = (l: Line) => (masked = masked.slice(0, l.start) + ' '.repeat(l.end - l.start) + masked.slice(l.end));
+  let inFence = false;
+  for (const l of splitLines(src)) {
+    if (FENCE_RE.test(l.text)) inFence = !inFence;
+    if (inFence) continue;
+    const d = DIV_OPEN_RE.exec(l.text);
+    if (d) {
+      open.push({ start: l.next, outer: l.start, attrs: parseAttrs(d[1]!) });
+      blank(l);
+    } else if (open.length && SLOT_CLOSE_RE.test(l.text)) {
+      const o = open.pop()!;
+      divs.push({ start: o.start, end: l.start, outer: { start: o.outer, end: l.end }, attrs: o.attrs });
+      blank(l);
+    }
+  }
+  for (const [at, p] of [...spanPairs(masked)].sort((a, b) => b[0] - a[0])) {
+    const idx = spanStore.length;
+    if (idx > 0xf8ff - 0xe100 || p.end - p.close < 3) continue;
+    spanStore.push(parseAttrs(p.attrs));
+    masked = masked.slice(0, at) + SPAN_OPEN + masked.slice(at + 1, p.close) + SPAN_CLOSE + String.fromCharCode(0xe100 + idx) + SPAN_PAD.repeat(p.end - p.close - 2) + masked.slice(p.end);
+  }
+  return { masked, divs };
+}
+
+/** Format of the `::: {attrs}` blocks around a local offset (inner blocks win). */
+function divAttrsAt(flow: Flow, offset: number): Attrs {
+  const a: Attrs = {};
+  for (const d of [...flow.divs].sort((x, y) => x.start - y.start)) if (offset >= d.start && offset < d.end) Object.assign(a, d.attrs);
+  return a;
+}
+
+/** Paragraphs inside a block take its format as defaults. */
+function styled(paragraphs: Paragraph[], a: Attrs): Paragraph[] {
+  if (!Object.keys(a).length) return paragraphs;
+  const p = attrsToParagraph(a);
+  const r = attrsToRun(a);
+  return paragraphs.map((x) => ({ ...p, ...x, runs: mergeRuns(withDefaults(x.runs, r)) }));
+}
+
+/** Markdown text (with blocks and spans) → paragraphs. */
+function flowParagraphs(src: string): Paragraph[] {
+  const flow = maskFlow(src);
+  return (md.parse(flow.masked) as Root).children.flatMap((n) => styled(blockParagraphs(n), divAttrsAt(flow, n.position?.start.offset ?? 0)));
+}
+
 function runsOf(nodes: PhrasingContent[], marks: Omit<TextRun, 'text'> = {}): TextRun[] {
   const out: TextRun[] = [];
+  const opens: number[] = [];
   for (const n of nodes) {
     switch (n.type) {
       case 'text':
-        out.push({ text: n.value.replace(/\s*\n\s*/g, ' '), ...marks });
+        for (const part of n.value.split(SPAN_RE)) {
+          if (part === SPAN_OPEN) opens.push(out.length);
+          else if (part[0] === SPAN_CLOSE) {
+            const from = opens.pop();
+            const a = spanStore[part.charCodeAt(1) - 0xe100];
+            if (from !== undefined && a) out.splice(from, out.length - from, ...withDefaults(out.slice(from), attrsToRun(a)));
+          } else {
+            const text = part.replaceAll(SPAN_PAD, '').replace(/\s*\n\s*/g, ' ');
+            if (text) out.push({ text, ...marks });
+          }
+        }
         break;
       case 'inlineCode':
         out.push({ text: n.value, ...marks });
@@ -234,16 +323,16 @@ function blockParagraphs(node: RootContent, level = 0): Paragraph[] {
 }
 
 
-/** Runs Markdown can carry in a table cell: bold and italic only. */
-const mdRuns = (runs: TextRun[]) => runs.every((r) => !r.underline && !r.color && r.size === undefined && !r.caps);
+/** Runs Markdown can carry in a table cell: all of them (bold / italic as `**` / `*`, the rest as `[…]{…}` spans). */
+const mdRuns = (_runs: TextRun[]) => true;
 
-/** A GFM table as a table element's content: text, column alignment, bold / italic cell runs. */
+/** A GFM table as a table element's content: text, column alignment, formatted cell runs. */
 function tableOf(t: Table): Pick<TableElement, 'rows' | 'colAlign' | 'cellRuns'> {
   // `<br>` is a line break inside a cell (GFM cells are one line).
   const br = (r: TextRun) => (/^<br\s*\/?>$/i.test(r.text) ? { ...r, text: '\n' } : r);
   const runs = t.children.map((row) => row.children.map((cell) => mergeRuns(runsOf(cell.children).map(br))));
   const rows = runs.map((row) => row.map((cell) => cell.map((r) => r.text).join('')));
-  const marked = runs.map((row) => row.map((cell) => (cell.some((r) => r.bold || r.italic) ? cell : null)));
+  const marked = runs.map((row) => row.map((cell) => (cell.some((r) => Object.keys(r).length > 1) ? cell : null)));
   const colAlign = t.align?.some(Boolean) ? t.align.map((a) => a ?? null) : undefined;
   return { rows, ...(colAlign ? { colAlign } : {}), ...(marked.some((row) => row.some(Boolean)) ? { cellRuns: marked } : {}) };
 }
@@ -271,16 +360,19 @@ interface SlotInfo {
 function findSlots(text: string, from: number, to: number): { slots: SlotInfo[]; masked: string } {
   const lines = splitLines(text, from, to);
   const slots: SlotInfo[] = [];
-  let open: { name: string; id?: string; start: number; innerStart: number } | null = null;
+  // Every fence opens a block (named slot or `{attrs}` block) and `:::` closes the innermost one:
+  // only top-level named blocks are slots, the others are their content.
+  const stack: ({ name: string; id?: string; start: number; innerStart: number } | null)[] = [];
   let inFence = false;
   for (const l of lines) {
     if (FENCE_RE.test(l.text)) inFence = !inFence;
     if (inFence) continue;
     const o = SLOT_OPEN_RE.exec(l.text);
-    if (!open && o) open = { name: o[1]!, id: o[2], start: l.start, innerStart: l.next };
-    else if (open && SLOT_CLOSE_RE.test(l.text)) {
-      slots.push({ name: open.name, id: open.id, outer: { start: open.start, end: l.end }, inner: { start: open.innerStart, end: l.start } });
-      open = null;
+    if (o) stack.push(stack.length ? null : { name: o[1]!, id: o[2], start: l.start, innerStart: l.next });
+    else if (DIV_OPEN_RE.test(l.text)) stack.push(null);
+    else if (stack.length && SLOT_CLOSE_RE.test(l.text)) {
+      const open = stack.pop();
+      if (open && !stack.length) slots.push({ name: open.name, id: open.id, outer: { start: open.start, end: l.end }, inner: { start: open.innerStart, end: l.start } });
     }
   }
   // Mask slot regions (keep newlines) so free-text offsets stay aligned with the source.
@@ -318,13 +410,26 @@ function fmItemRange(text: string, fm: Range, k: number): Range | null {
   return { start: fm.start + start, end: fm.start + Math.min(end, body.length) };
 }
 
+/** Sorted ranges, overlapping ones merged. */
+function mergeRanges(rs: Range[]): Range[] {
+  const out: Range[] = [];
+  for (const r of [...rs].sort((a, b) => a.start - b.start)) {
+    const last = out[out.length - 1];
+    if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+    else out.push({ ...r });
+  }
+  return out;
+}
+
 function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): DerivedSlide {
   const errors: string[] = [];
   const elements: SlideElement[] = [];
   const src = (r: Range, kind: 'markdown' | 'markdown-frontmatter' = 'markdown') => ({ kind, startLine: lineOf(r.start), endLine: lineOf(Math.max(r.start, r.end - 1)) });
   const { slots, masked } = findSlots(text, s.bodyStart, s.end);
-  const tree = md.parse(masked) as Root;
+  const flow = maskFlow(masked);
+  const tree = md.parse(flow.masked) as Root;
   const nodes = tree.children.filter((n) => n.type !== 'html' && n.type !== 'thematicBreak');
+  const attrsOf = (n: RootContent) => divAttrsAt(flow, n.position?.start.offset ?? 0);
 
   let titleIdx = -1;
   const bodyNodes: RootContent[] = [];
@@ -336,7 +441,7 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       const { runs, id } = stripIdSuffix(runsOf(n.children));
       const r = pos(n, s.bodyStart);
       s.blocks.push({ elementId: id ?? 'title', kind: 'title', ranges: [r], explicitId: !!id });
-      elements.push({ id: id ?? 'title', type: 'text', placeholder: 'title', paragraphs: [{ runs }], source: src(r) });
+      elements.push({ id: id ?? 'title', type: 'text', placeholder: 'title', paragraphs: styled([{ runs }], attrsOf(n)), source: src(r) });
       return;
     }
     if (n.type === 'paragraph') {
@@ -365,8 +470,10 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
   if (bodyNodes.length) {
     const first = bodyNodes[0]!;
     const isSubtitle = titleIdx >= 0 && bodyNodes.length === 1 && first.type === 'paragraph' && nodes.indexOf(first) === titleIdx + 1;
-    const ranges = bodyNodes.map((n) => pos(n, s.bodyStart));
-    const paragraphs = bodyNodes.flatMap((n) => blockParagraphs(n));
+    // A `::: {attrs}` block around body text belongs to the body (its fences go with it).
+    const own = flow.divs.filter((d) => bodyNodes.some((n) => (n.position?.start.offset ?? -1) >= d.start && (n.position?.start.offset ?? -1) < d.end));
+    const ranges = mergeRanges([...bodyNodes.map((n) => pos(n, s.bodyStart)), ...own.map((d) => ({ start: s.bodyStart + d.outer.start, end: s.bodyStart + d.outer.end }))]);
+    const paragraphs = bodyNodes.flatMap((n) => styled(blockParagraphs(n), attrsOf(n)));
     const id = isSubtitle ? 'subtitle' : 'body';
     s.blocks.push({ elementId: id, kind: isSubtitle ? 'subtitle' : 'body', ranges, explicitId: false });
     elements.push({ id, type: 'text', placeholder: id, paragraphs, source: src({ start: ranges[0]!.start, end: ranges[ranges.length - 1]!.end }) });
@@ -383,7 +490,7 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       continue;
     }
     const id = slot.id ?? slot.name;
-    const tree2 = md.parse(inner) as Root;
+    const tree2 = md.parse(maskFlow(inner).masked) as Root;
     // A block holding only a table is a table element: `::: table-1` (free, defined in the
     // frontmatter) or `::: tbl {#table-1}` (bound to the layout's table placeholder).
     const blocks = tree2.children.filter((n) => n.type !== 'html');
@@ -392,7 +499,7 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       elements.push({ id, type: 'table', placeholder: slot.name, ...tableOf(blocks[0] as Table), source: src(slot.outer) });
       continue;
     }
-    const paragraphs = tree2.children.flatMap((n) => blockParagraphs(n));
+    const paragraphs = flowParagraphs(inner);
     s.blocks.push({ elementId: id, kind: 'slot', ranges: [slot.outer], inner: slot.inner, explicitId: !!slot.id });
     elements.push({ id, type: 'text', placeholder: slot.name, paragraphs, source: src(slot.outer) });
   }
@@ -414,21 +521,33 @@ function deriveSlide(text: string, s: MdSlide, lineOf: (o: number) => number): D
       // A full definition (`type`, no `placeholder`) for a `::: id` block is a free text box / table whose content is the block.
       const free = r.type !== undefined && r.placeholder === undefined && !!slotBlock;
       const { placeholder: _ph, ...unbound } = target;
-      const merged = SlideElement.safeParse({ ...(free ? unbound : target), ...override, ...(style ? { style } : {}) });
+      const merged = SlideElement.safeParse({ ...(free ? unbound : target), ...override, ...(free ? { type: r.type } : {}), ...(style ? { style } : {}) });
       if (merged.success) {
         Object.assign(target, merged.data);
         if (free) delete target.placeholder;
       } else errors.push(tr(`Diapositive « ${s.id} », surcharge « ${id} » : ${formatZodError(merged.error)}`, `Slide “${s.id}”, override “${id}”: ${formatZodError(merged.error)}`));
+    } else if (r.type === undefined && Object.keys(r).every((k) => k === 'id' || k === 'z')) {
+      // Stacking left behind for an element that is not on the slide (a shared text): nothing to draw.
+      continue;
     } else {
       const parsed = SlideElement.safeParse(dslToElement(r));
       if (parsed.success) elements.push({ ...parsed.data, source: src(fmItemRange(text, s.fm!, k) ?? s.fm!, 'markdown-frontmatter') });
       else errors.push(tr(`Diapositive « ${s.id} », élément ${k + 1} : ${formatZodError(parsed.error)}`, `Slide “${s.id}”, element ${k + 1}: ${formatZodError(parsed.error)}`));
     }
   }
-  return { elements, notes: notes ?? (typeof s.fm?.data.notes === 'string' ? s.fm.data.notes : undefined), errors };
+  // Stacking: elements fully defined in the frontmatter (with a `type`, their text possibly in a
+  // `::: id` block) are drawn in the order of the `elements:` list, above the Markdown-only ones.
+  const fullAt = new Map<string, number>();
+  (Array.isArray(fmEls) ? fmEls : []).forEach((raw, k) => {
+    const r = raw as Record<string, unknown> | null;
+    if (r && typeof r === 'object' && r.type !== undefined) fullAt.set(String(r.id ?? ''), k);
+  });
+  const ordered = elements.map((e, i) => ({ e, i, k: fullAt.get(e.id) ?? -1 })).sort((a, b) => (a.k < 0 && b.k < 0 ? a.i - b.i : a.k - b.k || a.i - b.i));
+  return { elements: ordered.map((x) => x.e), notes: notes ?? (typeof s.fm?.data.notes === 'string' ? s.fm.data.notes : undefined), errors };
 }
 
 export function parseMarkdown(text: string, opts: ParseOptions = {}): ParseResult & { model: MdModel } {
+  spanStore = [];
   const model = buildMdModel(text);
   const errors: string[] = [];
   const lineStarts = [0];
@@ -486,7 +605,7 @@ function sharedValues(fm: Record<string, unknown>): Record<string, string> {
  */
 function injectShared(slides: SlideNode[], shared: Record<string, string>, master: CorporateMaster, source: SlideElement['source']): void {
   for (const [key, body] of Object.entries(shared)) {
-    const paragraphs = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
+    const paragraphs = flowParagraphs(body);
     for (const slide of slides) {
       const layout = findLayout(master, slide.layout);
       const ph = findPlaceholder(layout, key);
@@ -691,10 +810,30 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
       const patch = normalizePatch(m.patch);
       const { paragraphs, src, rows, colAlign, ...rest } = patch;
       let out = text;
+      if (block?.kind === 'table' && patch.placeholder !== undefined) {
+        // Binding a table to a placeholder (or freeing it) changes its block opener and its header
+        // entry: the table is written again from its new form (content, sizes and cell styles kept).
+        const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
+        if (cur?.type !== 'table') throw new MutationError(`${tr('Élément introuvable', 'Element not found')} : ${m.elementId}`);
+        const { source: _s, ...bare } = cur as SlideElement & { source?: unknown };
+        const next = applyToDocument({ ...current, slides: [{ ...current.slides[si]!, elements: [bare as SlideElement] }] }, [{ ...m, slideId: current.slides[si]!.id }]).slides[0]!.elements[0] as TableElement;
+        for (const r of [...block.ranges].sort((a, b) => b.start - a.start)) {
+          const after = /^[ \t]*\r?\n?[ \t]*\r?\n?/.exec(out.slice(r.end))![0];
+          out = splice(out, { start: r.start, end: r.end + after.length }, '');
+        }
+        const t = tableSlot(next);
+        out = editSlideFm(out, si, (d) => {
+          const seq = fmElementsSeq(d);
+          seq.items = seq.items.filter((n) => !(isMap(n) && String(n.get('id')) === m.elementId));
+          if (t.dsl) seq.add(d.createNode(t.dsl));
+          if (!seq.items.length) d.delete('elements');
+        });
+        return appendSlot(out, si, t.head, t.body);
+      }
       if (block) {
-        if (paragraphs && !isPlainRepresentable(paragraphs)) {
-          // Run colors, sizes and underlines have no Markdown syntax: the element leaves the Markdown
-          // body and becomes a full definition in the slide frontmatter (same id, nothing lost).
+        if (paragraphs && block.kind === 'title' && !isPlainRepresentable(paragraphs)) {
+          // A `# heading` cannot hold paragraph formats (alignment, spacing): the title leaves the
+          // Markdown body and becomes a full definition in the slide frontmatter (same id, nothing lost).
           const cur = current.slides[si]?.elements.find((e) => e.id === m.elementId);
           if (!cur) throw new MutationError(`${tr('Élément introuvable', 'Element not found')} : ${m.elementId}`);
           const { source: _s, ...el } = cur as SlideElement & { source?: unknown };
@@ -730,7 +869,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
       if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
       if (el.type === 'text' && el.shared) {
         // Editing a shared text changes it on every slide showing it; anything else needs a detached copy.
-        if (!paragraphs || Object.values(rest).some((v) => v !== undefined) || src !== undefined || rows || colAlign || !isPlainRepresentable(paragraphs)) throw sharedLocked();
+        if (!paragraphs || Object.values(rest).some((v) => v !== undefined) || src !== undefined || rows || colAlign) throw sharedLocked();
         return editDocFm(out, (d) => setShared(d, el.placeholder!, paragraphsToMarkdown(paragraphs)));
       }
       const fmNode = (d: Document) => {
@@ -766,7 +905,7 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
       const table = m.element.type === 'table' && /^[A-Za-z][\w-]*$/.test(m.element.id) ? tableSlot(m.element) : null;
       const dsl = table ? table.dsl : elementToDsl(m.element);
       const slot = table?.body ?? slotBody(m.element);
-      if (slot !== null) delete dsl?.content;
+      if (slot !== null) (delete dsl?.content, delete dsl?.paragraphs);
       const out = dsl ? editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl))) : text;
       return slot === null ? out : appendSlot(out, si, table?.head ?? m.element.id, slot);
     }
@@ -837,7 +976,8 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
       const si = slideIndex(model, m.slideId);
       const order = reorderIds(current.slides[si]!, m.elementId, m.direction);
       return editSlideFm(text, si, (d) => {
-        order.forEach((id, z) => fmEntry(d, id, true)!.set('z', z));
+        // Shared texts come from the deck header: they keep their place (no entry is written for them).
+        order.filter((id) => !isShared(current, si, id)).forEach((id, z) => fmEntry(d, id, true)!.set('z', z));
         dropEmptyElements(d);
       });
     }
@@ -898,12 +1038,11 @@ function applyOne(text: string, m: Mutation, current: SlideDocument, opts: Parse
         const body = slotBody(own);
         if (body !== null && own.id === own.placeholder) return appendSlot(text, si, own.id, body);
         const dsl = elementToDsl(own);
-        if (body !== null) delete dsl.content;
+        if (body !== null) (delete dsl.content, delete dsl.paragraphs);
         const out = editSlideFm(text, si, (d) => fmElementsSeq(d).add(d.createNode(dsl)));
         return body === null ? out : appendSlot(out, si, own.id, body);
       }
       if (el.shared) return text;
-      if (!isPlainRepresentable(el.paragraphs)) throw new MutationError(tr('Seul du texte Markdown simple peut être partagé (pas de couleurs ni de tailles par mot).', 'Only plain Markdown text can be shared (no per-word colors or sizes).'));
       const key = el.placeholder;
       let out = editDocFm(text, (d) => setShared(d, key, paragraphsToMarkdown(el.paragraphs)));
       // Every slide follows the shared value: own values in the same placeholder are dropped (last slide first).
@@ -976,7 +1115,8 @@ export function documentToDeck(doc: SlideDocument): string {
       if (body !== null) {
         // Text lives in a `::: id` block; the frontmatter entry keeps placeholder, geometry and style.
         delete dsl.content;
-        slots.push(`::: ${e.id}\n${body}\n:::\n`);
+        delete dsl.paragraphs;
+        slots.push(`${fenceFor(body)} ${e.id}\n${body}\n${fenceFor(body)}\n`);
       }
       rest.push(dsl);
     }
@@ -990,18 +1130,21 @@ export function documentToDeck(doc: SlideDocument): string {
 
 /** Markdown for a `::: id` block holding a text box's text, or null when it would not read back identically. */
 function slotBody(e: SlideElement): string | null {
-  if (e.type !== 'text' || e.id === 'notes' || !/^[A-Za-z][\w-]*$/.test(e.id) || (e.placeholder && !e.paragraphs.length) || !isPlainRepresentable(e.paragraphs)) return null;
-  const body = paragraphsToMarkdown(e.paragraphs);
-  if ((e.placeholder && !body.trim()) || body.split('\n').some((l) => SLOT_OPEN_RE.test(l) || SLOT_CLOSE_RE.test(l))) return null;
-  const back = (md.parse(body) as Root).children.flatMap((n) => blockParagraphs(n));
-  return paragraphsToContent(back) === paragraphsToContent(e.paragraphs) ? body : null;
+  // Text boxes, and shapes holding text (their text reads in the Markdown body like any box).
+  const paragraphs = e.type === 'text' ? e.paragraphs : e.type === 'shape' && e.paragraphs?.length ? e.paragraphs : null;
+  if (!paragraphs || e.id === 'notes' || !/^[A-Za-z][\w-]*$/.test(e.id) || (e.placeholder && !paragraphs.length)) return null;
+  const body = paragraphsToMarkdown(paragraphs);
+  if ((e.placeholder || e.type === 'shape') && !body.trim()) return null;
+  // Formats included (spans, `::: {attrs}` blocks), the block must read back as the same text.
+  return paragraphsToMarkdown(flowParagraphs(body)) === body ? body : null;
 }
 
 /** Append a `::: id` block (`head`: `id` or `placeholder {#id}`) at the end of slide `index`'s body. */
 function appendSlot(text: string, index: number, head: string, body: string): string {
   const s = buildMdModel(text).slides[index]!;
   const before = text.slice(0, s.end).replace(/\s*$/, '');
-  return `${before}\n\n::: ${head}\n${body}\n:::\n${s.end < text.length ? '\n' : ''}${text.slice(s.end)}`;
+  const fence = fenceFor(body);
+  return `${before}\n\n${fence} ${head}\n${body}\n${fence}\n${s.end < text.length ? '\n' : ''}${text.slice(s.end)}`;
 }
 
 function blockify(node: unknown): void {

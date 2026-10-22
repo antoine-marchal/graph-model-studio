@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { explicitStyle, isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type ElementStyle, type Mutation, type ResolvedElement, type SlideNode } from '@corporate-slides/core';
+import { explicitStyle, findLayout, isDiagramSrc, paletteTokens, resolveSlide, tr, uniqueId, type ElementStyle, type Mutation, type ResolvedElement, type SlideNode } from '@corporate-slides/core';
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor } from './store';
-import { alignMutations, deleteMutations, groupMutations, duplicateMutations, FONT_SIZES, inlineEditor, stepFontSize, type AlignMode, type RunFormat } from './Format';
+import { alignMutations, deleteMutations, groupMutations, groupState, duplicateMutations, FONT_SIZES, inlineEditor, stepFontSize, type AlignMode, type RunFormat } from './Format';
 import { copyFormat, copyFromRibbon, hasCopiedFormat, pasteFormat, pasteFromRibbon } from './clipboard';
 
 /*
@@ -115,13 +115,14 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
           : []),
       ],
     },
-    ...(rs.length > 1 || rs.some((r) => r.element.group)
-      ? [
-          rs.length > 1 && !rs.every((r) => r.element.group && r.element.group === rs[0]!.element.group)
-            ? { id: 'group', label: tr('Grouper', 'Group'), icon: 'group' as const, kbd: key('Ctrl+G'), disabled: ro, run: () => mutate(groupMutations(slide, rs.map((r) => r.element.id), true)) }
-            : { id: 'ungroup', label: tr('Dissocier', 'Ungroup'), icon: 'ungroup' as const, kbd: key('Ctrl+Shift+G'), disabled: ro, run: () => mutate(groupMutations(slide, rs.map((r) => r.element.id), false)) },
-        ]
-      : []),
+    ...(() => {
+      const g = groupState(rs, st.groupScope);
+      const ids = rs.map((r) => r.element.id);
+      return [
+        ...(g.canGroup ? [{ id: 'group', label: tr('Grouper', 'Group'), icon: 'group' as const, kbd: key('Ctrl+G'), disabled: ro, run: () => mutate(groupMutations(slide, ids, true, st.groupScope)) }] : []),
+        ...(g.canUngroup ? [{ id: 'ungroup', label: tr('Dissocier', 'Ungroup'), icon: 'ungroup' as const, kbd: key('Ctrl+Shift+G'), disabled: ro, run: () => mutate(groupMutations(slide, ids, false, st.groupScope)) }] : []),
+      ];
+    })(),
     ...(el?.type === 'connector'
       ? [
           {
@@ -131,7 +132,7 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
           { id: 'reverse', label: tr('Inverser le sens', 'Reverse direction'), icon: 'refresh' as const, disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { from: el.to, to: el.from, fromSide: el.toSide ?? 'auto', toSide: el.fromSide ?? 'auto', fromPoint: el.toPoint ?? null, toPoint: el.fromPoint ?? null } }]) },
         ]
       : [{ id: 'connect', label: tr('Relier à un autre élément', 'Connect to another element'), icon: 'connector' as const, disabled: ro || !solo, run: () => set({ connectFrom: el!.id }) }]),
-    ...(st.design && one ? placeholderConversion(slide, one, ro) : []),
+    ...(st.design && one ? placeholderConversion(slide, one, ro) : one?.element.type === 'table' ? tableBinding(slide, one, master, ro) : []),
     'sep',
     { id: 'lock', label: locked ? tr('Déverrouiller', 'Unlock') : tr('Verrouiller', 'Lock'), icon: locked ? 'unlock' : 'lock', disabled: ro, run: all((r) => ({ kind: 'updateElement', slideId: slide.id, elementId: r.element.id, patch: { locked: !locked } })) },
     { id: 'hide', label: tr('Masquer', 'Hide'), icon: 'eyeOff', disabled: ro, run: () => (mutate(rs.map((r) => ({ kind: 'updateElement', slideId: slide.id, elementId: r.element.id, patch: { hidden: true } }))), select(slide.id, [])) },
@@ -163,6 +164,14 @@ function useCommands(target: 'element' | 'slide' | 'text' | 'text'): { quick: Cm
 function placeholderConversion(slide: SlideNode, r: ResolvedElement, ro: boolean): Cmd[] {
   const el = r.element;
   const { mutate, select } = useEditor.getState();
+  if (el.type === 'table') {
+    // The table keeps its grid, sizes and cell styles: only its role changes.
+    const taken = slide.elements.map((e) => e.placeholder ?? '');
+    const key = taken.includes('tbl') ? uniqueId('tbl', taken) : 'tbl';
+    return el.placeholder
+      ? [{ id: 'to-element', label: tr('Convertir en tableau libre', 'Convert to free table'), icon: 'table', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: null } }]) }]
+      : [{ id: 'to-placeholder', label: tr('Convertir en espace réservé de tableau', 'Convert to table placeholder'), icon: 'layout', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: key } }]) }];
+  }
   const style = explicitStyle(r) as Record<string, unknown>;
   if (el.type === 'text' && el.placeholder) {
     return [{ id: 'to-element', label: tr('Convertir en élément', 'Convert to element'), icon: 'text', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: null, style } }]) }];
@@ -181,6 +190,20 @@ function placeholderConversion(slide: SlideNode, r: ResolvedElement, ro: boolean
     select(slide.id, [id]);
   };
   return [{ id: 'to-placeholder', label: tr('Convertir en espace réservé', 'Convert to placeholder'), icon: 'layout', disabled: ro, run }];
+}
+
+/** Slide table: detach it from the layout's table placeholder, or bind it to a free one (look and content kept). */
+function tableBinding(slide: SlideNode, r: ResolvedElement, master: NonNullable<ReturnType<typeof useEditor.getState>['master']>, ro: boolean): Cmd[] {
+  const el = r.element;
+  const { mutate } = useEditor.getState();
+  const { x, y, w, h } = r.box;
+  if (el.placeholder) return [{ id: 'to-element', label: tr('Détacher de l’espace réservé', 'Detach from placeholder'), icon: 'table', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: null, x, y, w, h } }]) }];
+  const layout = findLayout(master, slide.layout);
+  const used = new Set(slide.elements.map((e) => e.placeholder));
+  const ph = layout?.placeholders.find((p) => p.type === 'tbl' && !used.has(p.key));
+  if (!ph) return [];
+  // Bound: the placeholder gives the geometry, the table keeps its own look.
+  return [{ id: 'to-placeholder', label: tr('Placer dans l’espace réservé de tableau', 'Move into the table placeholder'), icon: 'layout', disabled: ro, run: () => mutate([{ kind: 'updateElement', slideId: slide.id, elementId: el.id, patch: { placeholder: ph.key, x: ph.x, y: ph.y, w: ph.w, h: ph.h } }]) }];
 }
 
 /** Selected text inside the inline editor: clipboard, character marks, size and color of the selection. */

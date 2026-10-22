@@ -16,7 +16,7 @@ import {
 
 export type ElementMenuState =
   | { kind: 'elements'; x: number; y: number; ids: string[] }
-  | { kind: 'relation'; x: number; y: number; id: string }
+  | { kind: 'relation'; x: number; y: number; id: string; ids?: string[] }
 
 /** Wrap `ids` in a new container of `type` and select it. */
 export function groupElements(ids: string[], type: string) {
@@ -141,9 +141,12 @@ export function ElementContextMenu({ state, onClose, onDuplicate }: {
         <Sep />
         <button className={item} onClick={run(() => copyRelationFormat(useModelStore.getState().model, relation.id))}>Copy style</button>
         <button className={item} disabled={!hasRelationFormat()} onClick={run(() => {
-          const format = relationFormatFor(useModelStore.getState().model, relation.id)
-          if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id: relation.id, ...format } })
-        })}>Paste style</button>
+          // Every selected relation takes the style, not only the one right-clicked.
+          for (const id of state.ids ?? [relation.id]) {
+            const format = relationFormatFor(useModelStore.getState().model, id)
+            if (format) dispatch({ type: 'APPLY_RELATION_FORMAT', payload: { id, ...format } })
+          }
+        })}>{state.ids && state.ids.length > 1 ? `Paste style on ${state.ids.length} relations` : 'Paste style'}</button>
         <Sep />
         <button className={`${item} !text-red-500`} onClick={run(() => dispatch({ type: 'DELETE_RELATION', payload: { id: relation.id } }))}>Delete relation</button>
       </>

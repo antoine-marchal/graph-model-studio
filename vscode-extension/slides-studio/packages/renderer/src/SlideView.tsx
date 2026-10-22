@@ -53,8 +53,9 @@ export const tableTextCss = (el: TableElement): CSSProperties => ({
 export function tableCellStyle(el: TableElement, ri: number, ci: number, master: CorporateMaster, opts: { header?: boolean; headerColumn?: boolean; valign?: string; align?: string | null; cell?: CellStyle | null } = {}): CSSProperties {
   const s = el.style;
   const gridColor = tokenHex(s?.line, master) ?? master.theme.palette.dk1?.lighter60 ?? 'A8A8A8';
-  const border = (line: string | undefined, width: number | undefined, dash: string | undefined, color: string) =>
-    line === 'none' ? 'none' : `${Math.max(0.5, width ?? 0.5)}pt ${cssDash(dash)} #${color}`;
+  // A cell without border hides the shared edge too (`hidden` wins over the neighbour's border, as in PowerPoint).
+  const border = (line: string | undefined, width: number | undefined, dash: string | undefined, color: string, own = false) =>
+    line === 'none' ? (own ? 'hidden' : 'none') : `${Math.max(0.5, width ?? 0.5)}pt ${cssDash(dash)} #${color}`;
   const cs = opts.cell !== undefined ? opts.cell : el.cellStyles?.[ri]?.[ci];
   const header = (opts.header ?? el.header !== false) && ri === 0;
   const headerCol = (opts.headerColumn ?? !!el.headerColumn) && ci === 0;
@@ -83,8 +84,11 @@ export function tableCellStyle(el: TableElement, ri: number, ci: number, master:
     if (cs.caps) Object.assign(out, capsCss(cs.caps));
     if (cs.align) out.textAlign = cs.align;
     if (cs.valign) out.verticalAlign = cs.valign;
-    if (cs.line || cs.lineWidth !== undefined || cs.dash) out.border = border(cs.line ?? s?.line, cs.lineWidth ?? s?.lineWidth, cs.dash ?? s?.dash, tokenHex(cs.line, master) ?? gridColor);
+    if (cs.line || cs.lineWidth !== undefined || cs.dash) out.border = border(cs.line ?? s?.line, cs.lineWidth ?? s?.lineWidth, cs.dash ?? s?.dash, tokenHex(cs.line, master) ?? gridColor, !!cs.line);
   }
+  // Zoomed (transformed) tables leave anti-aliasing seams between filled cells: each background bleeds
+  // half a pixel over its neighbours (borders are painted above backgrounds, so they stay crisp).
+  if (out.background && out.background !== 'transparent') out.boxShadow = `0 0 0 0.6px ${out.background}`;
   return out;
 }
 
@@ -141,31 +145,25 @@ export function ParagraphsView({ r, paragraphs, master }: { r: ResolvedElement; 
           position: 'relative',
           margin: 0,
           paddingLeft: px(look.indent),
-          marginTop: i === 0 ? 0 : ptPx(4),
+          marginTop: ptPx(p.spaceBefore ?? (i === 0 ? 0 : 4)),
+          marginBottom: p.spaceAfter ? ptPx(p.spaceAfter) : undefined,
           fontSize: ptPx(look.fontSize),
           color: hex(look.color),
           fontWeight: look.bold ? 700 : 400,
-          minHeight: `${1.2 * r.style.lineSpacing}em`,
+          textAlign: p.align,
+          lineHeight: p.lineSpacing ? 1.2 * p.lineSpacing : undefined,
+          minHeight: `${1.2 * (p.lineSpacing ?? r.style.lineSpacing)}em`,
         };
         return (
           <p key={i} style={style}>
             {marker && (
-              <span aria-hidden style={{ position: 'absolute', left: px(look.indent - look.hanging), width: px(look.hanging), color: hex(look.bullet!.color), fontWeight: 400 }}>
+              // Centered / right-aligned items carry their bullet just before the text, as in PowerPoint.
+              <span aria-hidden style={{ ...(p.align === 'center' || p.align === 'right' ? { display: 'inline-block' } : { position: 'absolute', left: px(look.indent - look.hanging) }), width: px(look.hanging), color: hex(look.bullet!.color), fontWeight: 400, textAlign: 'left' }}>
                 {marker}
               </span>
             )}
             {p.runs.map((run, k) => (
-              <span
-                key={k}
-                style={{
-                  fontWeight: run.bold ? 700 : undefined,
-                  fontStyle: run.italic || r.style.italic ? 'italic' : undefined,
-                  textDecoration: run.underline || r.style.underline ? 'underline' : undefined,
-                  fontSize: run.size ? ptPx(run.size) : undefined,
-                  color: run.color ? hex(run.color.startsWith('theme.') ? (resolveRunColor(run.color, master) ?? look.color) : run.color.replace('#', '')) : undefined,
-                  ...capsCss(run.caps),
-                }}
-              >
+              <span key={k} style={runCss(run, master, { italic: r.style.italic, underline: r.style.underline })}>
                 {run.text}
               </span>
             ))}
@@ -177,10 +175,24 @@ export function ParagraphsView({ r, paragraphs, master }: { r: ResolvedElement; 
   );
 }
 
-function resolveRunColor(token: string, master: CorporateMaster): string | null {
-  const [, slot, variant] = token.split('.');
-  if (!slot) return null;
-  return (variant ? master.theme.palette[slot]?.[variant] : master.theme.colors[slot]) ?? null;
+/** CSS of one formatted run (paragraphs and table cells); `inherit` = the element's italic / underline. */
+export function runCss(run: TextRun, master: CorporateMaster, inherit: { italic?: boolean; underline?: boolean } = {}): CSSProperties {
+  const color = run.color ? tokenHex(run.color, master) : null;
+  const highlight = run.highlight ? tokenHex(run.highlight, master) : null;
+  const deco = [run.underline || inherit.underline ? 'underline' : '', run.strike ? 'line-through' : ''].filter(Boolean).join(' ');
+  const font = run.font === 'theme.heading' ? master.theme.fonts.heading : run.font === 'theme.body' ? master.theme.fonts.body : run.font;
+  return {
+    fontWeight: run.bold ? 700 : undefined,
+    fontStyle: run.italic || inherit.italic ? 'italic' : undefined,
+    textDecoration: deco || undefined,
+    // Super / subscript: PowerPoint's default 30 % offset at about two thirds of the size.
+    fontSize: run.size ? ptPx(run.size * (run.baseline ? 0.66 : 1)) : run.baseline ? '0.66em' : undefined,
+    verticalAlign: run.baseline ? run.baseline : undefined,
+    color: color ? `#${color}` : undefined,
+    background: highlight ? `#${highlight}` : undefined,
+    fontFamily: font ? `"${font}", Arial, sans-serif` : undefined,
+    ...capsCss(run.caps),
+  };
 }
 
 export function textBoxStyle(r: ResolvedElement): CSSProperties {
@@ -201,6 +213,15 @@ export function textBoxStyle(r: ResolvedElement): CSSProperties {
   };
 }
 
+/** Span of a table cell: its merge when it starts one, null when another merged cell covers it. */
+export function spanAt(el: TableElement, ri: number, ci: number): { rs: number; cs: number } | null {
+  for (const m of el.merges ?? []) {
+    if (m.r === ri && m.c === ci) return { rs: m.rs, cs: m.cs };
+    if (ri >= m.r && ri < m.r + m.rs && ci >= m.c && ci < m.c + m.cs) return null;
+  }
+  return { rs: 1, cs: 1 };
+}
+
 /** Formatted runs of a table cell, when they still match its plain text (else the text wins). */
 export function cellRunsOf(el: TableElement, ri: number, ci: number): TextRun[] | null {
   const runs = el.cellRuns?.[ri]?.[ci];
@@ -209,12 +230,7 @@ export function cellRunsOf(el: TableElement, ri: number, ci: number): TextRun[] 
 
 /** One formatted run (table cells; paragraphs use ParagraphsView). */
 export function RunSpan({ run, master }: { run: TextRun; master: CorporateMaster }) {
-  const color = run.color ? tokenHex(run.color, master) : null;
-  return (
-    <span style={{ fontWeight: run.bold ? 700 : undefined, fontStyle: run.italic ? 'italic' : undefined, textDecoration: run.underline ? 'underline' : undefined, color: color ? `#${color}` : undefined, fontSize: run.size ? ptPx(run.size) : undefined, ...capsCss(run.caps) }}>
-      {run.text}
-    </span>
-  );
+  return <span style={runCss(run, master)}>{run.text}</span>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -342,6 +358,30 @@ export function shapePath(kind: string, w: number, h: number, radius = Math.min(
   }
 }
 
+export const CONNECTOR_PRESET = /^(bent|curved)Connector[2-5]$/;
+
+/** Path of an OOXML elbow / curved connector preset in a w×h box (adjustments in 1/100000 of the box). */
+export function connectorPresetPath(kind: string, w: number, h: number, adjust?: Record<string, number>): string {
+  const a = (k: string, d: number) => ((adjust?.[k] ?? d) / 100000);
+  const x1 = w * a('adj1', 50000), y2 = h * a('adj2', 50000), x3 = w * a('adj3', 50000);
+  switch (kind) {
+    case 'bentConnector2':
+      return `M 0 0 L ${w} 0 L ${w} ${h}`;
+    case 'bentConnector4':
+      return `M 0 0 L ${x1} 0 L ${x1} ${y2} L ${w} ${y2} L ${w} ${h}`;
+    case 'bentConnector5':
+      return `M 0 0 L ${x1} 0 L ${x1} ${y2} L ${x3} ${y2} L ${x3} ${h} L ${w} ${h}`;
+    case 'curvedConnector2':
+      return `M 0 0 C ${w / 2} 0 ${w} ${h / 2} ${w} ${h}`;
+    case 'curvedConnector3':
+    case 'curvedConnector4':
+    case 'curvedConnector5':
+      return `M 0 0 C ${x1 / 2} 0 ${x1} ${h / 4} ${x1} ${h / 2} C ${x1} ${(3 * h) / 4} ${(x1 + w) / 2} ${h} ${w} ${h}`;
+    default:
+      return `M 0 0 L ${x1} 0 L ${x1} ${h} L ${w} ${h}`;
+  }
+}
+
 /** SVG marker for an arrowhead, sized relative to the stroke like PowerPoint's "medium" heads. */
 function ArrowMarker({ id, kind, color, start }: { id: string; kind: string; color: string; start?: boolean }) {
   if (kind === 'none') return null;
@@ -404,6 +444,15 @@ function ShapeSvg({ r }: { r: ResolvedElement }) {
   const h = px(r.box.h);
   const s = r.style;
   if (el.shape === 'line') return <StrokeSvg r={r} d={`M 0 ${el.flipV ? h : 0} L ${w} ${el.flipV ? 0 : h}`} />;
+  if (CONNECTOR_PRESET.test(el.shape)) {
+    // Elbow / curved connector kept as a PowerPoint preset (pasted unattached): its path, flipped like the shape.
+    const flip = [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ').trim();
+    return (
+      <div style={{ position: 'absolute', inset: 0, transform: flip || undefined }}>
+        <StrokeSvg r={r} d={connectorPresetPath(el.shape, w, h, el.adjust)} />
+      </div>
+    );
+  }
   const stroke = s.line ? hex(s.line) : 'none';
   const sw = s.line ? ptPx(s.lineWidth) : 0;
   const dash = s.dash === 'dash' ? `${sw * 4} ${sw * 3}` : s.dash === 'dot' ? `${sw} ${sw * 2}` : undefined;
@@ -435,7 +484,20 @@ function ShapeSvg({ r }: { r: ResolvedElement }) {
         <path d={`M 0 ${d} L ${w - d} ${d} L ${w} 0 M ${w - d} ${d} L ${w - d} ${h}`} fill="none" stroke={stroke} strokeWidth={sw} />
       </>
     );
-  } else shape = <path d={shapePath(el.shape, w, h, radius, el.adjust)} fillRule="evenodd" {...common} />;
+  } else if (el.shape === 'custom' && el.geometry) {
+    // Freeform: each path in its own coordinate space, stretched to the box.
+    shape = (
+      <>
+        {el.geometry.paths.map((p, i) => (
+          <path key={i} d={p.d} transform={`scale(${w / p.w} ${h / p.h})`} {...common} fill={p.fill === false ? 'none' : fill} stroke={p.stroke === false ? 'none' : stroke} />
+        ))}
+      </>
+    );
+  } else {
+    // Presets without a drawing here (kept from PowerPoint, exported exactly): their box.
+    const d = shapePath(el.shape, w, h, radius, el.adjust) || `M 0 0 H ${w} V ${h} H 0 Z`;
+    shape = <path d={d} fillRule="evenodd" {...common} />;
+  }
   const flip = [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ').trim();
   return (
     <svg width={Math.max(w, 1)} height={Math.max(h, 1)} style={{ position: 'absolute', inset: 0, overflow: 'visible', transform: flip || undefined }}>
@@ -569,6 +631,16 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
     case 'image': {
       const asset = masterAssetOf(el.src);
       const url = asset ? assets.masterAsset(asset) : assets.image(el.src);
+      if (url && el.crop) {
+        // Cropped picture: the source scaled so the kept window fills the box.
+        const c = el.crop;
+        const iw = 100 / Math.max(0.01, 1 - c.l - c.r), ih = 100 / Math.max(0.01, 1 - c.t - c.b);
+        return (
+          <div style={{ position: 'absolute', inset: 0, overflow: 'hidden', boxSizing: 'border-box', ...textChrome(r), background: undefined }}>
+            <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', left: `${-c.l * iw}%`, top: `${-c.t * ih}%`, width: `${iw}%`, height: `${ih}%`, maxWidth: 'none' }} />
+          </div>
+        );
+      }
       return url ? (
         <img src={url} alt={el.alt ?? ''} draggable={false} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: ({ stretch: 'fill', contain: 'contain', cover: 'cover' } as const)[imageFit(el)], boxSizing: 'border-box', ...textChrome(r), background: undefined }} />
       ) : (
@@ -591,12 +663,16 @@ function ElementView({ r, master, assets }: { r: ResolvedElement; master: Corpor
           </colgroup>
           <tbody>
             {el.rows.map((row, ri) => (
-              <tr key={ri} style={el.rowHeights ? { height: `${rowF[ri]! * 100}%` } : undefined}>
-                {Array.from({ length: cols }, (_, ci) => (
-                  <td key={ci} data-cell={`${ri}:${ci}`} style={tableCellStyle(el, ri, ci, master)}>
-                    {cellRunsOf(el, ri, ci)?.map((run, k) => <RunSpan key={k} run={run} master={master} />) ?? row[ci] ?? ''}
-                  </td>
-                ))}
+              // Row heights in pixels (percentages let empty rows collapse to nothing).
+              <tr key={ri} style={{ height: rowF[ri]! * px(r.box.h) }}>
+                {Array.from({ length: cols }, (_, ci) => {
+                  const span = spanAt(el, ri, ci);
+                  return span === null ? null : (
+                    <td key={ci} data-cell={`${ri}:${ci}`} rowSpan={span.rs > 1 ? span.rs : undefined} colSpan={span.cs > 1 ? span.cs : undefined} style={tableCellStyle(el, ri, ci, master)}>
+                      {cellRunsOf(el, ri, ci)?.map((run, k) => <RunSpan key={k} run={run} master={master} />) ?? row[ci] ?? ''}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -676,11 +752,17 @@ export function LayoutBackground({ layout, master, assets, metadata, slideNumber
 function PlaceholderTablePreview({ p, master }: { p: LayoutDef['placeholders'][number]; master: CorporateMaster }) {
   const el: TableElement = { id: p.key, type: 'table', ...placeholderTable(p) };
   const cols = Math.max(...el.rows.map((x) => x.length));
+  const rowF = tableWeights(el.rowHeights, el.rows.length);
   return (
-    <table style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', opacity: 0.45, fontSize: ptPx(12), fontFamily: `"${master.theme.fonts.body}", Arial, sans-serif` }}>
+    <table style={{ width: '100%', height: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', opacity: 0.45, fontSize: ptPx(el.style?.fontSize ?? 12), fontFamily: `"${master.theme.fonts.body}", Arial, sans-serif` }}>
+      <colgroup>
+        {tableWeights(el.colWidths, cols).map((f, ci) => (
+          <col key={ci} style={{ width: `${f * 100}%` }} />
+        ))}
+      </colgroup>
       <tbody>
         {el.rows.map((row, ri) => (
-          <tr key={ri}>
+          <tr key={ri} style={{ height: rowF[ri]! * px(p.h) }}>
             {Array.from({ length: cols }, (_, ci) => (
               <td key={ci} style={tableCellStyle(el, ri, ci, master)}>{row[ci] ?? ''}</td>
             ))}

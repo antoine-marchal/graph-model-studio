@@ -6,6 +6,7 @@ import type { ParseOptions, ParseResult, SourceKind } from './types.js';
 export * from './types.js';
 export { parseDsl, applyDslMutations, documentToDsl, elementToDsl, dslToElement } from './dsl.js';
 export { parseMarkdown, applyMarkdownMutations, buildMdModel, documentToDeck } from './markdown.js';
+export { deckFoldingRanges, type DeckFold } from './folding.js';
 
 export function sourceKindOf(fileName: string): SourceKind | null {
   if (/\.(slides\.md|deck)$/i.test(fileName)) return 'markdown';

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
+  groupUnit,
+  inGroup,
+  parentGroup,
   anchorSide,
   estimateFit,
   perimeterAnchor,
@@ -50,6 +53,8 @@ interface DragState {
   boxes: Map<string, Box>;
   moved: boolean;
   last: Mutation[];
+  /** Element clicked inside an already selected group: a click without move enters the group. */
+  drill?: string;
 }
 
 export function useAssets(): AssetResolver {
@@ -85,6 +90,8 @@ export function Canvas() {
   const slide = useEditor(currentSlide);
   const selected = useEditor((s) => s.selected);
   const editingId = useEditor((s) => s.editingId);
+  const groupScope = useEditor((s) => s.groupScope);
+  const showWarnings = useEditor((s) => s.showWarnings);
   const zoomSetting = useEditor((s) => s.zoom);
   const showGrid = useEditor((s) => s.showGrid);
   const showHidden = useEditor((s) => s.showHidden);
@@ -209,8 +216,10 @@ export function Canvas() {
       select(slide.id, [r.element.id], true);
       return;
     }
-    if (!st.selected.includes(r.element.id)) select(slide.id, [r.element.id]);
+    const again = st.selected.includes(r.element.id);
+    if (!again) select(slide.id, [r.element.id]);
     if (!r.element.locked) startDrag(e, 'move');
+    if (again && drag.current && groupUnit(r.element.group, st.groupScope)) drag.current.drill = r.element.id;
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -241,6 +250,34 @@ export function Canvas() {
       }
       for (const [id, b] of d.boxes) {
         mutations.push({ kind: 'updateElement', slideId: slide.id, elementId: id, patch: { x: round4(b.x + dx), y: round4(b.y + dy), w: round4(b.w), h: round4(b.h) } });
+      }
+    } else if (d.boxes.size > 1) {
+      // Group: its frame is resized, every member scales with it (as PowerPoint does).
+      const u = unionBox([...d.boxes.values()]);
+      const h = d.handle!;
+      let left = u.x, right = u.x + u.w, top = u.y, bottom = u.y + u.h;
+      if (h.includes('w')) left += dx;
+      if (h.includes('e')) right += dx;
+      if (h.includes('n')) top += dy;
+      if (h.includes('s')) bottom += dy;
+      if (!disableSnap) {
+        if (h.includes('w')) { const s = snapAxis([left], xs, threshold); if (s.at !== null) { left += s.delta; g.push({ axis: 'x', at: s.at }); } }
+        if (h.includes('e')) { const s = snapAxis([right], xs, threshold); if (s.at !== null) { right += s.delta; g.push({ axis: 'x', at: s.at }); } }
+        if (h.includes('n')) { const s = snapAxis([top], ys, threshold); if (s.at !== null) { top += s.delta; g.push({ axis: 'y', at: s.at }); } }
+        if (h.includes('s')) { const s = snapAxis([bottom], ys, threshold); if (s.at !== null) { bottom += s.delta; g.push({ axis: 'y', at: s.at }); } }
+      }
+      const min = 0.05;
+      if (right - left < min) h.includes('w') ? (left = right - min) : (right = left + min);
+      if (bottom - top < min) h.includes('n') ? (top = bottom - min) : (bottom = top + min);
+      // Shift keeps the group's proportions on corner handles.
+      if (h.length === 2 && e.shiftKey && u.h > 0) {
+        const nh = (right - left) / (u.w / u.h);
+        if (h.includes('n')) top = bottom - nh;
+        else bottom = top + nh;
+      }
+      const sx = u.w ? (right - left) / u.w : 1, sy = u.h ? (bottom - top) / u.h : 1;
+      for (const [id, b] of d.boxes) {
+        mutations.push({ kind: 'updateElement', slideId: slide.id, elementId: id, patch: { x: round4(left + (b.x - u.x) * sx), y: round4(top + (b.y - u.y) * sy), w: round4(b.w * sx), h: round4(b.h * sy) } });
       }
     } else {
       const [id, b] = [...d.boxes.entries()][0]!;
@@ -331,6 +368,15 @@ export function Canvas() {
     if (!d) return;
     if (d.moved && d.last.length) mutate(d.last);
     else cancelPreview();
+    if (!d.moved && d.drill && slide) {
+      // Second click on a group member (PowerPoint): the group is entered, the member picked.
+      const st = useEditor.getState();
+      const unit = groupUnit(byId.get(d.drill)?.element.group, st.groupScope);
+      if (unit) {
+        set({ groupScope: unit });
+        select(slide.id, [d.drill]);
+      }
+    }
   };
 
   /**
@@ -397,6 +443,12 @@ export function Canvas() {
       const ids = st.selected;
       if (e.key === 'Escape') {
         if (st.connectFrom !== null) return void set({ connectFrom: null });
+        // Inside a group, Escape steps out: the group itself is selected.
+        if (st.groupScope) {
+          const up = st.groupScope;
+          set({ groupScope: parentGroup(up) });
+          return void select(sl.id, sl.elements.filter((x) => inGroup(x.group, up)).map((x) => x.id));
+        }
         return void select(sl.id, []);
       }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
@@ -423,7 +475,7 @@ export function Canvas() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'g') {
         // Ctrl+G groups the selection, Ctrl+Shift+G ungroups it.
         e.preventDefault();
-        if (e.shiftKey || ids.length > 1) mutate(groupMutations(sl, ids, !e.shiftKey));
+        if (e.shiftKey || ids.length > 1) mutate(groupMutations(sl, ids, !e.shiftKey, st.groupScope));
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
         const { ms, ids: newIds } = duplicateMutations(sl, ids.map((id) => byId.get(id)).filter((r): r is ResolvedElement => !!r));
@@ -480,6 +532,30 @@ export function Canvas() {
   const handleSize = 8 / zoom;
   const stroke = 1.5 / zoom;
 
+  /** Selection that is exactly one group (inside the entered group): drawn as one frame. */
+  const groupFrame = (() => {
+    if (selection.length < 2) return null;
+    const units = selection.map((r) => groupUnit(r.element.group, groupScope));
+    if (!units[0] || !units.every((u) => u === units[0])) return null;
+    return unionBox(selection.map((r) => r.box));
+  })();
+  const handles = () =>
+    HANDLES.map((h) => {
+      const left = h.includes('w') ? 0 : h.includes('e') ? 100 : 50;
+      const top = h.includes('n') ? 0 : h.includes('s') ? 100 : 50;
+      return (
+        <div
+          key={h}
+          data-handle={h}
+          role="presentation"
+          onPointerDown={(e) => startDrag(e, 'resize', h)}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          style={{ position: 'absolute', left: `${left}%`, top: `${top}%`, width: handleSize, height: handleSize, marginLeft: -handleSize / 2, marginTop: -handleSize / 2, background: '#fff', border: `${stroke}px solid var(--accent)`, borderRadius: 2 / zoom, pointerEvents: 'auto', cursor: `${h}-resize` }}
+        />
+      );
+    });
+
   const overlay = (
     <div className="overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
       {showGrid && (
@@ -494,6 +570,11 @@ export function Canvas() {
       )}
       {masterEdit && masterText === null && <MasterSelection zoom={zoom} />}
       {masterEdit && masterText !== null && <MasterTextEditor key={`${slide.id}:${masterText}`} index={masterText} onDone={() => setMasterText(null)} />}
+      {!masterEdit && groupFrame && (
+        <div className="group-frame" data-testid="group-frame" style={{ position: 'absolute', left: groupFrame.x * PPI, top: groupFrame.y * PPI, width: Math.max(groupFrame.w * PPI, 1), height: Math.max(groupFrame.h * PPI, 1), outline: `${stroke}px solid var(--accent)` }}>
+          {!readOnly && handles()}
+        </div>
+      )}
       {!masterEdit && selection.map((r) => {
         const fit = (r.element.type === 'text' || r.element.type === 'shape') && r.element.paragraphs?.length ? estimateFit(r, r.element.paragraphs) : null;
         const style: CSSProperties = {
@@ -502,7 +583,8 @@ export function Canvas() {
           top: r.box.y * PPI,
           width: Math.max(r.box.w * PPI, 1),
           height: Math.max(r.box.h * PPI, 1),
-          outline: `${stroke}px solid var(--accent)`,
+          // Members of a selected group: a faint outline, the group frame carries the handles.
+          outline: groupFrame ? `${stroke}px dashed color-mix(in srgb, var(--accent) 45%, transparent)` : `${stroke}px solid var(--accent)`,
           transform: r.element.rotation ? `rotate(${r.element.rotation}deg)` : undefined,
         };
         const single = selection.length === 1 && !r.element.locked && editingId !== r.element.id && r.element.type !== 'connector';
@@ -526,39 +608,11 @@ export function Canvas() {
         }
         return (
           <div key={r.element.id} style={style} data-selection={r.element.id}>
-            {single &&
-              HANDLES.map((h) => {
-                const left = h.includes('w') ? 0 : h.includes('e') ? 100 : 50;
-                const top = h.includes('n') ? 0 : h.includes('s') ? 100 : 50;
-                return (
-                  <div
-                    key={h}
-                    data-handle={h}
-                    role="presentation"
-                    onPointerDown={(e) => startDrag(e, 'resize', h)}
-                    onPointerMove={onPointerMove}
-                    onPointerUp={onPointerUp}
-                    style={{
-                      position: 'absolute',
-                      left: `${left}%`,
-                      top: `${top}%`,
-                      width: handleSize,
-                      height: handleSize,
-                      marginLeft: -handleSize / 2,
-                      marginTop: -handleSize / 2,
-                      background: '#fff',
-                      border: `${stroke}px solid var(--accent)`,
-                      borderRadius: 2 / zoom,
-                      pointerEvents: 'auto',
-                      cursor: `${h}-resize`,
-                    }}
-                  />
-                );
-              })}
+            {single && handles()}
             {single && <AdjustHandles r={r} zoom={zoom} />}
             {single && !readOnly && r.element.type === 'table' && <TableGridHandles r={r} slideId={slide.id} />}
             {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>{tr('verrouillé', 'locked')}</span>}
-            {fit?.overflows && (
+            {fit?.overflows && showWarnings && (
               <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title={tr("Estimation : le texte risque de déborder dans PowerPoint", "Estimate: the text may overflow in PowerPoint")}>
                 {tr('débordement probable', 'likely overflow')}
               </span>
@@ -578,33 +632,6 @@ export function Canvas() {
               <span key={`${fx}-${fy}`} className="anchor-dot" style={{ left: `${fx * 100}%`, top: `${fy * 100}%`, width: handleSize * 0.8, height: handleSize * 0.8 }} />
             ))}
           </div>
-        );
-      })()}
-      {!masterEdit && !design && !readOnly && sourceKind === 'markdown' && connectFrom === null && (() => {
-        const r = [hoverId, selected.length === 1 ? selected[0] : null].map((id) => (id ? byId.get(id) : undefined)).find((x) => x?.element.type === 'text' && x.element.placeholder && editingId !== x.element.id && (x.element.shared || x.element.paragraphs.length));
-        if (r?.element.type !== 'text') return null;
-        const shared = !!r.element.shared;
-        const key = r.element.placeholder!;
-        const label = shared
-          ? tr(`Valeur partagée par les diapositives ayant l’espace réservé « ${key} » — cliquer pour une valeur propre à cette diapositive`, `Value shared by the slides with placeholder “${key}” — click for a value specific to this slide`)
-          : tr(`Partager cette valeur sur toutes les diapositives ayant l’espace réservé « ${key} »`, `Share this value on all slides with placeholder “${key}”`);
-        return (
-          <button
-            type="button"
-            className={`share-toggle${shared ? ' is-shared' : ''}`}
-            data-testid="share-toggle"
-            aria-pressed={shared}
-            aria-label={label}
-            title={label}
-            style={{ left: (r.box.x + r.box.w) * PPI - 4 / zoom, top: r.box.y * PPI + 4 / zoom, transform: `translateX(-100%) scale(${1 / zoom})` }}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              mutate([{ kind: 'shareText', slideId: slide.id, elementId: r.element.id, shared: !shared }]);
-            }}
-          >
-            <Icon name="link" size={14} />
-          </button>
         );
       })()}
       {showDiff && <DiffMarks slideId={slide.id} byId={byId} diff={diff} zoom={zoom} />}
@@ -673,7 +700,7 @@ export function Canvas() {
           onPointerUp={onPointerUp}
           onPointerOver={(e) => {
             const t = e.target as HTMLElement;
-            if (!t.closest('.share-toggle')) setHoverId(t.closest<HTMLElement>('[data-element-id]')?.dataset.elementId ?? null);
+            setHoverId(t.closest<HTMLElement>('[data-element-id]')?.dataset.elementId ?? null);
           }}
           onPointerLeave={() => setHoverId(null)}
           onPointerDownCapture={(e) => {
@@ -778,7 +805,7 @@ export function Canvas() {
 
 /* ------------------------------ inline text editing ------------------------------ */
 
-type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string; size?: number; caps?: TextRun['caps'] };
+type Marks = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string; size?: number; caps?: TextRun['caps']; font?: string; extra?: Partial<TextRun> };
 
 /** Paragraph DOM of the editor → canonical paragraphs (runs keep bold/italic/underline/color). */
 function readParagraphs(root: HTMLElement): Paragraph[] {
@@ -790,6 +817,8 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
       if (data?.list === 'bullet' || data?.list === 'number') p.list = data.list;
       if (data?.level && Number(data.level)) p.level = Number(data.level);
       if (first && data?.heading) p.heading = Number(data.heading);
+      // Paragraph formats the editor does not change (alignment, spacing) ride on the line.
+      if (data?.para) Object.assign(p, JSON.parse(data.para));
       return p;
     };
     let cur = base(true);
@@ -812,6 +841,8 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         if (m.color) run.color = m.color as TextRun['color'];
         if (m.size) run.size = m.size;
         if (m.caps) run.caps = m.caps;
+        Object.assign(run, m.extra);
+        if (m.font) run.font = m.font;
         cur.runs.push(run);
         return;
       }
@@ -829,6 +860,8 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
         color: n.dataset.color ?? m.color,
         size: n.dataset.size ? Number(n.dataset.size) : m.size,
         caps: (n.dataset.caps as TextRun['caps']) ?? m.caps,
+        font: n.dataset.font ?? m.font,
+        extra: n.dataset.run ? { ...m.extra, ...JSON.parse(n.dataset.run) } : m.extra,
       };
       // Chrome splits paragraphs with nested <div>s when Enter is pressed inside a block.
       const nested = n !== block && (n.tagName === 'DIV' || n.tagName === 'P');
@@ -848,6 +881,21 @@ function readParagraphs(root: HTMLElement): Paragraph[] {
   return out.length ? out : [{ runs: [] }];
 }
 
+/** Run formats kept as they are while editing. */
+export function runExtra(run: TextRun): Partial<TextRun> | null {
+  const e: Partial<TextRun> = {};
+  if (run.strike) e.strike = true;
+  if (run.highlight) e.highlight = run.highlight;
+  if (run.baseline) e.baseline = run.baseline;
+  return Object.keys(e).length ? e : null;
+}
+const runExtraCss = (e: Partial<TextRun>, hex: (token: string) => string | null): CSSProperties => ({
+  textDecoration: e.strike ? 'line-through' : undefined,
+  background: e.highlight && hex(e.highlight) ? `#${hex(e.highlight)}` : undefined,
+  verticalAlign: e.baseline,
+  fontSize: e.baseline ? '0.66em' : undefined,
+});
+
 export function RunView({ run, hex }: { run: TextRun; hex: (token: string) => string | null }) {
   let node: ReactNode = run.text;
   if (run.underline) node = <u>{node}</u>;
@@ -855,6 +903,10 @@ export function RunView({ run, hex }: { run: TextRun; hex: (token: string) => st
   if (run.bold) node = <b>{node}</b>;
   if (run.size) node = <span data-size={run.size} style={{ fontSize: (run.size / 72) * PPI }}>{node}</span>;
   if (run.caps) node = <span data-caps={run.caps} style={capsCss(run.caps)}>{node}</span>;
+  if (run.font) node = <span data-font={run.font} style={{ fontFamily: fontCss(run.font) }}>{node}</span>;
+  // Formats without an editor command (font, strike, highlight, super / subscript) ride on a span.
+  const extra = runExtra(run);
+  if (extra) node = <span data-run={JSON.stringify(extra)} style={runExtraCss(extra, hex)}>{node}</span>;
   return run.color ? <span data-color={run.color} style={{ color: hex(run.color) ? `#${hex(run.color)}` : undefined }}>{node}</span> : <>{node}</>;
 }
 
@@ -863,9 +915,35 @@ export function RunView({ run, hex }: { run: TextRun; hex: (token: string) => st
  * Apply size / color to the selected text (wrapping each selected piece of each line in a span), or
  * strip every mark. Bold / italic / underline go through the native commands, which toggle.
  */
+/** CSS family of a font value (`theme.heading` / `theme.body` resolve through the master). */
+export function fontCss(font: string): string {
+  const m = useEditor.getState().master;
+  const f = font === 'theme.heading' ? m?.theme.fonts.heading : font === 'theme.body' ? m?.theme.fonts.body : font;
+  return `"${f}", Arial, sans-serif`;
+}
+
+/** A caret inside a word selects the word (PowerPoint formats the word under the caret). */
+function wordAtCaret(root: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel?.rangeCount || !sel.isCollapsed) return !!sel?.rangeCount;
+  const n = sel.anchorNode;
+  if (!n || n.nodeType !== Node.TEXT_NODE || !root.contains(n)) return false;
+  const t = n.textContent ?? '';
+  let a = sel.anchorOffset, b = a;
+  while (a > 0 && /[\p{L}\p{N}_'-]/u.test(t[a - 1]!)) a--;
+  while (b < t.length && /[\p{L}\p{N}_'-]/u.test(t[b]!)) b++;
+  if (a === b) return false;
+  const r = document.createRange();
+  r.setStart(n, a);
+  r.setEnd(n, b);
+  sel.removeAllRanges();
+  sel.addRange(r);
+  return true;
+}
+
 export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: string) => string | null): boolean {
   const sel = window.getSelection();
-  if (!sel?.rangeCount || sel.isCollapsed) return false;
+  if (!sel?.rangeCount || !wordAtCaret(root) || sel.isCollapsed) return false;
   const range = sel.getRangeAt(0);
   if (!root.contains(range.commonAncestorContainer)) return false;
   if (f !== 'clear' && (f.bold !== undefined || f.italic !== undefined || f.underline !== undefined)) {
@@ -885,8 +963,8 @@ export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: st
     let node: Node;
     if (f === 'clear') node = document.createTextNode(frag.textContent ?? '');
     else {
-      const key = f.size !== undefined ? 'size' : f.caps !== undefined ? 'caps' : 'color';
-      const value = key === 'size' ? f.size : key === 'caps' ? f.caps : f.color;
+      const key = f.size !== undefined ? 'size' : f.caps !== undefined ? 'caps' : f.font !== undefined ? 'font' : 'color';
+      const value = key === 'size' ? f.size : key === 'caps' ? f.caps : key === 'font' ? f.font : f.color;
       // The new value replaces the same mark inside the selection; null only removes it.
       frag.querySelectorAll<HTMLElement>(`[data-${key}]`).forEach((el) => el.replaceWith(...el.childNodes));
       const span = document.createElement('span');
@@ -894,6 +972,7 @@ export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: st
         span.dataset[key] = String(value);
         if (key === 'size') span.style.fontSize = `${(Number(value) / 72) * PPI}px`;
         else if (key === 'caps') Object.assign(span.style, capsCss(String(value)));
+        else if (key === 'font') span.style.fontFamily = fontCss(String(value));
         else if (hex(String(value))) span.style.color = `#${hex(String(value))}`;
       }
       span.append(frag);
@@ -910,6 +989,13 @@ export function formatSelection(root: HTMLElement, f: RunFormat, hex: (token: st
     sel.addRange(nr);
   }
   return true;
+}
+
+/** Paragraph formats kept on the editor line (JSON), undefined when none. */
+function paraExtra(p: Paragraph): string | undefined {
+  const { align, spaceBefore, spaceAfter, lineSpacing } = p;
+  const e = Object.fromEntries(Object.entries({ align, spaceBefore, spaceAfter, lineSpacing }).filter(([, v]) => v !== undefined));
+  return Object.keys(e).length ? JSON.stringify(e) : undefined;
 }
 
 function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph[] | null) => void }) {
@@ -1021,7 +1107,7 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
   const counters: number[] = [];
   const lineStyle = (p: Paragraph): CSSProperties => {
     const look = paragraphLook(r, p);
-    return { paddingLeft: look.indent * PPI, fontSize: (look.fontSize / 72) * PPI, color: `#${look.color}`, fontWeight: look.bold ? 700 : 400, minHeight: '1.2em', position: 'relative' };
+    return { paddingLeft: look.indent * PPI, fontSize: (look.fontSize / 72) * PPI, color: `#${look.color}`, fontWeight: look.bold ? 700 : 400, minHeight: '1.2em', position: 'relative', textAlign: p.align, marginTop: p.spaceBefore ? (p.spaceBefore / 72) * PPI : undefined, marginBottom: p.spaceAfter ? (p.spaceAfter / 72) * PPI : undefined, lineHeight: p.lineSpacing ? 1.2 * p.lineSpacing : undefined };
   };
   const marker = (p: Paragraph): string | undefined => {
     const level = p.level ?? 0;
@@ -1091,7 +1177,7 @@ function InlineEditor({ r, onDone }: { r: ResolvedElement; onDone: (p: Paragraph
       onDoubleClick={(e) => e.stopPropagation()}
     >
       {paras.map((p, i) => (
-        <div key={i} data-line="" data-list={p.list} data-level={p.level} data-heading={p.heading} data-marker={marker(p)} style={lineStyle(p)}>
+        <div key={i} data-line="" data-list={p.list} data-level={p.level} data-heading={p.heading} data-para={paraExtra(p)} data-marker={marker(p)} style={lineStyle(p)}>
           {p.runs.length ? p.runs.map((run, k) => <RunView key={k} run={run} hex={hex} />) : <br />}
         </div>
       ))}

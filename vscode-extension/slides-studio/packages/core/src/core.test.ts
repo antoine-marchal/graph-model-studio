@@ -165,9 +165,62 @@ describe('master editing', async () => {
 });
 
 describe('caps', () => {
-  it('keeps caps runs out of plain content and apart when merging', async () => {
+  it('writes caps runs as spans and keeps them apart when merging', async () => {
     const { isPlainRepresentable, mergeRuns } = await import('./text.js');
-    expect(isPlainRepresentable([{ runs: [{ text: 'a', caps: 'small' }] }])).toBe(false);
+    expect(isPlainRepresentable([{ runs: [{ text: 'a', caps: 'small' }] }])).toBe(true);
+    expect(isPlainRepresentable([{ runs: [{ text: 'a' }], align: 'center' }])).toBe(false);
     expect(mergeRuns([{ text: 'a', caps: 'all' }, { text: 'b' }])).toHaveLength(2);
+  });
+});
+
+describe('spans and blocks', () => {
+  it('round-trips every run format as `[text]{attrs}` spans', () => {
+    const runs = [
+      { text: 'Red', color: '#E50019' },
+      { text: ' ' },
+      { text: 'big', size: 28, bold: true },
+      { text: ' ' },
+      { text: 'Segoe', font: 'Segoe UI', underline: true, strike: true },
+      { text: 'x2', baseline: 'super' as const, highlight: 'theme.accent2' },
+    ];
+    const src = formatInline(runs);
+    expect(src).toBe('[Red]{color=#E50019} [**big**]{size=28} [Segoe]{font="Segoe UI" underline strike}[x2]{highlight=theme.accent2 super}');
+    expect(parseInline(src)).toEqual(runs);
+    // Escaped brackets stay text; a bracket without attributes too.
+    expect(parseInline('\\[a\\]{b} [c]')).toEqual([{ text: '[a]{b} [c]' }]);
+  });
+  it('groups paragraphs sharing a format in a `::: {attrs}` block', () => {
+    const md = paragraphsToMarkdown([
+      { runs: [{ text: 'Intro' }] },
+      { runs: [{ text: 'A', color: 'theme.accent2' }, { text: 'b', color: 'theme.accent2', bold: true }], align: 'center' },
+      { runs: [{ text: 'C', color: 'theme.accent2' }], align: 'center', spaceAfter: 6 },
+    ]);
+    expect(md).toBe('Intro\n\n::: {align=center color=theme.accent2}\nA**b**\n:::\n\n::: {align=center after=6 color=theme.accent2}\nC\n:::');
+  });
+});
+
+describe('layers', () => {
+  it('builds nested group folders and moves layers between them', async () => {
+    const { frontToBack, layerTree, moveLayer, groupUnit } = await import('./groups.js');
+    const els = [
+      { id: 'bg' },
+      { id: 'a1', group: 'cards/left' },
+      { id: 'a2', group: 'cards/left' },
+      { id: 'b1', group: 'cards' },
+      { id: 'title' },
+    ];
+    const tree = layerTree(frontToBack(els));
+    expect(tree.map((n) => (n.kind === 'element' ? n.el.id : n.path))).toEqual(['title', 'cards', 'bg']);
+    expect(groupUnit('cards/left', null)).toBe('cards');
+    expect(groupUnit('cards/left', 'cards')).toBe('cards/left');
+    expect(groupUnit('cards', 'cards')).toBeNull();
+    // Title into the inner group, on top; the left group out of cards, behind everything.
+    const m1 = moveLayer(tree, 'e:title', 'g:cards/left', 'inside')!;
+    expect(m1.order).toEqual(['b1', 'title', 'a2', 'a1', 'bg']);
+    expect(m1.groups.get('title')).toBe('cards/left');
+    const m2 = moveLayer(tree, 'g:cards/left', 'e:bg', 'after')!;
+    expect(m2.order).toEqual(['title', 'b1', 'bg', 'a2', 'a1']);
+    expect(m2.groups.get('a1')).toBe('left');
+    expect(moveLayer(tree, 'g:cards', 'g:cards/left', 'inside')).toBeNull();
   });
 });

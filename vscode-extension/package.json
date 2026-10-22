@@ -879,6 +879,11 @@
             "default": true,
             "description": "%s200.deck.thumbnail%"
           },
+          "corporateSlides.foldFrontmatter": {
+            "type": "boolean",
+            "default": true,
+            "description": "%s201.deck.foldFrontmatter%"
+          },
           "corporateSlides.exportFolder": {
             "type": "string",
             "default": "out",

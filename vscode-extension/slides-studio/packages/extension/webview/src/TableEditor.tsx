@@ -42,7 +42,7 @@ const fmt = (n: number) => fmtNumber(n);
 /** Cell look plus, while editing, its formatted text runs (split into `cellStyles` / `cellRuns` on commit). */
 type Cell = (CellStyle & { runs?: TextRun[] }) | null;
 const plain = (runs: TextRun[]) => runs.map((r) => r.text).join('');
-const marked = (runs: TextRun[]) => runs.some((r) => r.bold || r.italic || r.underline || r.color || r.size || r.caps);
+const marked = (runs: TextRun[]) => runs.some((r) => Object.keys(r).length > 1);
 
 /** Runs of a contentEditable cell: bold / italic / underline tags, `data-color`, `data-size` spans. */
 function cellRuns(td: HTMLElement): TextRun[] {
@@ -64,6 +64,8 @@ function cellRuns(td: HTMLElement): TextRun[] {
     if (n.dataset.color) next.color = n.dataset.color as TextRun['color'];
     if (n.dataset.size) next.size = Number(n.dataset.size);
     if (n.dataset.caps) next.caps = n.dataset.caps as TextRun['caps'];
+    if (n.dataset.font) next.font = n.dataset.font;
+    if (n.dataset.run) Object.assign(next, JSON.parse(n.dataset.run));
     n.childNodes.forEach((c) => walk(c, next));
   };
   td.childNodes.forEach((c) => walk(c, {}));
@@ -192,6 +194,8 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
     const next = read();
     const patch: ElementPatch = {};
     if (JSON.stringify(next) !== JSON.stringify(el.rows)) patch.rows = next;
+    // Merged cells follow the grid they were made on: rows or columns added / removed unmerge them.
+    if (el.merges && (next.length !== el.rows.length || (next[0]?.length ?? 0) !== width)) patch.merges = null;
     const ca = s.colAlign.slice(0, next[0]?.length ?? 0);
     if (JSON.stringify(ca) !== JSON.stringify(Array.from({ length: ca.length }, (_, i) => el.colAlign?.[i] ?? null))) patch.colAlign = ca;
     if (s.valign !== (el.style?.valign ?? 'middle')) patch.style = { valign: s.valign === 'middle' ? null : s.valign };
@@ -568,7 +572,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
         </colgroup>
         <tbody>
           {rows.map((row, ri) => (
-            <tr key={ri} style={{ height: `${(rowH[ri] ?? 0) * 100}%` }}>
+            <tr key={ri} style={{ height: (rowH[ri] ?? 0) * r.box.h * PPI }}>
               {row.map((v, ci) => {
                 const style: CSSProperties = { ...tableCellStyle(el, ri, ci, master, { header, headerColumn, valign, align: colAlign[ci] ?? null, cell: cells[ri]?.[ci] ?? null }), outline: 'none' };
                 return (

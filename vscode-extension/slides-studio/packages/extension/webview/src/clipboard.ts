@@ -87,7 +87,9 @@ function pasteElements(elements: SlideElement[], fromSlide: string, clip?: Clip)
   const taken = slide.elements.map((e) => e.id);
   const remap = new Map<string, string>();
   for (const e of elements) {
-    const id = uniqueId(e.type, [...taken, ...remap.values()]);
+    // Ids keep their meaning (PowerPoint names, copied ids) when free on this slide.
+    const used = [...taken, ...remap.values()];
+    const id = used.includes(e.id) ? uniqueId(e.id.replace(/-\d+$/, '') || e.type, used) : e.id;
     remap.set(e.id, id);
   }
   // Same slide: each paste steps down-right so copies do not stack invisibly. Another slide: exact source position.
@@ -227,6 +229,7 @@ function handOverToHost(html: string, text: string, image: Blob | null) {
   const slide = currentSlide(useEditor.getState());
   if (!slide) return;
   pendingPowerPoint = { html, text, image };
+  useEditor.getState().notify('info', tr('Conversion des formes PowerPoint…', 'Converting PowerPoint shapes…'));
   post({ type: 'pastePowerPoint', slideId: slide.id });
 }
 
@@ -247,6 +250,9 @@ function pasteData(data: DataTransfer) {
   const rows = tsvRows(text);
   if (rows) return pasteTable(rows);
   const image = [...data.items].find((i) => i.kind === 'file' && i.type.startsWith('image/'))?.getAsFile();
+  // PowerPoint shapes and groups come without HTML (drawing + pictures only): the host checks for its
+  // drawing and falls back to the picture.
+  if (image && !html) return handOverToHost('', text, image);
   if (image) return pasteImage(image);
   pasteText(text);
 }
@@ -272,7 +278,7 @@ export async function pasteFromRibbon() {
     }
     for (const item of items) {
       const img = item.types.find((t) => t.startsWith('image/'));
-      if (img) return pasteImage(await item.getType(img));
+      if (img) return item.types.includes('text/html') ? pasteImage(await item.getType(img)) : handOverToHost('', '', await item.getType(img));
     }
     const text = await navigator.clipboard.readText();
     pasteHostText(text);

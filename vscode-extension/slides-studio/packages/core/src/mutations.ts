@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { AnchorPoint, CellStyle, ColAlign, TextRun, ConnectorSide, ElementStyle, Id, MasterOverride, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
+import { AnchorPoint, CellStyle, Geometry, GroupPath, PresetName, ColAlign, TextRun, ConnectorSide, ElementStyle, Id, MasterOverride, Paragraph, ShapeKind, SlideElement, type SlideDocument, type SlideNode } from './schema.js';
 import { round4 } from './units.js';
 import { tr } from './i18n.js';
 
@@ -21,9 +21,12 @@ export const ElementPatch = z
     paragraphs: z.array(Paragraph).optional(),
     placeholder: z.string().nullable().optional(),
     locked: z.boolean().optional(),
+    /** Stacking order (layers panel); `null` back to document order. */
+    z: z.number().int().min(0).max(10_000).nullable().optional(),
+    name: z.string().max(120).nullable().optional(),
     hidden: z.boolean().optional(),
     /** `null` takes the element out of its group. */
-    group: Id.nullable().optional(),
+    group: GroupPath.nullable().optional(),
     src: z.string().optional(),
     fit: z.enum(['stretch', 'contain', 'cover']).optional(),
     rows: z.array(z.array(z.string())).optional(),
@@ -35,7 +38,10 @@ export const ElementPatch = z
     /** `null` removes every cell override. */
     cellStyles: z.array(z.array(CellStyle.nullable())).nullable().optional(),
     cellRuns: z.array(z.array(z.array(TextRun).nullable())).nullable().optional(),
-    shape: ShapeKind.optional(),
+    shape: z.union([ShapeKind, PresetName]).optional(),
+    geometry: Geometry.nullable().optional(),
+    crop: z.object({ l: z.number(), t: z.number(), r: z.number(), b: z.number() }).nullable().optional(),
+    merges: z.array(z.object({ r: z.number().int().min(0), c: z.number().int().min(0), rs: z.number().int().min(1), cs: z.number().int().min(1) })).nullable().optional(),
     /** `null` restores the preset's default geometry. */
     adjust: z.record(z.string().regex(/^adj\d?$/), z.number().finite()).nullable().optional(),
     from: Id.optional(),

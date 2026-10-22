@@ -21,6 +21,11 @@ export const Id = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/, tr('identifiant invalide (lettres, chiffres, _ et -, 64 max)', 'invalid identifier (letters, digits, _ and -, 64 max)'));
 
+/** Nested group path: ids joined by `/`, outermost first (8 levels at most). */
+export const GroupPath = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(\/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){0,7}$/, tr('groupe invalide (identifiants séparés par /)', 'invalid group (identifiers separated by /)'));
+
 export const HAlign = z.enum(['left', 'center', 'right', 'justify']);
 export const ColAlign = z.enum(['left', 'center', 'right']);
 export const VAlign = z.enum(['top', 'middle', 'bottom']);
@@ -39,8 +44,34 @@ export const ShapeKind = z.enum([
   'pentagon', 'hexagon', 'octagon', 'star5', 'plus', 'donut', 'can', 'cube',
   'rightArrow', 'leftArrow', 'upArrow', 'downArrow', 'leftRightArrow', 'chevron', 'homePlate',
   'flowChartTerminator', 'flowChartDocument', 'wedgeRectCallout', 'circularArrow', 'line',
+  /** Freeform (`geometry` paths), e.g. a PowerPoint freeform or icon. */
+  'custom',
 ]);
 export type ShapeKind = z.infer<typeof ShapeKind>;
+/**
+ * Any other OOXML preset (`prstGeom`) name, kept from PowerPoint: exported natively (exact), drawn
+ * by the editor with its outline when it has no drawing for it.
+ */
+export const PresetName = z.string().regex(/^[a-z][A-Za-z0-9]{1,40}$/);
+
+/** Freeform geometry: SVG path data (M, L, C, Q, Z) in each path's own `w` × `h` coordinate space, scaled to the box. */
+export const Geometry = z.object({
+  paths: z
+    .array(
+      z.object({
+        w: z.number().positive(),
+        h: z.number().positive(),
+        d: z.string().max(200_000).regex(/^[MLCQZ0-9eE.,\s-]*$/),
+        /** `false`: outline only (OOXML `fill="none"`). */
+        fill: z.boolean().optional(),
+        /** `false`: no outline. */
+        stroke: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(64),
+});
+export type Geometry = z.infer<typeof Geometry>;
 /** Render-only capitalization (OOXML `cap`): small capitals or all capitals; the text keeps its case. */
 export const Caps = z.enum(['none', 'small', 'all']);
 export type Caps = z.infer<typeof Caps>;
@@ -58,6 +89,13 @@ export const TextRun = z.object({
   /** Font size of the run in points (overrides the element / placeholder size). */
   size: z.number().min(4).max(400).optional(),
   caps: Caps.optional(),
+  /** Font family of the run (`theme.heading`, `theme.body` or a family name). */
+  font: FontValue.optional(),
+  strike: z.boolean().optional(),
+  /** Text highlight (background) color. */
+  highlight: ColorValue.optional(),
+  /** Superscript / subscript. */
+  baseline: z.enum(['super', 'sub']).optional(),
 });
 export type TextRun = z.infer<typeof TextRun>;
 
@@ -69,6 +107,13 @@ export const Paragraph = z.object({
   level: z.number().int().min(0).max(4).optional(),
   /** Paragraph comes from a Markdown heading (h2–h6) inside a body: rendered bold. */
   heading: z.number().int().min(2).max(6).optional(),
+  /** Own alignment of the paragraph (overrides the element's). */
+  align: HAlign.optional(),
+  /** Space before / after the paragraph in points. */
+  spaceBefore: z.number().min(0).max(400).optional(),
+  spaceAfter: z.number().min(0).max(400).optional(),
+  /** Line spacing multiple of the paragraph (1 = single). */
+  lineSpacing: z.number().min(0.5).max(4).optional(),
 });
 export type Paragraph = z.infer<typeof Paragraph>;
 
@@ -140,8 +185,11 @@ const ElementBase = {
   locked: z.boolean().optional(),
   hidden: z.boolean().optional(),
   name: z.string().max(120).optional(),
-  /** Group the element belongs to: grouped elements are selected, moved and styled together. */
-  group: Id.optional(),
+  /**
+   * Group the element belongs to, as a path of nested groups (outermost first): `cards/card-1`.
+   * Grouped elements are selected, moved and styled together; PowerPoint gets real groups.
+   */
+  group: GroupPath.optional(),
   style: ElementStyle.optional(),
   source: SourceRef.optional(),
 };
@@ -156,7 +204,8 @@ export const TextElement = z.object({
 export const ShapeElement = z.object({
   ...ElementBase,
   type: z.literal('shape'),
-  shape: ShapeKind,
+  shape: z.union([ShapeKind, PresetName]),
+  geometry: Geometry.optional(),
   paragraphs: z.array(Paragraph).optional(),
   flipH: z.boolean().optional(),
   flipV: z.boolean().optional(),
@@ -178,6 +227,8 @@ export const ImageElement = z.object({
    * `stretch` elsewhere.
    */
   fit: z.enum(['stretch', 'contain', 'cover']).optional(),
+  /** Cropped picture: fractions of the source cut on each side (OOXML `a:srcRect`). */
+  crop: z.object({ l: z.number().min(-1).max(1), t: z.number().min(-1).max(1), r: z.number().min(-1).max(1), b: z.number().min(-1).max(1) }).optional(),
 });
 /** Per-cell overrides of a table: background, border (all four sides) and text. */
 export const CellStyle = z
@@ -221,6 +272,8 @@ export const TableElement = z.object({
   cellStyles: z.array(z.array(CellStyle.nullable())).optional(),
   /** Formatted text of cells (bold, color, size… on part of the text), parallel to `rows`; the plain text stays in `rows`. */
   cellRuns: z.array(z.array(z.array(TextRun).nullable())).optional(),
+  /** Merged cells: top-left cell and the number of rows / columns it spans. */
+  merges: z.array(z.object({ r: z.number().int().min(0), c: z.number().int().min(0), rs: z.number().int().min(1), cs: z.number().int().min(1) })).max(500).optional(),
 });
 
 /**

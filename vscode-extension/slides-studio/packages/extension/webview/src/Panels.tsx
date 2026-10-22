@@ -1,3 +1,4 @@
+import { LayersPanel } from './LayersPanel';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutInspector, PlaceholderSection } from './LayoutDesigner';
@@ -278,6 +279,7 @@ export function Navigator() {
   const slideId = useEditor((s) => s.slideId);
   const ghostSlideId = useEditor((s) => s.ghostSlideId);
   const diagnostics = useEditor((s) => s.diagnostics);
+  const showWarnings = useEditor((s) => s.showWarnings);
   const readOnly = useEditor((s) => s.readOnly);
   const showDiff = useEditor((s) => s.showDiff);
   const assets = useAssets();
@@ -367,9 +369,9 @@ export function Navigator() {
               <div className="slide-meta">
                 {change && <span className={`diff-chip diff-${change === 'added' ? 'add' : 'mod'}`} data-testid={`diff-chip-${s.id}`}>{change === 'added' ? tr('Ajoutée', 'Added') : tr('Modifiée', 'Changed')}</span>}
                 <span className="slide-layout" title={layout?.name ?? s.layout}>{layout?.name ?? `⚠ ${s.layout}`}</span>
-                {issues.length > 0 && (
-                  <span className={`badge ${errors ? 'badge-error' : 'badge-warn'}`} title={issues.map((d) => d.message).join('\n')}>
-                    {issues.length}
+                {(showWarnings ? issues.length : errors) > 0 && (
+                  <span className={`badge ${errors ? 'badge-error' : 'badge-warn'}`} title={issues.filter((d) => showWarnings || d.severity === 'error').map((d) => d.message).join('\n')}>
+                    {showWarnings ? issues.length : errors}
                   </span>
                 )}
               </div>
@@ -599,7 +601,7 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
 
       <ShapeSections r={r} upd={upd} />
 
-      {(el.type === 'text' || el.type === 'image') && layout && !useEditor.getState().design && (
+      {(el.type === 'text' || el.type === 'image' || el.type === 'table') && layout && !useEditor.getState().design && (
         <Section title={tr("Espace réservé", "Placeholder")}>
           <select
             className="select"
@@ -615,7 +617,7 @@ function ElementInspector({ r }: { r: ResolvedElement }) {
             }}
           >
             <option value="">{tr('Libre (non lié)', 'Free (unbound)')}</option>
-            {layout.placeholders.map((p) => (
+            {layout.placeholders.filter((p) => (el.type === 'table') === (p.type === 'tbl')).map((p) => (
               <option key={p.key} value={p.key}>{p.key} — {p.type}</option>
             ))}
             {el.placeholder && !layout.placeholders.some((p) => p.key === el.placeholder) && <option value={el.placeholder}>{el.placeholder} (alias)</option>}
@@ -675,7 +677,8 @@ function SlideInspector() {
   const { mutate } = useEditor.getState();
   if (!slide || !master) return null;
   const layout = findLayout(master, slide.layout);
-  const issues = diagnostics.filter((d) => d.slideId === slide.id);
+  const showWarnings = useEditor((s) => s.showWarnings);
+  const issues = diagnostics.filter((d) => d.slideId === slide.id && (showWarnings || d.severity === 'error'));
   return (
     <>
       <div className="insp-head">
@@ -732,8 +735,25 @@ export function Inspector() {
   if (masterEdit && !design) return <aside className="inspector" aria-label={tr('Masque', 'Master')}><MasterInspector /></aside>;
   const rs = resolveSlide(slide, master);
   const sel = rs.elements.filter((r) => selected.includes(r.element.id));
+  const tabs = (
+    <div className="insp-tabs" role="tablist" aria-label={tr('Panneau', 'Panel')}>
+      {(['format', 'layers'] as const).map((t) => (
+        <button key={t} type="button" role="tab" aria-selected={pane === t} className={`insp-tab${pane === t ? ' is-active' : ''}`} onClick={() => useEditor.getState().set({ pane: t })} data-testid={`pane-${t}`}>
+          <Icon name={t === 'format' ? 'brush' : 'layers'} size={14} /> {t === 'format' ? tr('Format', 'Format') : tr('Calques', 'Layers')}
+        </button>
+      ))}
+    </div>
+  );
+  if (pane === 'layers')
+    return (
+      <aside className="inspector" aria-label={tr('Calques', 'Layers')}>
+        {tabs}
+        <LayersPanel />
+      </aside>
+    );
   return (
     <aside className="inspector" aria-label="Format">
+      {tabs}
       {sel.length === 1 ? <ElementInspector r={sel[0]!} /> : sel.length > 1 ? <MultiInspector rs={sel} /> : design ? <LayoutInspector /> : <SlideInspector />}
     </aside>
   );
@@ -763,6 +783,7 @@ export function StatusBar() {
   const slideId = useEditor((s) => s.slideId);
   const notesOpen = useEditor((s) => s.notesOpen);
   const pane = useEditor((s) => s.pane);
+  const showWarnings = useEditor((s) => s.showWarnings);
   const zoom = useEditor((s) => s.zoom);
   const fitZoom = useEditor((s) => s.fitZoom);
   const { set, setZoom } = useEditor.getState();
@@ -795,6 +816,9 @@ export function StatusBar() {
         ) : (
           tr('Charte respectée', 'Brand rules met')
         )}
+      </button>
+      <button type="button" className={`status-btn${showWarnings ? '' : ' is-active'}`} aria-pressed={!showWarnings} data-testid="toggle-warnings" title={showWarnings ? tr('Masquer les avertissements (badges, débordements, conformité)', 'Hide warnings (badges, overflows, compliance)') : tr('Afficher les avertissements', 'Show warnings')} onClick={() => set({ showWarnings: !showWarnings })}>
+        <Icon name={showWarnings ? 'eye' : 'eyeOff'} size={14} /> {showWarnings ? tr('Avertissements', 'Warnings') : tr('Avertissements masqués', 'Warnings hidden')}
       </button>
       <span className="grow" />
       <button type="button" className={`status-btn${notesOpen ? ' is-active' : ''}`} aria-pressed={notesOpen} onClick={() => set({ notesOpen: !notesOpen })}><Icon name="notes" size={14} /> Notes</button>

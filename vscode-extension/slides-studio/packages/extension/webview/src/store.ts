@@ -4,6 +4,8 @@ import {
   designToLayout,
   DESIGN_SLIDE_ID,
   findLayout,
+  groupUnit,
+  inGroup,
   layoutToDesign,
   type CorporateMaster,
   type LayoutDef,
@@ -88,7 +90,7 @@ export interface EditorState {
   tab: RibbonTab;
   ribbonCollapsed: boolean;
   notesOpen: boolean;
-  pane: 'format' | 'comments';
+  pane: 'format' | 'layers' | 'comments';
   gmcDialog: boolean;
   /** Zoom factor of the "fit" setting, published by the canvas. */
   fitZoom: number;
@@ -109,6 +111,10 @@ export interface EditorState {
   /** Selected layout object (index in the slide's layout objects) in master editing mode. */
   masterSel: number | null;
   design: DesignSession | null;
+  /** Group entered by a second click (PowerPoint style): clicks then pick inside it. */
+  groupScope: string | null;
+  /** Brand-rule warnings shown (thumbnail badges, overflow tags, compliance list, warning notices). */
+  showWarnings: boolean;
 
   setDocument(p: { version: number; fileName: string; sourceKind: 'markdown' | 'dsl'; doc: SlideDocument; master: CorporateMaster | null; assetUrls: Record<string, string>; diagnostics: Diagnostic[]; parseErrors: string[]; readOnly: boolean; review: EditorState['review'] }): void;
   mutate(mutations: Mutation[]): void;
@@ -129,7 +135,7 @@ export interface EditorState {
   enterDesign(layoutId?: string): void;
   exitDesign(): void;
   designUndo(redo?: boolean): void;
-  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter' | 'contextMenu' | 'showHidden' | 'presenting' | 'masterEdit' | 'masterSel'>>): void;
+  set(p: Partial<Pick<EditorState, 'diff' | 'showDiff' | 'showBase' | 'ghostSlideId' | 'reviewData' | 'reviewError' | 'focusThread' | 'tab' | 'ribbonCollapsed' | 'notesOpen' | 'pane' | 'gmcDialog' | 'fitZoom' | 'connectFrom' | 'gmcEdit' | 'painter' | 'contextMenu' | 'showHidden' | 'presenting' | 'masterEdit' | 'masterSel' | 'groupScope' | 'showWarnings'>>): void;
 }
 
 let txCounter = 0;
@@ -179,8 +185,23 @@ export const useEditor = create<EditorState>((set, get) => ({
   masterEdit: null,
   masterSel: null,
   design: null,
+  groupScope: null,
+  showWarnings: (() => {
+    try {
+      return localStorage.getItem('slides.showWarnings') !== '0';
+    } catch {
+      return true;
+    }
+  })(),
 
   set(p) {
+    if (p.showWarnings !== undefined) {
+      try {
+        localStorage.setItem('slides.showWarnings', p.showWarnings ? '1' : '0');
+      } catch {
+        /* per-viewer convenience only */
+      }
+    }
     set(p);
   },
 
@@ -284,16 +305,18 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   select(slideId, ids = [], additive = false) {
-    // Picking one element of a group picks the whole group.
+    // Picking one element of a group picks the whole group (inside an entered group: the next level).
     const els = get().doc?.slides.find((x) => x.id === slideId)?.elements ?? [];
-    const groups = new Set(ids.map((id) => els.find((e) => e.id === id)?.group).filter(Boolean));
-    if (groups.size) ids = [...new Set([...ids, ...els.filter((e) => e.group && groups.has(e.group)).map((e) => e.id)])];
+    let scope = slideId === get().slideId ? get().groupScope : null;
+    if (scope && ids.some((id) => !inGroup(els.find((e) => e.id === id)?.group, scope!))) scope = null;
+    const units = new Set(ids.map((id) => groupUnit(els.find((e) => e.id === id)?.group, scope)).filter((u): u is string => !!u));
+    if (units.size) ids = [...new Set([...ids, ...els.filter((e) => [...units].some((u) => inGroup(e.group, u))).map((e) => e.id)])];
     set((s) => {
-      if (slideId !== s.slideId || s.ghostSlideId) return { slideId, selected: ids, editingId: null, ghostSlideId: null, connectFrom: null, masterSel: null };
-      if (!additive) return { selected: ids, editingId: s.editingId && ids.includes(s.editingId) ? s.editingId : null };
+      if (slideId !== s.slideId || s.ghostSlideId) return { slideId, selected: ids, editingId: null, ghostSlideId: null, connectFrom: null, masterSel: null, groupScope: null };
+      if (!additive) return { selected: ids, editingId: s.editingId && ids.includes(s.editingId) ? s.editingId : null, groupScope: ids.length ? scope : null };
       const sel = new Set(s.selected);
       for (const id of ids) sel.has(id) ? sel.delete(id) : sel.add(id);
-      return { selected: [...sel], editingId: null };
+      return { selected: [...sel], editingId: null, groupScope: scope };
     });
   },
   setEditing(editingId) {
@@ -309,6 +332,7 @@ export const useEditor = create<EditorState>((set, get) => ({
     set((s) => ({ snap: !s.snap }));
   },
   notify(level, message) {
+    if (level === 'warning' && !get().showWarnings) return;
     const id = ++noticeCounter;
     set((s) => ({ notices: [...s.notices.slice(-3), { id, level, message }] }));
     if (level !== 'error') setTimeout(() => get().dismiss(id), 5000);

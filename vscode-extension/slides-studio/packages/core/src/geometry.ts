@@ -109,7 +109,7 @@ export function resolveStyle(el: SlideElement, ph: PlaceholderDef | undefined, m
   const isTitle = ph?.type === 'title';
   const firstLevel = ph?.levels?.[0];
   const isShape = el.type === 'shape';
-  const isLine = (isShape && el.shape === 'line') || el.type === 'connector';
+  const isLine = (isShape && (el.shape === 'line' || /^(bent|curved)Connector[2-5]$/.test(el.shape))) || el.type === 'connector';
   const defaultFill = isShape && !isLine ? 'theme.accent1' : undefined;
   const defaultLine = isLine ? 'theme.dk1' : undefined;
   return {

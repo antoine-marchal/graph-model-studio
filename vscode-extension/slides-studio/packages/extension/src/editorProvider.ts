@@ -6,7 +6,7 @@ import { imageSize } from 'image-size';
 import { DESIGN_SLIDE_ID, duplicateLayout, findLayout, isDiagramSrc, masterAssetSrc, MutationError, newLayout, patchMasterObjects, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
 import { applyMutations, parseSource, presentationKind, type SourceKind } from '@corporate-slides/parser';
 import { findMasterDir, fsValidateOptions, projectRootOf, resolveImage } from '@corporate-slides/cli';
-import { convertClipboardDrawing, loadMaster, slugify } from '@corporate-slides/master-extractor';
+import { convertClipboardDrawing, convertPastedSlide, loadMaster, slugify } from '@corporate-slides/master-extractor';
 import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
@@ -615,8 +615,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'pastePowerPoint': {
           if (readOnly) break;
           const m = await this.getMaster(document.uri);
-          const bytes = m ? await readPowerPointClipboard(join(this.context.globalStorageUri.fsPath, 'clipboard')) : null;
-          const conv = bytes && m ? await convertClipboardDrawing(bytes, m.master).catch((e) => (log.error('PowerPoint paste', e), null)) : null;
+          const clip = m ? await readPowerPointClipboard(join(this.context.globalStorageUri.fsPath, 'clipboard'), m.master.dimensions) : null;
+          // PowerPoint's own slide XML when it could paste it, else its clipboard drawing.
+          const fromSlide = clip?.pptx && m ? await convertPastedSlide(clip.pptx, clip.gvml, m.master).catch((e) => (log.error('PowerPoint paste (slide)', e), null)) : null;
+          const conv = fromSlide?.elements.length ? fromSlide : clip && m ? await convertClipboardDrawing(clip.gvml, m.master).catch((e) => (log.error('PowerPoint paste', e), null)) : null;
           if (!conv?.elements.length) {
             send({ type: 'pasteFallback' });
             break;

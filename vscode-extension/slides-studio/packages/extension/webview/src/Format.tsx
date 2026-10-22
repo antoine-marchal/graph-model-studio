@@ -1,5 +1,8 @@
 import { useState, type ReactNode } from 'react';
 import {
+  groupParts,
+  groupUnit,
+  inGroup,
   round4,
   uniqueId,
   type ArrowHead,
@@ -128,12 +131,37 @@ export function deleteMutations(slide: SlideNode, ids: string[]): Mutation[] {
   return [...gone].map((elementId) => ({ kind: 'deleteElement', slideId: slide.id, elementId }));
 }
 
-/** Group the elements (a new group id), or with `on` false take them out of their group. */
-export function groupMutations(slide: SlideNode, ids: string[], on: boolean): Mutation[] {
-  const group = on ? uniqueId('group', slide.elements.map((e) => e.group ?? '')) : null;
-  return ids
-    .filter((id) => on || slide.elements.find((e) => e.id === id)?.group)
-    .map((elementId) => ({ kind: 'updateElement', slideId: slide.id, elementId, patch: { group } }));
+/** Every group id used on the slide (all nesting levels). */
+const groupIds = (slide: SlideNode) => slide.elements.flatMap((e) => groupParts(e.group));
+
+/**
+ * Group the elements inside the entered group `scope` (nested groups stay nested in the new one), or
+ * with `on` false ungroup them: their outermost group below the scope goes away.
+ */
+export function groupMutations(slide: SlideNode, ids: string[], on: boolean, scope: string | null = null): Mutation[] {
+  const fresh = uniqueId('group', groupIds(slide));
+  const out: Mutation[] = [];
+  for (const elementId of ids) {
+    const el = slide.elements.find((e) => e.id === elementId);
+    if (!el) continue;
+    const parts = groupParts(el.group);
+    const depth = scope && inGroup(el.group, scope) ? groupParts(scope).length : 0;
+    if (on) {
+      const next = [...parts.slice(0, depth), fresh, ...parts.slice(depth)];
+      if (next.length <= 8) out.push({ kind: 'updateElement', slideId: slide.id, elementId, patch: { group: next.join('/') } });
+    } else if (parts.length > depth) {
+      const next = [...parts.slice(0, depth), ...parts.slice(depth + 1)];
+      out.push({ kind: 'updateElement', slideId: slide.id, elementId, patch: { group: next.length ? next.join('/') : null } });
+    }
+  }
+  return out;
+}
+
+/** Whether the selection can be grouped (several units) and ungrouped (some unit is a group), inside `scope`. */
+export function groupState(rs: ResolvedElement[], scope: string | null): { canGroup: boolean; canUngroup: boolean } {
+  const units = rs.map((r) => groupUnit(r.element.group, scope));
+  const single = !!units[0] && units.every((u) => u === units[0]);
+  return { canGroup: rs.length > 1 && !single, canUngroup: units.some(Boolean) };
 }
 
 /** New connector between two elements (straight, arrow at the end). */
@@ -181,14 +209,20 @@ export function alignMutations(slideId: string, rs: ResolvedElement[], mode: Ali
 }
 
 /** Copies of elements offset down-right, with fresh ids (connectors are skipped). */
-/** Copied elements form new groups (a copy never joins the original's group). */
+/** Copied elements form new groups at every level (a copy never joins the original's groups). */
 export function freshGroups(slide: SlideNode): (group: string | undefined) => string | undefined {
-  const taken = slide.elements.map((e) => e.group ?? '');
+  const taken = groupIds(slide);
   const map = new Map<string, string>();
   return (g) => {
     if (!g) return undefined;
-    if (!map.has(g)) map.set(g, uniqueId('group', [...taken, ...map.values()]));
-    return map.get(g);
+    const parts = groupParts(g);
+    return parts
+      .map((_, i) => {
+        const key = parts.slice(0, i + 1).join('/');
+        if (!map.has(key)) map.set(key, uniqueId('group', [...taken, ...map.values()]));
+        return map.get(key)!;
+      })
+      .join('/');
   };
 }
 
@@ -235,7 +269,7 @@ export const inlineEditor: {
 } = { current: null };
 
 /** Text-run marks the ribbon and the text context menu apply to the selection of the inline editor. */
-export type RunFormat = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string | null; size?: number | null; caps?: 'none' | 'small' | 'all' | null } | 'clear';
+export type RunFormat = { bold?: boolean; italic?: boolean; underline?: boolean; color?: string | null; size?: number | null; caps?: 'none' | 'small' | 'all' | null; font?: string | null } | 'clear';
 
 export const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96];
 
@@ -482,7 +516,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
             onPick={(shape) => upd({ shape })}
             trigger={(open) => (
               <button type="button" className="btn shape-pick" onClick={open} data-testid="change-shape">
-                <ShapeIcon shape={el.shape} /> <span className="grow">{SHAPE_LABEL[el.shape] ?? el.shape}</span> <Icon name="chevronDown" size={10} />
+                <ShapeIcon shape={el.shape as ShapeKind} /> <span className="grow">{SHAPE_LABEL[el.shape as ShapeKind] ?? el.shape}</span> <Icon name="chevronDown" size={10} />
               </button>
             )}
           />

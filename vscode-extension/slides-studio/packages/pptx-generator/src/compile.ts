@@ -8,6 +8,7 @@ import {
   imageFit,
   paragraphLook,
   resolveColor,
+  resolveFont,
   resolveSlide,
   tableWeights,
   THEME_SLOTS,
@@ -157,13 +158,22 @@ function textRuns(r: ResolvedElement, paragraphs: Paragraph[], master: Corporate
             : { characterCode: look.bullet.char!.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0'), color: look.bullet.color, indent: look.hanging * 72 };
           options.indentLevel = p.level ?? 0;
         } else options.bullet = false;
-        options.paraSpaceBefore = i === 0 ? 0 : 4;
+        options.paraSpaceBefore = p.spaceBefore ?? (i === 0 ? 0 : 4);
+        if (p.spaceAfter) options.paraSpaceAfter = p.spaceAfter;
+        if (p.align) options.align = p.align;
+        if (p.lineSpacing) options.lineSpacingMultiple = p.lineSpacing;
       }
       options.fontSize = run.size ?? look.fontSize;
       options.color = resolveColor(run.color, master) ?? look.color;
       if (run.bold || look.bold) options.bold = true;
       if (run.italic || r.style.italic) options.italic = true;
       if (run.underline || r.style.underline) options.underline = { style: 'sng' };
+      if (run.strike) options.strike = 'sngStrike';
+      if (run.font) options.fontFace = resolveFont(run.font, master) ?? run.font;
+      const highlight = resolveColor(run.highlight, master);
+      if (highlight) options.highlight = highlight;
+      if (run.baseline === 'super') options.superscript = true;
+      else if (run.baseline === 'sub') options.subscript = true;
       const caps = run.caps ?? r.style.caps;
       if (caps !== 'none') options.caps = caps;
       if (k === runs.length - 1 && i < paragraphs.length - 1) options.breakLine = true;
@@ -171,6 +181,33 @@ function textRuns(r: ResolvedElement, paragraphs: Paragraph[], master: Corporate
     });
   });
   return out;
+}
+
+/** Freeform paths as pptxgenjs-plus `custGeom` options (SVG M / L / C / Q / Z → path points). */
+export function customGeometry(g: NonNullable<Extract<SlideElement, { type: 'shape' }>['geometry']>): Record<string, unknown> {
+  const W = g.paths[0]!.w, H = g.paths[0]!.h;
+  const paths = g.paths.map((p) => {
+    const sx = W / p.w, sy = H / p.h;
+    const pts: Record<string, unknown>[] = [];
+    const tokens = p.d.match(/[MLCQZ]|-?\d*\.?\d+(?:e[-+]?\d+)?/gi) ?? [];
+    let cmd = 'M';
+    for (let i = 0; i < tokens.length; ) {
+      if (/^[MLCQZ]$/i.test(tokens[i]!)) cmd = tokens[i++]!.toUpperCase();
+      const n = (k: number) => Number(tokens[i + k]);
+      if (cmd === 'Z') {
+        pts.push({ close: true });
+        cmd = 'M';
+        continue;
+      }
+      if (cmd === 'M') (pts.push({ x: n(0) * sx, y: n(1) * sy, moveTo: true }), (i += 2), (cmd = 'L'));
+      else if (cmd === 'L') (pts.push({ x: n(0) * sx, y: n(1) * sy }), (i += 2));
+      else if (cmd === 'C') (pts.push({ x: n(4) * sx, y: n(5) * sy, curve: { type: 'cubic', x1: n(0) * sx, y1: n(1) * sy, x2: n(2) * sx, y2: n(3) * sy } }), (i += 6));
+      else if (cmd === 'Q') (pts.push({ x: n(2) * sx, y: n(3) * sy, curve: { type: 'quadratic', x1: n(0) * sx, y1: n(1) * sy } }), (i += 4));
+      else i++;
+    }
+    return pts;
+  });
+  return { paths, pathW: W, pathH: H };
 }
 
 function boxOptions(r: ResolvedElement): Record<string, number | boolean> {
@@ -213,6 +250,74 @@ interface Sink {
   addImage(opts: unknown): void;
   addTable(rows: unknown, opts: unknown): void;
   addConnector(opts: unknown): void;
+  /** Native group (`p:grpSp`), children placed relative to its origin; absent on slide masters. */
+  addGroup?(opts: unknown, build: (g: Sink) => void): void;
+}
+
+/** Drawing order of a slide with its groups: a group is drawn where its first member is. */
+type DrawNode = { r: ResolvedElement } | { group: string; children: DrawNode[] };
+
+/**
+ * Elements (back to front) → tree of nested groups (`group: 'a/b'`). Placeholders and tables cannot
+ * live in a PowerPoint group: they stay at the slide level, in their place.
+ */
+export function drawTree(rs: ResolvedElement[], depth = 0): DrawNode[] {
+  const out: (DrawNode | { group: string; members: ResolvedElement[] })[] = [];
+  const groups = new Map<string, { group: string; members: ResolvedElement[] }>();
+  for (const r of rs) {
+    const parts = r.element.group?.split('/') ?? [];
+    if (parts.length <= depth || r.placeholder || r.element.type === 'table') {
+      out.push({ r });
+      continue;
+    }
+    const key = parts.slice(0, depth + 1).join('/');
+    let g = groups.get(key);
+    if (!g) {
+      g = { group: key, members: [] };
+      groups.set(key, g);
+      out.push(g);
+    }
+    g.members.push(r);
+  }
+  return out.map((n) => ('members' in n ? { group: n.group, children: drawTree(n.members, depth + 1) } : n));
+}
+
+const leaves = (n: DrawNode): ResolvedElement[] => ('r' in n ? [n.r] : n.children.flatMap(leaves));
+
+/** A resolved element moved into a group's coordinates. */
+function shifted(r: ResolvedElement, o: { x: number; y: number }): ResolvedElement {
+  if (!o.x && !o.y) return r;
+  const p = r.path;
+  return { ...r, box: { ...r.box, x: r.box.x - o.x, y: r.box.y - o.y }, ...(p ? { path: { ...p, x1: p.x1 - o.x, y1: p.y1 - o.y, x2: p.x2 - o.x, y2: p.y2 - o.y } } : {}) };
+}
+
+function emitNodes(s: Sink, nodes: DrawNode[], ctx: EmitContext, origin = { x: 0, y: 0 }): void {
+  for (const n of nodes) {
+    if ('r' in n) {
+      emitElement(s, shifted(n.r, origin), ctx);
+      continue;
+    }
+    const rs = leaves(n);
+    if (!s.addGroup || rs.length < 2) {
+      emitNodes(s, n.children, ctx, origin);
+      continue;
+    }
+    const x0 = Math.min(...rs.map((r) => r.box.x)), y0 = Math.min(...rs.map((r) => r.box.y));
+    const x1 = Math.max(...rs.map((r) => r.box.x + r.box.w)), y1 = Math.max(...rs.map((r) => r.box.y + r.box.h));
+    s.addGroup({ x: x0 - origin.x, y: y0 - origin.y, w: Math.max(x1 - x0, 0.01), h: Math.max(y1 - y0, 0.01), objectName: n.group.split('/').pop() }, (g) => emitNodes(g, n.children, ctx, { x: x0, y: y0 }));
+  }
+}
+
+/** pptxgenjs-plus group builder as a sink (no tables in groups: they never get there). */
+function groupSink(g: { addText: Function; addShape: Function; addImage: Function; addConnector: Function; addGroup: Function }): Sink {
+  return {
+    addText: (t, o) => g.addText(t, o),
+    addShape: (t, o) => g.addShape(t, o),
+    addImage: (o) => g.addImage(o),
+    addTable: () => undefined,
+    addConnector: (o) => g.addConnector(o),
+    addGroup: (o, build) => g.addGroup(o, (inner: never) => build(groupSink(inner))),
+  };
 }
 
 interface EmitContext {
@@ -274,9 +379,13 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
         if (el.shape === 'roundRect' || el.shape === 'snip1Rect') (base as Record<string, unknown>).rectRadius = r.style.radius ?? Math.min(r.box.w, r.box.h) / 6;
         // Preset names are the OOXML prstGeom names; `line` is pptxgenjs' straight line.
         if (el.adjust && el.shape !== 'roundRect' && el.shape !== 'snip1Rect') if (slideNo !== undefined) stats.adjustments.push({ slide: slideNo, name: el.id, values: el.adjust });
+        // Freeforms: `a:custGeom` with the same paths (coordinates in the first path's space).
+        const geom = el.shape === 'custom' && el.geometry ? customGeometry(el.geometry) : null;
+        const kind = geom ? 'custGeom' : el.shape;
+        if (geom) Object.assign(base, geom);
         if (el.paragraphs?.length) {
-          s.addText(textRuns(r, el.paragraphs, master) as never, { ...base, ...textBoxOptions(r), shape: el.shape } as never);
-        } else s.addShape(el.shape as never, base as never);
+          s.addText(textRuns(r, el.paragraphs, master) as never, { ...base, ...textBoxOptions(r), shape: kind } as never);
+        } else s.addShape(kind as never, base as never);
         stats.nativeShapes++;
         break;
       }
@@ -296,6 +405,11 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
             const fx = ar > bar ? bar / ar : 1, fy = ar > bar ? 1 : ar / bar;
             place = { ...place, sizing: { type: 'crop', x: ((1 - fx) / 2) * r.box.w, y: ((1 - fy) / 2) * r.box.h, w: fx * r.box.w, h: fy * r.box.h } };
           }
+        }
+        // Cropped picture (pptxgenjs-plus crop: window in frame units, srcRect = window / frame).
+        if (el.crop && !place.sizing) {
+          const c = el.crop;
+          place = { ...place, sizing: { type: 'crop', x: c.l * r.box.w, y: c.t * r.box.h, w: (1 - c.l - c.r) * r.box.w, h: (1 - c.t - c.b) * r.box.h } };
         }
         s.addImage({ ...place, path, ...(el.alt ? { altText: el.alt } : {}), objectName: el.id } as never);
         // Pictures have no outline option in pptxgenjs: the border is an unfilled rectangle on top.
@@ -336,17 +450,21 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
           line === 'none' ? { type: 'none' } : { type: dash && dash !== 'solid' ? 'dash' : 'solid', pt: width ?? 0.5, color: resolveColor(line, master) ?? fallback };
         const grid = resolveColor('theme.dk1.lighter60', master) ?? 'A8A8A8';
         const tableBorder = border(el.style?.line, el.style?.lineWidth, el.style?.dash, grid);
+        const covered = (ri: number, ci: number) => (el.merges ?? []).some((m) => ri >= m.r && ri < m.r + m.rs && ci >= m.c && ci < m.c + m.cs && !(ri === m.r && ci === m.c));
         const rows = el.rows.map((row, ri) =>
-          row.map((text, ci) => {
+          row.flatMap((text, ci) => {
+            // Merged cells: the first carries colspan / rowspan, the covered ones are left out.
+            if (covered(ri, ci)) return [];
+            const merge = el.merges?.find((m) => m.r === ri && m.c === ci);
             const cs = el.cellStyles?.[ri]?.[ci];
             const fill = cs?.fill && cs.fill !== 'none' ? resolveColor(cs.fill, master) : null;
             // Formatted cells: pptxgenjs takes an array of runs as the cell text.
             const runs = el.cellRuns?.[ri]?.[ci];
             const rich = runs && runs.map((x) => x.text).join('') === text
-              ? runs.map((x) => ({ text: x.text, options: { ...(x.bold ? { bold: true } : {}), ...(x.italic ? { italic: true } : {}), ...(x.underline ? { underline: { style: 'sng' } } : {}), ...(x.color ? { color: resolveColor(x.color, master) ?? undefined } : {}), ...(x.size ? { fontSize: x.size } : {}), ...((x.caps ?? cs?.caps ?? el.style?.caps) && (x.caps ?? cs?.caps ?? el.style?.caps) !== 'none' ? { caps: x.caps ?? cs?.caps ?? el.style?.caps } : {}) } }))
+              ? runs.map((x) => ({ text: x.text, options: { ...(x.bold ? { bold: true } : {}), ...(x.italic ? { italic: true } : {}), ...(x.underline ? { underline: { style: 'sng' } } : {}), ...(x.color ? { color: resolveColor(x.color, master) ?? undefined } : {}), ...(x.size ? { fontSize: x.size } : {}), ...(x.strike ? { strike: 'sngStrike' } : {}), ...(x.font ? { fontFace: resolveFont(x.font, master) ?? x.font } : {}), ...(x.highlight && resolveColor(x.highlight, master) ? { highlight: resolveColor(x.highlight, master) } : {}), ...(x.baseline ? { [x.baseline === 'super' ? 'superscript' : 'subscript']: true } : {}),...((x.caps ?? cs?.caps ?? el.style?.caps) && (x.caps ?? cs?.caps ?? el.style?.caps) !== 'none' ? { caps: x.caps ?? cs?.caps ?? el.style?.caps } : {}) } }))
               : null;
             const caps = cs?.caps ?? el.style?.caps;
-            return {
+            return [{
               // Caps live on runs in pptxgenjs: a plain cell with caps becomes a single run.
               text: rich ?? (caps && caps !== 'none' ? [{ text, options: { caps } }] : text),
               options: {
@@ -364,8 +482,10 @@ function emitElement(s: Sink, r: ResolvedElement, { master, opts, stats, where, 
                 ...(cs?.align ? { align: cs.align } : {}),
                 ...(cs?.valign ? { valign: cs.valign } : {}),
                 ...(cs?.line || cs?.lineWidth !== undefined || cs?.dash ? { border: border(cs.line ?? el.style?.line, cs.lineWidth ?? el.style?.lineWidth, cs.dash ?? el.style?.dash, grid) } : {}),
+                ...(merge && merge.cs > 1 ? { colspan: merge.cs } : {}),
+                ...(merge && merge.rs > 1 ? { rowspan: merge.rs } : {}),
               },
-            };
+            }];
           }),
         );
         const cols = Math.max(...el.rows.map((x) => x.length));
@@ -425,7 +545,9 @@ export function buildPresentation(doc: SlideDocument, master: CorporateMaster, o
     stats.slides++;
     if (slide.notes) s.addNotes(slide.notes);
     if (slide.hidden) s.hidden = true;
-    for (const r of rs.elements) if (!r.element.hidden) emitElement(s as unknown as Sink, r, { master, opts, stats, where: slide.id, slideNo: stats.slides, all: rs.elements });
+    const visible = rs.elements.filter((r) => !r.element.hidden);
+    const sink: Sink = { ...(s as unknown as Sink), addText: (t, o) => s.addText(t as never, o as never), addShape: (t, o) => s.addShape(t as never, o as never), addImage: (o) => s.addImage(o as never), addTable: (t, o) => s.addTable(t as never, o as never), addConnector: (o) => (s as unknown as Sink).addConnector(o), addGroup: (o, build) => (s as unknown as { addGroup: Function }).addGroup(o, (g: never) => build(groupSink(g))) };
+    emitNodes(sink, drawTree(visible), { master, opts, stats, where: slide.id, slideNo: stats.slides, all: rs.elements });
   }
   return { pres, stats };
 }

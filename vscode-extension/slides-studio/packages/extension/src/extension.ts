@@ -8,12 +8,14 @@ import { presentationKind, sourceKindOf } from '@corporate-slides/parser';
 import { BlockingDiagnosticsError, exportPptx, reportToMarkdown } from '@corporate-slides/pptx-generator';
 import { findMasterDir, fsValidateOptions, importPresentation, loadMasterFor, newPresentationSource, parseWithMaster, projectRootOf } from '@corporate-slides/cli';
 import { SlidesEditorProvider } from './editorProvider';
+import { registerDeckFolding } from './deckFolding';
 import { MasterBrowserPanel, MasterTreeProvider, workspaceMasterDir } from './masters';
 import { log } from './log';
 import { renderGmc } from './gmc';
 import { renderedImageSrc } from '@corporate-slides/core';
 
 export function activate(context: vscode.ExtensionContext) {
+  registerDeckFolding(context);
   setLocale(vscode.env.language);
   const diagnostics = vscode.languages.createDiagnosticCollection('corporate-slides');
   const tree = new MasterTreeProvider();

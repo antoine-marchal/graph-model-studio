@@ -167,6 +167,47 @@ describe('PPTX export of the example presentations', () => {
     expect(slide1).toContain('FFCD31');
   });
 
+  it('exports nested groups as native groups and rich text formats', async () => {
+    const layout = master.layouts.find((l) => l.placeholders.some((p) => p.type === 'title'))!.id;
+    const dsl = [
+      'slides:',
+      '  - id: a',
+      `    layout: ${layout}`,
+      '    elements:',
+      '      - { id: a1, type: shape, shape: rect, x: 1, y: 1, w: 1, h: 1, group: cards/left }',
+      '      - { id: a2, type: shape, shape: rect, x: 2.5, y: 1, w: 1, h: 1, group: cards/left }',
+      '      - { id: b1, type: shape, shape: ellipse, x: 5, y: 1, w: 1, h: 1, group: cards }',
+      '      - id: t',
+      '        type: text',
+      '        x: 1',
+      '        y: 4',
+      '        w: 6',
+      '        h: 2',
+      '        paragraphs:',
+      '          - { align: center, spaceAfter: 6, runs: [{ text: S, strike: true, font: Courier New, highlight: "#FFFF00" }, { text: "2", baseline: super }] }',
+      '      - { id: love, type: shape, shape: heart, x: 8, y: 1, w: 1, h: 1 }',
+      '      - { id: free, type: shape, shape: custom, x: 9.5, y: 1, w: 1, h: 1, geometry: { paths: [{ w: 100, h: 100, d: "M 0 100 L 50 0 C 60 10 90 40 100 100 Z" }] } }',
+      '      - { id: grid, type: table, x: 8, y: 3, w: 4, h: 2, rows: [[A, ""], ["1", "2"]], merges: [{ r: 0, c: 0, rs: 1, cs: 2 }] }',
+    ].join('\n');
+    const { doc, errors } = parseSource(dsl, 'dsl', { dimensions: master.dimensions });
+    expect(errors).toEqual([]);
+    const output = join(ws, 'groups.pptx');
+    await exportPptx(doc, master, { output, masterDir: masterDir(), sourceDir: ws, force: true });
+    const xml = await (await JSZip.loadAsync(readFileSync(output))).file('ppt/slides/slide1.xml')!.async('string');
+    // cards ⊃ left ⊃ (a1, a2), cards ⊃ b1; children are group-relative.
+    expect(xml).toMatch(/<p:grpSp><p:nvGrpSpPr><p:cNvPr id="\d+" name="cards"[\s\S]*<p:grpSp><p:nvGrpSpPr><p:cNvPr id="\d+" name="left"/);
+    expect(xml.match(/<p:grpSp>/g)).toHaveLength(2);
+    expect(xml).toContain('<a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/>');
+    expect(xml).toContain('algn="ctr"');
+    expect(xml).toContain('strike="sngStrike"');
+    expect(xml).toContain('baseline="30000"');
+    expect(xml).toContain('typeface="Courier New"');
+    expect(xml).toMatch(/<a:highlight><a:srgbClr val="FFFF00"/);
+    expect(xml).toContain('prst="heart"');
+    expect(xml).toMatch(/<a:custGeom>[\s\S]*<a:cubicBezTo>/);
+    expect(xml).toContain('gridSpan="2"');
+  });
+
   it('exports preset shapes, corner radius and glued connectors natively', async () => {
     const layout = master.layouts.find((l) => l.placeholders.some((p) => p.type === 'title'))!.id;
     const dsl = [

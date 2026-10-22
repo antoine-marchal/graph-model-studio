@@ -133,12 +133,24 @@ describe('Markdown parsing', () => {
     expect(text.replace(/# Principes.*\n/, '')).toBe(MD.replace(/# Integration.*\n/, ''));
   });
 
-  it('moves an element to the frontmatter when its runs need colors or sizes (never drops them)', () => {
+  it('keeps colored / sized runs in Markdown as spans, paragraph formats as `:::` blocks', () => {
     const runs = [{ text: 'x', color: 'theme.accent1' as const }, { text: 'y', size: 40 }];
-    const text = applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs }] } }]);
+    const inline = applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs }] } }]);
+    expect(inline).toContain('# [x]{color=theme.accent1}[y]{size=40} {#main-title}');
+    expect((parseSource(inline, 'markdown').doc.slides[1]!.elements.find((e) => e.id === 'main-title') as { paragraphs: unknown[] }).paragraphs).toEqual([{ runs }]);
+    // Slots hold styled paragraphs in nested blocks (the slot fence grows to `::::`).
+    const paras = [{ runs: [{ text: 'Lead', size: 24 }], align: 'center' as const }, { runs: [{ text: 'Plain' }] }];
+    const slot = applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'right', patch: { paragraphs: paras } }]);
+    expect(slot).toContain('::: {align=center size=24}\nLead\n:::\n\nPlain');
+    expect((parseSource(slot, 'markdown').doc.slides[1]!.elements.find((e) => e.id === 'right') as { paragraphs: unknown[] }).paragraphs).toEqual(paras);
+    const added = applyMutations(MD, 'markdown', [{ kind: 'addElement', slideId: 'slide-2', element: { id: 'box', type: 'text', x: 1, y: 1, w: 2, h: 1, paragraphs: paras } }]);
+    expect(added).toContain(':::: box\n::: {align=center size=24}');
+    expect((parseSource(added, 'markdown').doc.slides[1]!.elements.find((e) => e.id === 'box') as { paragraphs: unknown[] }).paragraphs).toEqual(paras);
+    // A title with a paragraph format cannot be a `#` heading: it moves to the frontmatter.
+    const text = applyMutations(MD, 'markdown', [{ kind: 'updateElement', slideId: 'slide-2', elementId: 'main-title', patch: { paragraphs: [{ runs, align: 'center' }] } }]);
     expect(text).not.toContain('{#main-title}');
     const el = parseSource(text, 'markdown').doc.slides.find((s) => s.id === 'slide-2')!.elements.find((e) => e.id === 'main-title')!;
-    expect(el.type === 'text' && el.paragraphs[0]!.runs).toEqual(runs);
+    expect(el.type === 'text' && el.paragraphs[0]).toEqual({ runs, align: 'center' });
     expect(el.placeholder).toBe('title');
   });
 
@@ -189,7 +201,7 @@ describe('DSL', () => {
   });
 
   it('reports schema errors with line numbers', () => {
-    const { errors } = parseDsl('slides:\n  - id: a\n    layout: x\n    elements:\n      - id: e\n        type: shape\n        shape: blob\n');
+    const { errors } = parseDsl('slides:\n  - id: a\n    layout: x\n    elements:\n      - id: e\n        type: shape\n        shape: Not-A-Shape\n');
     expect(errors[0]).toMatch(/ligne 5/);
   });
 
@@ -268,9 +280,10 @@ describe('tables and connectors in sources', () => {
     const t2 = parseMarkdown(edited).doc.slides[0]!.elements.find((e) => e.id === 'kpi')!;
     expect(t2).toMatchObject({ rows: [...rows, ['n', '3']], header: false, headerColumn: true });
     expect(t2.type === 'table' && t2.cellRuns?.[1]?.[0]).toEqual([{ text: 'a|b', bold: true }]);
-    // Colors have no Markdown syntax: the runs stay in the frontmatter, the text in the block.
+    // Colors are spans in the Markdown cell.
     const red = applyMutations(edited, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'kpi', patch: { cellRuns: [[null, null], [[{ text: 'a|b', color: '#FF0000' }], null], [null, null], [null, null]] } }]);
-    expect(red).toMatch(/cellRuns:/);
+    expect(red).not.toMatch(/cellRuns:/);
+    expect(red).toContain('[a\\|b]{color=#FF0000}');
     expect(parseMarkdown(red).doc.slides[0]!.elements.find((e) => e.id === 'kpi')).toMatchObject({ cellRuns: [[null, null], [[{ text: 'a|b', color: '#FF0000' }], null], [null, null], [null, null]] });
   });
   it('binds a `::: tbl {#id}` table block to the table placeholder', () => {
@@ -284,6 +297,16 @@ describe('tables and connectors in sources', () => {
     expect(filled).toContain('::: tbl {#table}\n| Q   | Total |');
     expect(filled).not.toContain('elements:');
     expect(parseMarkdown(filled).doc.slides[0]!.elements.find((e) => e.id === 'table')).toMatchObject({ placeholder: 'tbl', rows: [['Q', 'Total'], ['1', '']] });
+    // Placeholder ↔ free table, cell styles and sizes kept both ways.
+    const styled = applyMutations(src, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'budget', patch: { cellStyles: [[{ fill: '#FF0000' }, null], [null, { bold: true }]], rowHeights: [1, 2] } }]);
+    const freed = applyMutations(styled, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'budget', patch: { placeholder: null, x: 1, y: 2, w: 5, h: 2 } }]);
+    expect(freed).toContain('::: budget\n');
+    const free = parseMarkdown(freed).doc.slides[0]!.elements.find((e) => e.id === 'budget');
+    expect(free).toMatchObject({ type: 'table', x: 1, w: 5, rows: [['A', 'B'], ['1', '2']], rowHeights: [1, 2], cellStyles: [[{ fill: '#FF0000' }, null], [null, { bold: true }]] });
+    expect(free).not.toHaveProperty('placeholder');
+    const bound = applyMutations(freed, 'markdown', [{ kind: 'updateElement', slideId: 's', elementId: 'budget', patch: { placeholder: 'tbl' } }]);
+    expect(bound).toContain('::: tbl {#budget}');
+    expect(parseMarkdown(bound).doc.slides[0]!.elements.find((e) => e.id === 'budget')).toMatchObject({ placeholder: 'tbl', rowHeights: [1, 2], cellStyles: [[{ fill: '#FF0000' }, null], [null, { bold: true }]] });
   });
   it('stores connectors and arrow/bullet styles in the front matter', () => {
     const add: Mutation[] = [

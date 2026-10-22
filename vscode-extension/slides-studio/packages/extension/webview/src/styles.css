@@ -626,3 +626,43 @@ body.is-adjusting, body.is-adjusting * { cursor: grabbing !important; }
 .layout-card-row { display: flex; align-items: center; gap: 2px; min-width: 0; width: 100%; overflow: hidden; }
 .layout-card-row .ibtn { flex: none; width: 24px; height: 24px; }
 .layout-card-row .layout-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Inspector tabs: Format / Layers */
+.insp-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg-panel); z-index: 3; }
+.insp-tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--fg-muted); font: inherit; font-weight: 500; cursor: pointer; transition: color 140ms ease-out, border-color 140ms ease-out; }
+.insp-tab:hover { color: var(--fg); }
+.insp-tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+.insp-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 4px; }
+.insp-tabs + .insp-head { top: 37px; }
+
+/* Layers panel (Photoshop style): front → back, groups as folders */
+.layers { display: flex; flex-direction: column; min-height: 0; }
+.layers-bar { display: flex; align-items: center; gap: 4px; height: 36px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--line); }
+.layers-count { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.layers-scope { display: inline-flex; align-items: center; gap: 4px; max-width: 120px; height: 22px; padding: 0 8px; border: 0; border-radius: 11px; background: var(--accent-soft); color: var(--accent); font: inherit; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.layers-list { padding: 4px 0; }
+.layer-row { position: relative; display: flex; align-items: center; gap: 4px; height: 30px; padding-right: 6px; cursor: default; user-select: none; outline: none; transition: background 120ms ease-out; }
+.layer-row:hover { background: var(--bg-hover); }
+.layer-row:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.layer-row.is-selected { background: var(--accent-soft); }
+.layer-row.is-selected .layer-name { color: var(--fg); font-weight: 600; }
+.layer-row.is-scope .layer-icon { color: var(--accent); }
+.layer-row.is-hidden .layer-label, .layer-row.is-hidden .layer-icon { opacity: 0.45; }
+.layer-twisty { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; padding: 0; border: 0; background: none; color: var(--fg-muted); cursor: pointer; border-radius: 3px; }
+button.layer-twisty:hover { color: var(--fg); background: var(--bg-raised); }
+.layer-icon { display: inline-grid; place-items: center; width: 18px; flex: none; color: var(--fg-muted); }
+.layer-label { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.15; }
+.layer-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer-sub { font-size: 10.5px; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer-rename { flex: 1; min-width: 0; height: 22px; padding: 0 4px; font-size: 12px; }
+.layer-tools { display: inline-flex; gap: 1px; flex: none; }
+.layer-tool { display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg-muted); cursor: pointer; opacity: 0; transition: opacity 120ms ease-out, background 120ms ease-out; }
+.layer-row:hover .layer-tool, .layer-row:focus-within .layer-tool, .layer-tool.is-on { opacity: 1; }
+.layer-tool.is-on { color: var(--fg); }
+.layer-tool:hover:not(:disabled) { background: var(--bg-raised); color: var(--fg); }
+.layer-tool:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: -1px; }
+.layer-row.drop-before::before, .layer-row.drop-after::after { content: ''; position: absolute; left: 8px; right: 8px; height: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; }
+.layer-row.drop-before::before { top: -1px; }
+.layer-row.drop-after::after { bottom: -1px; }
+.layer-row.drop-inside { box-shadow: inset 0 0 0 2px var(--accent); background: var(--accent-soft); }
+.layers-help { padding: 10px 14px; font-size: 11px; color: var(--fg-muted); }
