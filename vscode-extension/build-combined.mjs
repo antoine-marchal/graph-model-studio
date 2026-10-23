@@ -28,6 +28,7 @@ const required = [
   'integrations/markdown-code-embedder/markdown-paths.js',
   'integrations/markdown-toolkit/extension.js',
   'dist/slides-studio/extension.cjs',
+  'dist/slides-studio/main.cjs',
   'dist/slides-studio/webview/main.js',
   'dist/slides-studio/webview/main.css',
 ]
@@ -51,6 +52,7 @@ for (const relativePath of [
   'integrations/markdown-code-embedder/utils.js',
   'integrations/markdown-toolkit/extension.js',
   'dist/slides-studio/extension.cjs',
+  'dist/slides-studio/main.cjs',
   'dist/markdown-preview/preview.js',
   'dist/rich-editor/extension.js',
 ]) {

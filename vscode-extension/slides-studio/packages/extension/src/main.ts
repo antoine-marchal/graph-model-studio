@@ -16,6 +16,11 @@ import { renderedImageSrc } from '@corporate-slides/core';
 /** PowerPoint generation (pptxgenjs, most of this bundle) is evaluated on first export, not at activation. */
 const generator = () => import('@corporate-slides/pptx-generator');
 
+/**
+ * The whole of Slides Studio, loaded by the activation entry (`extension.ts`) on first use. The
+ * entry owns what VS Code needs at activation (custom editors, tree view, command ids) and
+ * forwards them here: this returns the editor provider and the tree it delegates to.
+ */
 export function activate(context: vscode.ExtensionContext) {
   registerDeckFolding(context);
   setLocale(vscode.env.language);
@@ -168,8 +173,6 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     diagnostics,
-    vscode.window.registerCustomEditorProvider(SlidesEditorProvider.viewType, provider, { webviewOptions: { retainContextWhenHidden: true } }),
-    vscode.window.registerCustomEditorProvider(SlidesEditorProvider.deckViewType, provider, { webviewOptions: { retainContextWhenHidden: true } }),
     vscode.commands.registerCommand('corporateSlides.revealReviewComment', (uri: vscode.Uri, focus: { noteId: number; line: number }) => provider.revealReviewComment(uri, focus)),
     vscode.commands.registerCommand('corporateSlides.toggleEditor', guard(async () => {
       const input = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
@@ -178,7 +181,6 @@ export function activate(context: vscode.ExtensionContext) {
       if (!uri) throw new Error(tr('Aucune présentation active.', 'No active presentation.'));
       await vscode.commands.executeCommand('vscode.openWith', uri, /\.deck$/i.test(uri.path) ? SlidesEditorProvider.deckViewType : SlidesEditorProvider.viewType);
     })),
-    vscode.window.registerTreeDataProvider('corporateSlides.masters', tree),
 
     vscode.commands.registerCommand('corporateSlides.importTemplate', guard(async (arg?: vscode.Uri) => {
       const folder = vscode.workspace.workspaceFolders?.[0];
@@ -264,17 +266,19 @@ export function activate(context: vscode.ExtensionContext) {
       void vscode.window.showInformationMessage(tr(`${r.files.length} diapositive(s) rendue(s) par ${engine}.`, `${r.files.length} slide(s) rendered by ${engine}.`));
     })),
 
-    vscode.workspace.onDidSaveTextDocument((d) => {
-      // A saved diagram source re-renders its PNG when a deck uses it (or a rendering already exists).
-      if (/\.gmc$/i.test(d.fileName) && (provider.referencedDiagrams().has(d.fileName) || existsSync(renderedImageSrc(d.fileName)))) {
-        void renderGmc(d.fileName).then(() => provider.refreshImages(d.fileName), (e) => log.error('gmc render', e));
-      }
-      if (d.fileName.endsWith('corporate-master.json')) {
-        provider.invalidateMasters();
-        void tree.refresh();
-      }
-    }),
+    vscode.workspace.onDidSaveTextDocument((d) => onSave(d)),
   );
+
+  function onSave(d: vscode.TextDocument) {
+    // A saved diagram source re-renders its PNG when a deck uses it (or a rendering already exists).
+    if (/\.gmc$/i.test(d.fileName) && (provider.referencedDiagrams().has(d.fileName) || existsSync(renderedImageSrc(d.fileName)))) {
+      void renderGmc(d.fileName).then(() => provider.refreshImages(d.fileName), (e) => log.error('gmc render', e));
+    }
+    if (d.fileName.endsWith('corporate-master.json')) {
+      provider.invalidateMasters();
+      void tree.refresh();
+    }
+  }
 
   const watcher = vscode.workspace.createFileSystemWatcher('**/.corporate-slides/master/corporate-master.json');
   const onMasterChange = () => {
@@ -290,9 +294,14 @@ export function activate(context: vscode.ExtensionContext) {
   log.info(`Corporate Slides Studio ${tr('activé', 'activated')} (${tr('masque', 'master')} : ${workspaceMasterDir() ?? tr('aucun', 'none')}).`);
   // API used by the integration tests: same code path as webview transactions.
   return {
-    findMasterDir,
-    applyTransaction: async (uri: vscode.Uri, mutations: Mutation[]) =>
-      provider.applyTransaction(await vscode.workspace.openTextDocument(uri), presentationKind(uri.fsPath)!, Mutation.array().parse(mutations)),
+    provider,
+    tree,
+    onSave,
+    api: {
+      findMasterDir,
+      applyTransaction: async (uri: vscode.Uri, mutations: Mutation[]) =>
+        provider.applyTransaction(await vscode.workspace.openTextDocument(uri), presentationKind(uri.fsPath)!, Mutation.array().parse(mutations)),
+    },
   };
 }
 

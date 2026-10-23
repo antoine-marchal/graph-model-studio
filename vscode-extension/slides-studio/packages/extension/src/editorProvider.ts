@@ -13,6 +13,7 @@ import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
 import { loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
+import { minimalEdit, withEol } from '../../../../shared/minimal-edit';
 
 /** Deck thumbnails (`<file>.png`, first slide) are written for local files when enabled. */
 const wantsThumbnail = (uri: vscode.Uri) => uri.scheme === 'file' && vscode.workspace.getConfiguration('corporateSlides').get<boolean>('deckThumbnail', true);
@@ -959,13 +960,10 @@ const round = (n: number) => Math.round(n * 10_000) / 10_000;
 
 /** Replace only the changed span so cursors, folding and undo granularity stay sensible. */
 export async function replaceMinimal(document: vscode.TextDocument, before: string, after: string): Promise<boolean> {
-  if (before === after) return true;
-  let start = 0;
-  while (start < before.length && start < after.length && before[start] === after[start]) start++;
-  let endB = before.length, endA = after.length;
-  while (endB > start && endA > start && before[endB - 1] === after[endA - 1]) (endB--, endA--);
+  const change = minimalEdit(before, withEol(after, document.eol === vscode.EndOfLine.CRLF));
+  if (!change) return true;
   const edit = new vscode.WorkspaceEdit();
-  edit.replace(document.uri, new vscode.Range(document.positionAt(start), document.positionAt(endB)), after.slice(start, endA));
+  edit.replace(document.uri, new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.text);
   return vscode.workspace.applyEdit(edit);
 }
 

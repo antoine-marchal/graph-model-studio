@@ -4,6 +4,7 @@ import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
 import { sendReview } from "./review";
+import { minimalEdit, withEol } from "../../shared/minimal-edit";
 
 const CONFIG_NAMESPACE = "markdownStudio";
 const CURSORS_KEY = "betterMarkdown.cursors";
@@ -605,15 +606,13 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         }
       } else if (msg.type === "edit") {
         if (isReadonly) return;
-        const newContent = msg.content as string;
-        if (newContent === document.getText()) return;
+        // Only the changed span is replaced (cursors, folding and scroll of a source
+        // editor on the same file stay put; one undo step as before).
+        const change = minimalEdit(document.getText(), withEol(msg.content as string, document.eol === vscode.EndOfLine.CRLF));
+        if (!change) return;
         pendingWebviewEdits++;
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(
-          document.uri,
-          new vscode.Range(0, 0, document.lineCount, 0),
-          newContent,
-        );
+        edit.replace(document.uri, new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.text);
         await vscode.workspace.applyEdit(edit);
         if (
           vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>("saveOnEdit", false)
