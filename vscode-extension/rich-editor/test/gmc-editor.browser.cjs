@@ -110,6 +110,15 @@ server.listen(0, async () => {
     await p.locator('.sticky-heading').first().waitFor({ timeout: 2000 });
     assert.deepEqual((await p.evaluate(() => window.__intervals)).filter((ms) => ms >= 500), [], 'heading panels poll');
     await p.close();
+    // Very large code blocks stay uncolored (thousands of token spans make every keystroke slow);
+    // small ones keep their highlighting.
+    content = `# Big\n\n\`\`\`json\n${'{"a": 1},\n'.repeat(3000)}\`\`\`\n\n\`\`\`json\n{"small": true}\n\`\`\`\n\nEnd.\n`;
+    settings = {};
+    const q = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    await q.goto(`http://localhost:${server.address().port}/`);
+    await q.locator('.tiptap-editor pre').nth(1).locator('span').first().waitFor({ timeout: 15_000 });
+    assert.equal(await q.locator('.tiptap-editor pre').first().locator('code span').count(), 0, 'large code block was highlighted');
+    await q.close();
     console.log('gmc editor browser check: ok');
   } catch (e) {
     console.error(e);

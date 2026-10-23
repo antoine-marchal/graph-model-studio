@@ -1,0 +1,28 @@
+diff --git a/lib/index.js b/lib/index.js
+index d2c13c48991b657e27219762d9762df2e9c4a918..5c22bc04689bbfd4e3afc1192009d7ebfc807705 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -82,12 +82,17 @@ export function location(file) {
+ 
+ /**
+  * @param {string} value
+- * @param {number} from
++ * @param {number | undefined} from
++ *   `undefined` for the first line (as `indexOf` reads it: 0).
+  */
+ function next(value, from) {
+-  const cr = value.indexOf('\r', from)
+-  const lf = value.indexOf('\n', from)
+-  if (lf === -1) return cr
+-  if (cr === -1 || cr + 1 === lf) return lf
+-  return cr < lf ? cr : lf
++  // One scan up to the next line ending: `indexOf('\r')` from every line start
++  // scanned to the end of CR-less text each time (quadratic on long documents).
++  for (let index = from || 0; index < value.length; index++) {
++    const code = value.charCodeAt(index)
++    if (code === 10) return index
++    if (code === 13) return value.charCodeAt(index + 1) === 10 ? index + 1 : index
++  }
++
++  return -1
+ }
