@@ -73,3 +73,53 @@ test('source block matching ignores only extra empty caret paragraphs', () => {
     assert.equal(sourceBlockCount(doc([node('heading', 3), node('paragraph', 0)]), 2), 2);
     assert.equal(sourceBlockCount(doc([node('heading', 3), node('table', 9)]), 1), 2);
 });
+
+test('slides MR base links a local file to the merge request revision found by the companion', async () => {
+    const calls = [];
+    let head = 'pi-mr:/deck.md?head';
+    const vscode = {
+        Uri: { parse: (s) => ({ scheme: 'pi-mr', toString: () => s }) },
+        workspace: { workspaceFolders: [] },
+        commands: {
+            getCommands: async () => ['projectIntegration.mrReview.localRevision'],
+            executeCommand: async (...args) => (calls.push(args), head),
+        },
+    };
+    const { linkMrRevision, mrTwin } = load('../slides-studio/packages/extension/src/review.ts', vscode);
+    const uri = { scheme: 'file', fsPath: 'C:\repo\Deck.md', toString: () => 'file:///c%3A/repo/Deck.md' };
+    assert.equal(mrTwin(uri), undefined);
+    assert.equal(await linkMrRevision({ uri }), true);
+    assert.deepEqual(calls[0], ['projectIntegration.mrReview.localRevision', 'file:///c%3A/repo/Deck.md']);
+    assert.equal(mrTwin(uri).toString(), 'pi-mr:/deck.md?head');
+    head = 'pi-mr:/deck.md?pushed';
+    assert.equal(await linkMrRevision({ uri }), true, 're-resolved: follows a push');
+    assert.equal(mrTwin(uri).toString(), 'pi-mr:/deck.md?pushed');
+});
+
+test('markdown local file reviews through the branch merge request revision', async () => {
+    const calls = [];
+    const messages = [];
+    let mrText = '# Doc\n';
+    const vscode = {
+        Uri: { parse: (s) => ({ toString: () => s }) },
+        workspace: { openTextDocument: async () => ({ getText: () => mrText }) },
+        commands: {
+            getCommands: async () => ['projectIntegration.mrReview.rendered', 'projectIntegration.mrReview.localRevision'],
+            executeCommand: async (...args) => (calls.push(args), args[0].endsWith('localRevision') ? 'pi-mr:/doc.md?head' : { canCreate: true, threads: [] }),
+        },
+    };
+    const { linkMrRevision, sendReview } = load('../rich-editor/src/review.ts', vscode);
+    const document = { uri: { scheme: 'file', fsPath: 'C:\repo\doc.md', toString: () => 'file:///c%3A/repo/doc.md' }, getText: () => '# Doc\n' };
+    const webview = { postMessage: async (msg) => messages.push(msg) };
+    await sendReview(document, webview, { action: 'load' });
+    assert.equal(messages.length, 0, 'unlinked local file: no review');
+    assert.equal(await linkMrRevision(document), true);
+    await sendReview(document, webview, { action: 'load' });
+    assert.equal(calls.at(-1)[1].uri, 'pi-mr:/doc.md?head');
+    assert.equal(messages.pop().data.canCreate, true);
+    mrText = '# Other\n';
+    await sendReview(document, webview, { action: 'load' });
+    const data = messages.pop().data;
+    assert.equal(data.canCreate, false);
+    assert.match(data.notice, /differs/);
+});

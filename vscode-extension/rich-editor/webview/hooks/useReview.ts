@@ -46,6 +46,8 @@ export function useReview(editor: Editor | null) {
       if (msg?.type === "init") {
         setEnabled(!!msg.reviewEnabled);
         setSource(msg.content ?? "");
+      } else if (msg?.type === "reviewEnabled") {
+        setEnabled(true);
       } else if (msg?.type === "reviewResult") {
         if (msg.requestId === undefined && pending.current) return;
         if (msg.requestId !== undefined && msg.requestId !== pending.current?.id) return;

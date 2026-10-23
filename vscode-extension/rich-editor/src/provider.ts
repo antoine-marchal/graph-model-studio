@@ -3,7 +3,7 @@ import * as path from "path";
 import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
-import { sendReview } from "./review";
+import { linkMrRevision, sendReview } from "./review";
 import { minimalEdit, withEol } from "../../shared/minimal-edit";
 
 const CONFIG_NAMESPACE = "markdownStudio";
@@ -338,6 +338,14 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         return;
       }
       if (msg.type === "review") {
+        // Refresh: follow the merge request's latest head (a push moves it).
+        if (msg.action === "load" && document.uri.scheme === "file") {
+          const linked = await linkMrRevision(document).catch((err) => (console.warn("merge request lookup failed", err), false));
+          if (!linked) {
+            webview.postMessage({ type: "reviewResult", requestId: msg.requestId, action: "load", error: "No open merge request of the current branch changes this file." });
+            return;
+          }
+        }
         await sendReview(document, webview, msg);
         return;
       }
@@ -363,6 +371,16 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         pane.ready = true;
         sendDiff(pane);
         if (document.uri.scheme === "pi-mr") void sendReview(document, webview, { action: "load" });
+        // A local file shows the discussions of its branch's open merge request.
+        else
+          void linkMrRevision(document).then(
+            async (linked) => {
+              if (!linked) return;
+              await webview.postMessage({ type: "reviewEnabled" });
+              await sendReview(document, webview, { action: "load" });
+            },
+            (err) => console.warn("merge request lookup failed", err),
+          );
         // Fire the first-run setup prompt only after the webview has
         // signalled `ready` — posting earlier would land before the
         // message listener is attached and the message would be lost.

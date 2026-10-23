@@ -11,7 +11,7 @@ import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
-import { loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
+import { linkMrRevision, loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
 import { minimalEdit, withEol } from '../../../../shared/minimal-edit';
 
@@ -474,11 +474,17 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     } satisfies HostMessage);
   }
 
-  private async pushDiffBase(state: PanelState, master: CorporateMaster | null): Promise<void> {
+  /** `linked`: merge request revision already looked up (true also opens the comments pane). */
+  private async pushDiffBase(state: PanelState, master: CorporateMaster | null, linked?: boolean): Promise<void> {
     const base = await loadDiffBase(state.document, state.diffBase);
     const available: DiffBaseKind[] = mrRef(state.document.uri) ? (mrRef(state.document.uri)!.side === 'new' ? ['none', 'mr'] : ['none']) : ['none', 'head', 'mr'];
     const doc = base.text === null ? null : parseSource(base.text, state.kind, master ? { dimensions: master.dimensions, master } : {}).doc;
-    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error } satisfies HostMessage);
+    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error, openComments: linked || undefined } satisfies HostMessage);
+    // Comparing with the merge request: bring its discussions too.
+    if (state.diffBase === 'mr' && (linked ?? (await linkMrRevision(state.document).catch((e) => (log.warn('merge request lookup failed', e), false))))) {
+      await this.pushDocument(state);
+      await this.relayReview(state.document, (m) => state.panel.webview.postMessage(m), { action: 'load' });
+    }
   }
 
   publishDiagnostics(document: vscode.TextDocument, diags: ReturnType<typeof validateDocument>, parseErrors: string[]): void {
@@ -522,7 +528,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
       switch (msg.type) {
         case 'ready': {
           await this.pushDocument(state);
-          await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null);
+          // A local file changed by its branch's open merge request opens compared with it, comments shown.
+          const linked = document.uri.scheme === 'file' && (await linkMrRevision(document).catch((e) => (log.warn('merge request lookup failed', e), false)));
+          if (linked) state.diffBase = 'mr';
+          await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null, linked || undefined);
           // Missing or older than the deck: render it now (a deck block may be waiting for it).
           if (wantsThumbnail(document.uri)) {
             const png = `${localPath(document.uri)}.png`;
@@ -700,6 +709,8 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           break;
         case 'review': {
           const { type: _t, requestId, ...request } = msg;
+          // Refresh: follow the merge request's latest head (a push moves it).
+          if (request.action === 'load' && state.diffBase === 'mr') await linkMrRevision(document).catch((e) => log.warn('merge request lookup failed', e));
           await this.relayReview(document, send, request, requestId);
           break;
         }

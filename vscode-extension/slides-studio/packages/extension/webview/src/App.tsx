@@ -100,6 +100,7 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
           // A merge request revision opens with its changes visible; local files keep them on demand.
           st.set({ diff: { base: m.base, label: m.label, doc: m.doc as SlideDocument | null, available: m.available, error: m.error }, showDiff: m.doc ? st.showDiff || m.base === 'mr' : false, showBase: m.doc ? st.showBase : false, ghostSlideId: null });
           if (m.error && m.base !== 'none') st.notify('warning', m.error);
+          if (m.openComments) st.set({ pane: 'comments', tab: 'review' });
           break;
         case 'review':
           if (m.error) st.set({ reviewError: m.error });
