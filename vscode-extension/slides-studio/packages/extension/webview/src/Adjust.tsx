@@ -1,6 +1,6 @@
 import { round4, tr, type ElementPatch, type ResolvedElement } from '@corporate-slides/core';
 import { adjOf, calloutTip, circularArrowGeom, clamp, PPI } from '@corporate-slides/renderer';
-import { useEditor } from './store';
+import { trackPointer, useEditor } from './store';
 
 /*
  * PowerPoint's yellow handles: drag them to reshape a preset (ring thickness, corner radius, arrow
@@ -135,16 +135,12 @@ export function AdjustHandles({ r, zoom }: { r: ResolvedElement; zoom: number })
       last = hd.apply(x, y);
       st.preview([{ kind: 'updateElement', slideId, elementId: el.id, patch: last }]);
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      document.body.classList.remove('is-adjusting');
-      if (last) st.mutate([{ kind: 'updateElement', slideId, elementId: el.id, patch: last }]);
-      else st.cancelPreview();
-    };
     document.body.classList.add('is-adjusting');
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    trackPointer(move, (commit) => {
+      document.body.classList.remove('is-adjusting');
+      if (last && commit) st.mutate([{ kind: 'updateElement', slideId, elementId: el.id, patch: last }]);
+      else st.cancelPreview();
+    });
   };
 
   return (

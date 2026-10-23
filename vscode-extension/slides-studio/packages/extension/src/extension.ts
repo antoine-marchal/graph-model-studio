@@ -5,7 +5,6 @@ import { basename, dirname, join, relative } from 'node:path';
 import { Mutation, RULES, findLayout, setLocale, tr } from '@corporate-slides/core';
 import { detectRenderer, importTemplate, renderPptxToPng } from '@corporate-slides/master-extractor';
 import { presentationKind, sourceKindOf } from '@corporate-slides/parser';
-import { BlockingDiagnosticsError, exportPptx, reportToMarkdown } from '@corporate-slides/pptx-generator';
 import { findMasterDir, fsValidateOptions, importPresentation, loadMasterFor, newPresentationSource, parseWithMaster, projectRootOf } from '@corporate-slides/cli';
 import { SlidesEditorProvider } from './editorProvider';
 import { registerDeckFolding } from './deckFolding';
@@ -13,6 +12,9 @@ import { MasterBrowserPanel, MasterTreeProvider, workspaceMasterDir } from './ma
 import { log } from './log';
 import { renderGmc } from './gmc';
 import { renderedImageSrc } from '@corporate-slides/core';
+
+/** PowerPoint generation (pptxgenjs, most of this bundle) is evaluated on first export, not at activation. */
+const generator = () => import('@corporate-slides/pptx-generator');
 
 export function activate(context: vscode.ExtensionContext) {
   registerDeckFolding(context);
@@ -45,6 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
     const folder = vscode.workspace.getConfiguration('corporateSlides').get<string>('exportFolder', 'out');
     const name = basename(uri.fsPath).replace(/\.(slides\.(md|ya?ml|json)|deck|md|markdown)$/i, '');
     const output = opts.output ?? join(dirname(uri.fsPath), folder, `${name}.pptx`);
+    const { BlockingDiagnosticsError, exportPptx, reportToMarkdown } = await generator();
     const run = (force: boolean) =>
       exportPptx(doc, master, { output, masterDir, sourceDir: dirname(uri.fsPath), force, ...fsValidateOptions(uri.fsPath, projectRootOf(masterDir)) });
     let report;
@@ -117,6 +120,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   const renderReference = async (uri: vscode.Uri, slideIndex: number): Promise<vscode.Uri | null> => {
     if (detectRenderer().kind === 'none') return null;
+    const { BlockingDiagnosticsError } = await generator();
     await vscode.workspace.fs.createDirectory(context.globalStorageUri);
     const dir = await mkdtemp(join(context.globalStorageUri.fsPath, 'ref-'));
     const out = await exportUri(uri, { silent: true, output: join(dir, 'reference.pptx') }).catch((e) => {

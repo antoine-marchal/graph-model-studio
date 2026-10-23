@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { createPortal } from 'react-dom';
 import { fmtNumber, mergeRuns, tableWeights, tr, type CellStyle, type ElementPatch, type ResolvedElement, type TextRun } from '@corporate-slides/core';
 import { PPI, tableCellStyle, tableTextCss, tokenHex } from '@corporate-slides/renderer';
-import { useEditor } from './store';
+import { trackPointer, useEditor } from './store';
 import { Icon, type IconName } from './icons';
 import { Menu, PaletteGrid, PaletteMenu } from './Panels';
 import { htmlTableGrid, tsvRows } from './clipboard';
@@ -607,7 +607,7 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
           ))}
         </tbody>
       </table>
-      <ResizeHandles table={() => tableRef.current} onCols={setColW} onRows={setRowH} />
+      <ResizeHandles tableRef={tableRef} shape={`${rows.length}x${C}:${gen}`} onCols={setColW} onRows={setRowH} />
       <RangeFrame tableRef={tableRef} rect={fill ?? rect} dashed={!!fill} onFillStart={() => setFill(rect)} />
       {pos &&
         createPortal(
@@ -666,43 +666,28 @@ export function TableEditor({ r, onDone }: { r: ResolvedElement; onDone: (patch:
 
 
 const even = (w: number[]) => w.map(() => 1 / w.length);
+const sameNums = (a: number[], b: number[]) => a.length === b.length && a.every((x, i) => x === b[i]);
 
-/**
- * Column and row borders of a selected (not edited) table, dragged on the slide: the slide
- * previews live, the release writes `colWidths` / `rowHeights`. Double-click: edit the table (in it, a border's double-click evens the sizes).
- */
-export function TableGridHandles({ r, slideId }: { r: ResolvedElement; slideId: string }) {
-  const el = r.element;
-  const wrapRef = useRef<HTMLDivElement>(null);
-  if (el.type !== 'table') return null;
-  const st = useEditor.getState();
-  const patchOf = (axis: 'col' | 'row', w: number[]): ElementPatch => (axis === 'col' ? { colWidths: w.map((x) => Math.round(x * 1000) / 1000) } : { rowHeights: w.map((x) => Math.round(x * 1000) / 1000) });
-  const live = (axis: 'col' | 'row') => (w: number[]) => st.preview([{ kind: 'updateElement', slideId, elementId: el.id, patch: patchOf(axis, w) }]);
-  return (
-    <div ref={wrapRef} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} className="tbl-grid-handles" data-testid="table-grid-handles">
-      <ResizeHandles
-        // The table drawn by the slide renderer, under this overlay.
-        table={() => document.querySelector<HTMLTableElement>(`.css-slide [data-element-id="${CSS.escape(el.id)}"] table`)}
-        onCols={live('col')}
-        onRows={live('row')}
-        onEnd={(axis, w) => st.mutate([{ kind: 'updateElement', slideId, elementId: el.id, patch: patchOf(axis, w) }])}
-        // A double-click on the table opens it for editing, wherever it lands.
-        onDoubleClick={() => st.setEditing(el.id)}
-      />
-    </div>
-  );
-}
-
-/** Rendered grid of a table, in its own (unscaled) pixels: inner borders and each row's content height. */
-interface Grid { cols: number[]; rows: number[]; colPx: number[]; rowPx: number[]; rowMin: number[] }
+/** Rendered grid of a table, in its own (unscaled) pixels: inner borders and row / column sizes. */
+interface Grid { cols: number[]; rows: number[]; colPx: number[]; rowPx: number[] }
 function measureGrid(t: HTMLTableElement): Grid {
   const trs = [...t.rows];
   const cells = [...(trs[0]?.cells ?? [])];
   const colPx = cells.map((c) => c.offsetWidth);
   const rowPx = trs.map((r) => r.offsetHeight);
-  const edges = (xs: number[], from: number) => xs.slice(0, -1).map((_, i) => from + xs.slice(0, i + 1).reduce((a, b) => a + b, 0));
-  // A row never gets smaller than its text: the tallest cell content (one line when empty).
-  const rowMin = trs.map((r) =>
+  // Inner borders: running sums, the last edge (the outer border) left out.
+  const edges = (xs: number[], from: number) => {
+    const out: number[] = [];
+    for (let i = 0, at = from; i < xs.length - 1; i++) out.push((at += xs[i]!));
+    return out;
+  };
+  return { cols: edges(colPx, cells[0]?.offsetLeft ?? 0), rows: edges(rowPx, trs[0]?.offsetTop ?? 0), colPx, rowPx };
+}
+const sameGrid = (a: Grid | null, b: Grid | null) => a === b || (!!a && !!b && sameNums(a.colPx, b.colPx) && sameNums(a.rowPx, b.rowPx) && sameNums(a.cols, b.cols) && sameNums(a.rows, b.rows));
+
+/** A row never gets smaller than its text: the tallest cell content (one line when empty), in table pixels. */
+function rowMins(t: HTMLTableElement): number[] {
+  return [...t.rows].map((r) =>
     Math.max(
       ...[...r.cells].map((td) => {
         const scale = td.offsetHeight / (td.getBoundingClientRect().height || td.offsetHeight || 1);
@@ -714,72 +699,69 @@ function measureGrid(t: HTMLTableElement): Grid {
       }),
     ),
   );
-  return { cols: edges(colPx, cells[0]?.offsetLeft ?? 0), rows: edges(rowPx, trs[0]?.offsetTop ?? 0), colPx, rowPx, rowMin };
 }
 
 /**
- * Drag handles on the inner column and row borders, placed on the borders as rendered (rows grow
- * with their text, so the stored weights alone do not say where a border is). Dragging moves size
- * between the two neighbours; a row stops at its text, a column at 24 px.
+ * Drag handles on the inner column and row borders of the edited table, placed on the borders as
+ * rendered (rows grow with their text, so the stored weights alone do not say where a border is).
+ * Dragging moves size between the two neighbours; a row stops at its text, a column at 24 px.
+ * Double-click on a border: even sizes. The grid is measured when the table, a row or a column
+ * changes size (`shape` = rows × columns, so new rows / columns get observed too).
  */
-export function ResizeHandles({ table, onCols, onRows, onEnd, onDoubleClick }: { table: () => HTMLTableElement | null; onCols: (w: number[]) => void; onRows: (h: number[]) => void; onEnd?: (axis: 'col' | 'row', w: number[]) => void; onDoubleClick?: () => void }) {
+export function ResizeHandles({ tableRef, shape, onCols, onRows }: { tableRef: React.RefObject<HTMLTableElement | null>; shape: string; onCols: (w: number[]) => void; onRows: (h: number[]) => void }) {
   const [grid, setGrid] = useState<Grid | null>(null);
-  const refresh = () => {
-    const t = table();
-    const next = t ? measureGrid(t) : null;
-    setGrid((g) => (JSON.stringify(g) === JSON.stringify(next) ? g : next));
-  };
-  // Every render (typing, previews, restructuring) and on any size change of the table.
-  useLayoutEffect(refresh);
-  useEffect(() => {
-    const t = table();
-    if (!t) return;
+  useLayoutEffect(() => {
+    const t = tableRef.current;
+    if (!t) return setGrid(null);
+    const refresh = () => {
+      const next = measureGrid(t);
+      setGrid((g) => (sameGrid(g, next) ? g : next));
+    };
+    refresh();
     const ro = new ResizeObserver(refresh);
     ro.observe(t);
+    for (const r of t.rows) ro.observe(r);
+    for (const c of t.rows[0]?.cells ?? []) ro.observe(c);
     return () => ro.disconnect();
-  });
+  }, [tableRef, shape]);
   const start = (e: React.PointerEvent, i: number, axis: 'col' | 'row') => {
     e.preventDefault();
     e.stopPropagation();
-    const t = table();
+    const t = tableRef.current;
     if (!t || !grid) return;
     const px = axis === 'col' ? grid.colPx : grid.rowPx;
     const total = px.reduce((a, b) => a + b, 0) || 1;
     // Client pixels per table pixel (the slide is zoomed with a transform).
     const scale = (axis === 'col' ? t.getBoundingClientRect().width / t.offsetWidth : t.getBoundingClientRect().height / t.offsetHeight) || 1;
     const w0 = px.map((x) => x / total);
-    const min = (k: number) => (axis === 'col' ? 24 : grid.rowMin[k]!) / total;
+    const mins = axis === 'row' ? rowMins(t) : null;
+    const min = (k: number) => (mins ? mins[k]! : 24) / total;
     const origin = axis === 'col' ? e.clientX : e.clientY;
     const pair = w0[i]! + w0[i + 1]!;
     const cls = axis === 'col' ? 'is-col-resizing' : 'is-row-resizing';
     document.body.classList.add(cls);
-    let last = w0;
     const move = (ev: PointerEvent) => {
       const delta = ((axis === 'col' ? ev.clientX : ev.clientY) - origin) / scale / total;
       const a = Math.max(Math.min(min(i), pair / 2), Math.min(pair - Math.min(min(i + 1), pair / 2), w0[i]! + delta));
       const next = [...w0];
       next[i] = a;
       next[i + 1] = pair - a;
-      last = next;
       (axis === 'col' ? onCols : onRows)(next);
     };
-    const up = () => {
+    trackPointer(move, (commit) => {
       document.body.classList.remove(cls);
-      if (last !== w0) onEnd?.(axis, last);
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+      if (!commit) (axis === 'col' ? onCols : onRows)(w0);
+    });
   };
   if (!grid) return null;
+  const height = grid.rowPx.reduce((a, b) => a + b, 0), width = grid.colPx.reduce((a, b) => a + b, 0);
   return (
     <>
       {grid.cols.map((x, i) => (
-        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: x, top: 0, bottom: 'auto', height: grid.rowPx.reduce((a, b) => a + b, 0) }} title={tr('Glisser pour redimensionner les colonnes', 'Drag to resize the columns')} onPointerDown={(e) => start(e, i, 'col')} onDoubleClick={(e) => (e.stopPropagation(), onDoubleClick ? onDoubleClick() : onEnd?.('col', even(grid.colPx)))} data-testid="col-resize" />
+        <div key={`c${i}`} className="tbl-resize is-col" style={{ left: x, top: 0, bottom: 'auto', height }} title={tr('Glisser pour redimensionner les colonnes', 'Drag to resize the columns')} onPointerDown={(e) => start(e, i, 'col')} onDoubleClick={(e) => (e.stopPropagation(), onCols(even(grid.colPx)))} data-testid="col-resize" />
       ))}
       {grid.rows.map((y, i) => (
-        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: y, right: 'auto', width: grid.colPx.reduce((a, b) => a + b, 0) }} title={tr('Glisser pour redimensionner les lignes', 'Drag to resize the rows')} onPointerDown={(e) => start(e, i, 'row')} onDoubleClick={(e) => (e.stopPropagation(), onDoubleClick ? onDoubleClick() : onEnd?.('row', even(grid.rowPx)))} data-testid="row-resize" />
+        <div key={`r${i}`} className="tbl-resize is-row" style={{ top: y, right: 'auto', width }} title={tr('Glisser pour redimensionner les lignes', 'Drag to resize the rows')} onPointerDown={(e) => start(e, i, 'row')} onDoubleClick={(e) => (e.stopPropagation(), onRows(even(grid.rowPx)))} data-testid="row-resize" />
       ))}
     </>
   );

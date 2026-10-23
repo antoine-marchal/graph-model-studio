@@ -3101,56 +3101,6 @@ body.zen-mode .tiptap-editor > .zen-here {
   justify-content: space-between;
 }
 
-/* ---------- GMC interactive editor modal ---------- */
-.gmc-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-}
-
-.gmc-modal {
-  display: flex;
-  flex-direction: column;
-  width: 94vw;
-  height: 92vh;
-  overflow: hidden;
-  border: 1px solid var(--vscode-widget-border, #454545);
-  border-radius: 8px;
-  background: var(--vscode-editor-background, #1e1e1e);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-}
-
-.gmc-modal-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
-  background: var(--vscode-editorWidget-background, #252526);
-  border-bottom: 1px solid var(--vscode-widget-border, #333);
-  font-size: 0.8em;
-}
-
-.gmc-modal-title {
-  font-weight: 600;
-  color: var(--vscode-foreground, #ccc);
-}
-
-.gmc-modal-hint {
-  flex: 1;
-  color: var(--vscode-descriptionForeground, #888);
-}
-
-.gmc-modal-frame {
-  flex: 1;
-  width: 100%;
-  border: 0;
-  background: var(--vscode-editor-background, #1e1e1e);
-}
-
 /* Tool-generated metadata comments (e.g. gmc-source-sha256) are kept in
    the file but not shown. */
 .tiptap-editor pre.raw-html-block.raw-html-meta {
@@ -3313,15 +3263,6 @@ body.col-resizing { user-select: none; }
 }
 .tiptap-editor.fill-dragging, .tiptap-editor.fill-dragging * { cursor: crosshair !important; }
 
-.gmc-modal-error {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  color: var(--vscode-errorForeground, #f48771);
-  font-size: 0.85em;
-  border-bottom: 1px solid var(--vscode-widget-border, #333);
-}
 
 /* GMC embed parameters (view / theme) in the directive header */
 .directive-param {

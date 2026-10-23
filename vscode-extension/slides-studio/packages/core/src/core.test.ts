@@ -71,6 +71,27 @@ describe('canonical mutations', () => {
     ]);
     expect(next.slides.map((s) => s.id)).toEqual(['s2', 's1']);
   });
+  it('copies only what a mutation touches, never the input', () => {
+    const deck = SlideDocument.parse({ ...doc, slides: [doc.slides[0], { id: 's2', layout: 'content', elements: [{ id: 'c', type: 'shape', shape: 'rect', x: 0, y: 0, w: 1, h: 1 }] }] });
+    const frozen = JSON.stringify(deck);
+    const next = applyToDocument(deck, [{ kind: 'updateElement', slideId: 's1', elementId: 'a', patch: { x: 5 } }]);
+    expect(next.slides[1]).toBe(deck.slides[1]);
+    expect(next.slides[0]).not.toBe(deck.slides[0]);
+    expect(next.slides[0]!.elements[1]).toBe(deck.slides[0]!.elements[1]);
+    expect(next.slides[0]!.elements[0]!.x).toBe(5);
+    const z = applyToDocument(next, [{ kind: 'reorderElement', slideId: 's1', elementId: 'b', direction: 'back' }]);
+    expect(z.slides[0]!.elements.map((e) => e.z)).toEqual([1, 0]);
+    expect(JSON.stringify(deck)).toBe(frozen);
+    expect(next.slides[0]!.elements[1]!.z).toBeUndefined();
+  });
+  it('shares placeholder text with every slide carrying it', () => {
+    const t = (id: string, text: string) => ({ id, layout: 'content', elements: [{ id: 'f', type: 'text', placeholder: 'footer', paragraphs: [{ runs: [{ text }] }] }] });
+    const deck = SlideDocument.parse({ ...doc, slides: [t('s1', 'new'), t('s2', 'old'), { id: 's3', layout: 'content', elements: [] }] });
+    const next = applyToDocument(deck, [{ kind: 'shareText', slideId: 's1', elementId: 'f', shared: true }]);
+    expect(next.slides[1]!.elements[0]).toMatchObject({ shared: true, paragraphs: [{ runs: [{ text: 'new' }] }] });
+    expect(deck.slides[1]!.elements[0]).not.toHaveProperty('shared');
+    expect(next.slides[2]).toBe(deck.slides[2]);
+  });
   it('rejects schema-invalid documents', () => {
     expect(() => SlideDocument.parse({ ...doc, slides: [{ id: 'bad id!', layout: 'x', elements: [] }] })).toThrow();
   });

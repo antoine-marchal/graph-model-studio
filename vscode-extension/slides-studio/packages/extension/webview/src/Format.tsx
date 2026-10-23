@@ -598,7 +598,7 @@ export function ShapeSections({ r, upd }: { r: ResolvedElement; upd: (p: Element
             })}
           </div>
           <p className="hint">
-            {el.rows.length} × {Math.max(...el.rows.map((x) => x.length))} — {tr('double-cliquez pour éditer ; glissez les bordures pour redimensionner (en édition, double-clic sur une bordure : tailles égales).', 'double-click to edit; drag the borders to resize (while editing, double-click a border: even sizes).')}
+            {el.rows.length} × {Math.max(...el.rows.map((x) => x.length))} — {tr('double-cliquez pour éditer ; en édition, glissez les bordures pour redimensionner (double-clic sur une bordure : tailles égales).', 'double-click to edit; while editing, drag the borders to resize (double-click a border: even sizes).')}
           </p>
         </Section>
       )}

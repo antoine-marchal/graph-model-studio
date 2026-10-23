@@ -72,6 +72,16 @@ export function restoreTabs(editor: { state: any; view: { dispatch(tr: any): voi
   editor.view.dispatch(tr.setMeta("addToHistory", false).setMeta("preventUpdate", true));
 }
 
+/** Markdown → HTML for Tiptap, built once (frozen: stateless across runs). */
+const markdownProcessor = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(remarkMath)
+  .use(remarkGroupDirectives)
+  .use(remarkRehype, { handlers: remarkRehypeHandlers })
+  .use(rehypeStringify)
+  .freeze();
+
 export async function markdownToHtml(
   md: string,
   baseUri?: string
@@ -81,14 +91,7 @@ export async function markdownToHtml(
   // Protect currency $ from remarkMath pairing
   md = protectCurrencyDollars(md);
 
-  const result = await unified()
-    .use(remarkParse)
-    .use(remarkGfm)
-    .use(remarkMath)
-    .use(remarkGroupDirectives)
-    .use(remarkRehype, { handlers: remarkRehypeHandlers })
-    .use(rehypeStringify)
-    .process(md);
+  const result = await markdownProcessor.process(md);
 
   // Restore placeholders
   let html = String(result).replace(new RegExp(PIPE_PH, "g"), "|");
@@ -334,6 +337,28 @@ function postprocessMarkdown(
 }
 
 /**
+ * HTML → Markdown processor for these stringify settings, built once and
+ * reused (frozen processors are stateless: concurrent runs are independent).
+ */
+const htmlProcessors = new Map<string, ReturnType<typeof buildHtmlProcessor>>();
+function buildHtmlProcessor(config: ReturnType<typeof buildMarkdownConfig>) {
+  return unified()
+    .use(rehypeParse, { fragment: true })
+    .use(rehypeUnwrapDirectives)
+    .use(rehypeRemark, { handlers: rehypeRemarkHandlers })
+    .use(remarkGfm)
+    .use(remarkStringify, config)
+    .freeze();
+}
+function htmlProcessor(settings: BetterMarkdownSettings) {
+  const config = buildMarkdownConfig(settings);
+  const key = JSON.stringify(config);
+  let processor = htmlProcessors.get(key);
+  if (!processor) htmlProcessors.set(key, (processor = buildHtmlProcessor(config)));
+  return processor;
+}
+
+/**
  * Convert HTML from Tiptap editor back to markdown.
  */
 export async function htmlToMarkdown(
@@ -342,14 +367,7 @@ export async function htmlToMarkdown(
   docFolderPath?: string,
   settings: BetterMarkdownSettings = DEFAULT_SETTINGS
 ): Promise<string> {
-  html = preprocessTiptapHtml(html);
-  const result = await unified()
-    .use(rehypeParse, { fragment: true })
-    .use(rehypeUnwrapDirectives)
-    .use(rehypeRemark, { handlers: rehypeRemarkHandlers })
-    .use(remarkGfm)
-    .use(remarkStringify, buildMarkdownConfig(settings))
-    .process(html);
+  const result = await htmlProcessor(settings).process(preprocessTiptapHtml(html));
   return postprocessMarkdown(String(result), settings, baseUri, docFolderPath);
 }
 
@@ -364,14 +382,7 @@ export function htmlToMarkdownSync(
   docFolderPath?: string,
   settings: BetterMarkdownSettings = DEFAULT_SETTINGS
 ): string {
-  html = preprocessTiptapHtml(html);
-  const result = unified()
-    .use(rehypeParse, { fragment: true })
-    .use(rehypeUnwrapDirectives)
-    .use(rehypeRemark, { handlers: rehypeRemarkHandlers })
-    .use(remarkGfm)
-    .use(remarkStringify, buildMarkdownConfig(settings))
-    .processSync(html);
+  const result = htmlProcessor(settings).processSync(preprocessTiptapHtml(html));
   return postprocessMarkdown(String(result), settings, baseUri, docFolderPath);
 }
 

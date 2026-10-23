@@ -983,6 +983,7 @@
     "build:rich-editor": "node ./rich-editor/esbuild.mjs",
     "watch:rich-editor": "node ./rich-editor/esbuild.mjs --watch",
     "test:rich-editor": "tsx rich-editor/test/test-conversions.ts && tsx rich-editor/test/test-roundtrip.ts",
+    "test:rich-editor:browser": "node rich-editor/test/gmc-editor.browser.cjs",
     "test": "node --test tests/review-bridge.test.cjs tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/docx-export.test.cjs && pnpm run test:rich-editor",
     "build:all": "pnpm run build:source && pnpm run build",
     "build:slides-studio": "pnpm --dir slides-studio install --frozen-lockfile && pnpm --dir slides-studio run build",

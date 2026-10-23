@@ -54,7 +54,7 @@ exports.run = async function run() {
 
   // 4. Invalid mutations are rejected, never silently dropped
   const bad = await api.applyTransaction(deck, [{ kind: 'deleteElement', slideId: 'nope', elementId: 'x' }]);
-  assert.match(bad, /introuvable/);
+  assert.match(bad, /introuvable|not found/); // bilingual message, VS Code locale
 
   // 5. Native undo / redo on the source document
   await vscode.window.showTextDocument(doc);

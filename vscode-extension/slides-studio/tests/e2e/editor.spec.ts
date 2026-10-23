@@ -194,12 +194,43 @@ test('.deck: inserting a GMC diagram writes a .gmc image element', async ({ page
   await expect(page.getByTestId('tab-format')).toHaveText('Diagramme');
 });
 
+test('GMC diagram: double-click opens the maximized editor; closing writes the last edit, then renders', async ({ page }) => {
+  await openDeck(page);
+  await page.getByTestId('slide-thumb-roadmap').locator('.slide-button').click();
+  await page.getByTestId('tab-insert').click();
+  await page.getByTestId('insert-gmc').click();
+  await page.getByTestId('gmc-name').fill('Flux');
+  await page.getByTestId('gmc-submit').click();
+  await synced(page);
+  await canvasEl(page, 'diagram').dblclick();
+  const shell = page.getByTestId('gmc-editor');
+  await expect(shell).toBeVisible();
+  // Fills the webview (no inset dialog).
+  const box = (await shell.boundingBox())!;
+  expect(box).toMatchObject({ x: 0, y: 0, width: 1440, height: 900 });
+  await expect(page.frameLocator('.gmc-shell-frame').locator('body[data-render]')).toHaveCount(1);
+  await page.keyboard.press('Escape');
+  await expect(shell).toHaveCount(0);
+  const log = await page.evaluate(() => window.__harness.gmc.map((m) => ('changed' in m ? `${m.type}:${m.changed}` : m.type)));
+  expect(log).toEqual(['gmcOpen', 'gmcWrite', 'gmcClose:true']);
+  // The ribbon button opens the same editor.
+  await canvasEl(page, 'diagram').click();
+  await page.getByTestId('tab-format').click();
+  await page.getByTestId('edit-gmc').click();
+  await expect(shell).toBeVisible();
+  await page.getByTestId('gmc-close').click();
+  await expect(shell).toHaveCount(0);
+});
+
 test('table: typing then clicking outside keeps the text; column borders resize', async ({ page }) => {
   await open(page, 'examples/corporate-demo/deck.slides.md');
   await page.getByTestId('slide-thumb-agenda').locator('.slide-button').click();
   await page.getByTestId('tab-insert').click();
   await page.getByRole('button', { name: 'Tableau' }).click();
   await synced(page);
+  // Selected but not edited: no inner border grips (they belong to table editing).
+  await canvasEl(page, 'table-1').click();
+  await expect(page.getByTestId('col-resize')).toHaveCount(0);
   await canvasEl(page, 'table-1').dblclick();
   const cell = page.getByTestId('table-editor').locator('[data-cell="1:1"]');
   await cell.click();
@@ -227,6 +258,11 @@ test('table: typing then clicking outside keeps the text; column borders resize'
   // The table's text lives in a `::: table-1` Markdown block.
   expect(src).toMatch(/::: table-1\n[\s\S]*\| 42 /);
   expect(src).toMatch(/colWidths:/);
+  // Editing again: a border's double-click evens the column widths.
+  await canvasEl(page, 'table-1').dblclick();
+  await page.getByTestId('col-resize').first().dblclick();
+  const w = await page.getByTestId('table-editor').locator('tr').first().locator('td').evaluateAll((tds) => tds.map((td) => (td as HTMLElement).offsetWidth));
+  expect(Math.max(...w) - Math.min(...w)).toBeLessThan(3);
 });
 
 test('clipboard: copy / paste duplicates the selection; font size steps up', async ({ page }) => {

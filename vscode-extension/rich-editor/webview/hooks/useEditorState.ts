@@ -64,6 +64,11 @@ export function useEditorState({
   const filePath = useRef("");
   const frontmatterRef = useRef("");
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Async work finishing out of order must not win: an edit is posted only if no
+  // newer edit or external update started meanwhile, an update applied only if
+  // it is still the latest one received.
+  const editGen = useRef(0);
+  const updateGen = useRef(0);
   const isReadonly = useRef(false);
   // Opening a file must never rewrite it: transactions fired while loading
   // (node views, plugins) are not sent back until the user has interacted.
@@ -177,6 +182,11 @@ export function useEditorState({
         setStatus(null);
       } else if (msg.type === "update" && initialized.current) {
         emitSource(msg.content);
+        // Pending or in-flight serializations describe the replaced content.
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        debounceTimer.current = null;
+        editGen.current++;
+        const gen = ++updateGen.current;
         try {
           const { content: noFm, frontmatter } = extractFrontmatter(
             msg.content,
@@ -184,6 +194,7 @@ export function useEditorState({
           frontmatterRef.current = frontmatter;
           setFrontmatterState(frontmatterBody(frontmatter));
           const html = await markdownToHtml(noFm, baseUri.current);
+          if (gen !== updateGen.current) return;
           // setContent resets the ProseMirror selection to the doc end.
           // Snapshot the caret before replacing content and restore it
           // (clamped to the new doc size) so external updates — e.g. VS
@@ -295,23 +306,55 @@ export function useEditorState({
     if (isReadonly.current || !userTouched.current) return;
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(async () => {
+      debounceTimer.current = null;
+      const gen = ++editGen.current;
       try {
-        const html = editor.getHTML();
-        let markdown = await htmlToMarkdown(
-          html,
+        const markdown = await htmlToMarkdown(
+          editor.getHTML(),
           baseUri.current,
           docFolderPath.current,
           settingsRef.current,
         );
-        markdown = prependFrontmatter(markdown, frontmatterRef.current);
-        emitSource(markdown);
-        vscodeApi.postMessage({ type: "edit", content: markdown });
-        setStatus(null);
+        if (gen === editGen.current) postEdit(markdown);
       } catch (err: any) {
         setStatus(`Save error: ${err?.message || String(err)}`);
         console.error("[better-markdown] htmlToMarkdown failed:", err);
       }
     }, 300);
+  }, [editor, settingsRef]);
+
+  const postEdit = (markdown: string) => {
+    markdown = prependFrontmatter(markdown, frontmatterRef.current);
+    emitSource(markdown);
+    vscodeApi.postMessage({ type: "edit", content: markdown });
+    setStatus(null);
+  };
+
+  // Ctrl+S, leaving the window or closing it: the debounced edit goes now
+  // (synchronously: no event-loop turn left on close), so the save has it.
+  useEffect(() => {
+    if (!editor) return;
+    const flush = () => {
+      if (!debounceTimer.current) return;
+      clearTimeout(debounceTimer.current);
+      debounceTimer.current = null;
+      editGen.current++;
+      try {
+        postEdit(htmlToMarkdownSync(editor.getHTML(), baseUri.current, docFolderPath.current, settingsRef.current));
+      } catch (err) {
+        console.error("[better-markdown] htmlToMarkdown failed:", err);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && flush();
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("blur", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("blur", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, settingsRef]);
 
   useEffect(() => {

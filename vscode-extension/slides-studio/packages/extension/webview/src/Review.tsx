@@ -34,10 +34,17 @@ export function useAnchors(): Anchor[] {
   }, [doc, data]);
 }
 
+/** Last diff computed: every consumer (canvas, navigator, ribbon) shares it for the same documents. */
+let lastDiff: { base: SlideDocument; doc: SlideDocument; out: DocDiff } | null = null;
+
 export function useDiff(): DocDiff | null {
   const base = useEditor((s) => s.diff.doc);
   const doc = useEditor((s) => s.doc);
-  return useMemo(() => (base && doc ? diffDocs(base, doc) : null), [base, doc]);
+  return useMemo(() => {
+    if (!base || !doc) return null;
+    if (lastDiff?.base !== base || lastDiff.doc !== doc) lastDiff = { base, doc, out: diffDocs(base, doc) };
+    return lastDiff.out;
+  }, [base, doc]);
 }
 
 let requestId = 0;

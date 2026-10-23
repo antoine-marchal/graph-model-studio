@@ -1,16 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Node } from "@tiptap/core";
 import {
   NodeViewContent,
   NodeViewWrapper,
   ReactNodeViewRenderer,
 } from "@tiptap/react";
-import { ChevronDown, ChevronRight, FileOutput, ImageDown, Maximize2, PanelRight, Save, X } from "lucide-react";
+import { ChevronDown, ChevronRight, FileOutput, ImageDown, Maximize2 } from "lucide-react";
 import { gmcEmbedDirective, gmcViewNames, setFenceOption } from "../conversion-utils";
 import { fenceMetaAttribute } from "./CodeBlockView";
 import { vscodeApi } from "../vscode-api";
 import { setImageOverride } from "./ImageView";
+import { GraphEditorModal } from "./GraphEditorModal";
 
 /**
  * ```gmc / ```graphmodel fences rendered as Graph Model Studio diagrams.
@@ -38,200 +38,14 @@ views {
 }`;
 
 let runtimeUri = "";
-const graphEditor = { js: "", css: "", version: "" };
 /** For hosts without the editor's init message (the diff panel). */
 export function setGmcRuntimeUri(uri: string): void {
   runtimeUri = uri;
 }
 
 window.addEventListener("message", (e) => {
-  if (e.data?.type === "init" && typeof e.data.gmcRuntimeUri === "string") {
-    runtimeUri = e.data.gmcRuntimeUri;
-    graphEditor.js = e.data.gmcEditorUri ?? "";
-    graphEditor.css = e.data.gmcEditorCssUri ?? "";
-    graphEditor.version = e.data.gmcVersion ?? "";
-  }
+  if (e.data?.type === "init" && typeof e.data.gmcRuntimeUri === "string") runtimeUri = e.data.gmcRuntimeUri;
 });
-
-/**
- * The Graph Model Studio interactive editor (dist/webview) in a
- * full-window modal. It is a webview app, so it runs in an iframe whose
- * `acquireVsCodeApi` shim relays its messages here: `render` in, edits
- * (`sourceChanged`) straight into the GMC block, saves through the host.
- */
-//
-// VS Code's webview service worker only serves resources to the webview
-// document itself (it looks the webview up from the requesting client's URL,
-// and an `about:srcdoc` frame has none), so the frame cannot load files: the
-// editor fetches the graph app's JS / CSS and inlines them. `<base>` keeps
-// the app's relative asset URLs well-formed.
-const FRAME_SHIM =
-  "(function(){var s;var send=function(m){parent.postMessage({__gmcFrame:m},'*')};" +
-  "window.acquireVsCodeApi=function(){return{postMessage:send,getState:function(){return s},setState:function(v){s=v}}};" +
-  "window.addEventListener('error',function(e){send({type:'frameError',message:String((e.error&&e.error.message)||e.message||'load error')})});" +
-  "window.addEventListener('unhandledrejection',function(e){send({type:'frameError',message:String((e.reason&&e.reason.message)||e.reason)})});" +
-  "document.addEventListener('securitypolicyviolation',function(e){send({type:'frameError',message:'Blocked by CSP: '+e.blockedURI+' ('+e.violatedDirective+')'})});" +
-  "document.addEventListener('keydown',function(e){if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){e.preventDefault();send({type:'saveShortcut'})}},true);})();";
-
-let graphEditorFiles: Promise<{ js: string; css: string }> | null = null;
-
-function loadGraphEditorFiles(): Promise<{ js: string; css: string }> {
-  if (!graphEditorFiles) {
-    const text = (url: string) =>
-      fetch(url).then((r) => {
-        if (!r.ok) throw new Error(`${r.status} loading ${url.split("/").pop()}`);
-        return r.text();
-      });
-    graphEditorFiles = Promise.all([text(graphEditor.js), text(graphEditor.css)]).then(([js, css]) => ({ js, css }));
-    graphEditorFiles.catch(() => (graphEditorFiles = null));
-  }
-  return graphEditorFiles;
-}
-
-function ownNonce(): string {
-  const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>("script[nonce]"));
-  return (scripts.find((s) => /webview\.js/.test(s.src)) ?? scripts[0])?.nonce ?? "";
-}
-
-export function graphEditorSrcdoc(files: { js: string; css: string }, nonce: string, base: string): string {
-  const css = files.css.replace(/<\/style/gi, "<\\/style");
-  const js = files.js.replace(/<\/script/gi, "<\\/script");
-  return (
-    `<!doctype html><html><head><meta charset="utf-8"><base href="${base}">` +
-    `<style>${css}</style><style>html,body,#root{height:100%;margin:0}</style>` +
-    `<script nonce="${nonce}">${FRAME_SHIM}</script></head>` +
-    `<body><div id="root"></div><script nonce="${nonce}" type="module">${js}</script></body></html>`
-  );
-}
-
-interface GraphEditorModalProps {
-  source: string;
-  name: string;
-  view?: string;
-  theme: "light" | "dark";
-  onChange(source: string): void;
-  onClose(): void;
-  onOpenBeside(): void;
-  /** Editing a file (embed card): header Save button and Ctrl+S. */
-  onSave?(): void;
-  hint?: string;
-}
-
-export function GraphEditorModal({ source, name, view, theme, onChange, onClose, onOpenBeside, onSave, hint }: GraphEditorModalProps) {
-  const frameRef = useRef<HTMLIFrameElement>(null);
-  const [srcdoc, setSrcdoc] = useState("");
-  useEffect(() => {
-    if (!graphEditor.js) return;
-    let live = true;
-    loadGraphEditorFiles()
-      .then((files) => {
-        if (live) setSrcdoc(graphEditorSrcdoc(files, ownNonce(), graphEditor.js.replace(/[^/]*$/, "")));
-      })
-      .catch((err) => live && setFailure(err instanceof Error ? err.message : String(err)));
-    return () => {
-      live = false;
-    };
-  }, []);
-  const initial = useRef({ source, name, view, theme });
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  const onSaveRef = useRef(onSave);
-  onSaveRef.current = onSave;
-  const [ready, setReady] = useState(false);
-  const [failure, setFailure] = useState("");
-
-  useEffect(() => {
-    if (ready) return;
-    const timer = setTimeout(() => setFailure((f) => f || "The graph editor did not start."), 8000);
-    return () => clearTimeout(timer);
-  }, [ready]);
-
-  useEffect(() => {
-    const post = (m: unknown) => frameRef.current?.contentWindow?.postMessage(m, "*");
-    const receive = (e: MessageEvent) => {
-      if (e.data?.type === "gmcSaveResult") {
-        post({ type: "saveResult", requestId: e.data.requestId, saved: e.data.saved, error: e.data.error });
-        return;
-      }
-      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
-      const m = e.data?.__gmcFrame;
-      if (!m) return;
-      if (m.type === "frameError") {
-        setFailure((f) => f || String(m.message));
-      } else if (m.type === "ready") {
-        setReady(true);
-        setFailure("");
-        post({
-          type: "render",
-          renderId: "modal",
-          editable: true,
-          version: graphEditor.version,
-          ...initial.current,
-          target: { uri: "markdown-studio", kind: "markdown" },
-        });
-      } else if (m.type === "sourceChanged" && typeof m.source === "string") {
-        onChangeRef.current(m.source);
-      } else if (m.type === "saveShortcut") {
-        onSaveRef.current?.();
-      } else if (m.type === "saveText" || m.type === "saveBinary") {
-        vscodeApi.postMessage({ type: "gmcSave", kind: m.type, requestId: m.requestId, content: m.content, options: m.options });
-      }
-    };
-    const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("message", receive);
-    window.addEventListener("keydown", key);
-    return () => {
-      window.removeEventListener("message", receive);
-      window.removeEventListener("keydown", key);
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div className="gmc-modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="gmc-modal" role="dialog" aria-label={`Graph editor: ${name}`}>
-        <div className="gmc-modal-header">
-          <span className="gmc-block-label">GMC</span>
-          <span className="gmc-modal-title">{name}</span>
-          <span className="gmc-modal-hint">{hint ?? "Changes are written to the block as you edit"}</span>
-          {onSave && (
-            <button type="button" className="mermaid-block-toggle" onClick={onSave} title="Save the .gmc file and refresh the embed (Ctrl+S)">
-              <Save size={12} />
-              <span>save</span>
-            </button>
-          )}
-          <button type="button" className="mermaid-block-toggle" onClick={onOpenBeside} title="Open the graph editor in a VS Code tab beside">
-            <PanelRight size={12} />
-            <span>beside</span>
-          </button>
-          <button type="button" className="mermaid-block-toggle" onClick={onClose} title="Close (Esc)" aria-label="Close">
-            <X size={14} />
-          </button>
-        </div>
-        {failure && !ready && (
-          <div className="gmc-modal-error">
-            <span>Could not load the graph editor here: {failure}</span>
-            <button type="button" className="mermaid-block-toggle" onClick={onOpenBeside}>
-              <PanelRight size={12} />
-              <span>open beside instead</span>
-            </button>
-          </div>
-        )}
-        {graphEditor.js ? (
-          srcdoc ? (
-            <iframe ref={frameRef} className="gmc-modal-frame" srcDoc={srcdoc} title="Graph Model Studio" />
-          ) : (
-            <div className="mermaid-block-loading gmc-modal-loading">Loading the graph editor…</div>
-          )
-        ) : (
-          <div className="mermaid-block-error">The interactive graph editor is available in VS Code only.</div>
-        )}
-      </div>
-    </div>,
-    document.body,
-  );
-}
 
 interface GmcRuntime {
   scheduleRender(): void;
@@ -519,7 +333,13 @@ function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
       <pre className={`mermaid-block-source${sourceOpen ? "" : " collapsed"}`}>
         <NodeViewContent as="code" className={`language-${node.attrs.language}`} />
       </pre>
-      <div className="mermaid-block-preview gmc-block-preview" contentEditable={false}>
+      <div
+        className="mermaid-block-preview gmc-block-preview"
+        contentEditable={false}
+        // Same as Slides Studio: double-click the diagram to edit it interactively.
+        onDoubleClick={() => editor.isEditable && source.trim() && setModalOpen(true)}
+        data-testid="gmc-fence-preview"
+      >
         {!source.trim() ? (
           <div className="mermaid-block-empty">Enter a GMC model above</div>
         ) : error ? (

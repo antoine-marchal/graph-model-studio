@@ -75,6 +75,16 @@ async function save() {
   saved = text;
 }
 
+/** Diagram editor messages received, for the tests. */
+const gmcLog: WebviewMessage[] = [];
+const FAKE_GMC_EDITOR = `const api = acquireVsCodeApi();
+window.addEventListener('message', (e) => {
+  if (e.data?.type !== 'render') return;
+  document.body.dataset.render = JSON.stringify(e.data);
+  if (e.data.editable) api.postMessage({ type: 'sourceChanged', source: e.data.source + ' // edited' });
+});
+api.postMessage({ type: 'ready' });`;
+
 window.acquireVsCodeApi = () => ({
   getState: () => undefined,
   setState: () => {},
@@ -102,6 +112,15 @@ window.acquireVsCodeApi = () => ({
         return void pushBase(msg.base);
       case 'review':
         return reviewAction(msg);
+      case 'gmcOpen':
+        // Stand-in graph editor: reports ready, then makes one edit when it gets the source.
+        gmcLog.push(msg);
+        return toWebview({ type: 'gmcEditor', src: msg.src, name: msg.src.split('/').pop()!, source: 'model {}', version: 'test', editorCss: 'data:text/css,', editorJs: `data:text/javascript;base64,${btoa(FAKE_GMC_EDITOR)}` });
+      case 'gmcWrite':
+      case 'gmcClose':
+      case 'editGmc':
+        gmcLog.push(msg);
+        return;
       case 'listGmc':
         return toWebview({ type: 'gmcFiles', files: ['diagrams/landscape.gmc'] });
       case 'insertGmc': {
@@ -165,10 +184,10 @@ window.acquireVsCodeApi = () => ({
 
 declare global {
   interface Window {
-    __harness: { text(): string; dirty(): boolean; save(): Promise<void>; version(): number; setExternal(t: string): void; master(): CorporateMaster };
+    __harness: { text(): string; dirty(): boolean; save(): Promise<void>; version(): number; setExternal(t: string): void; master(): CorporateMaster; gmc: WebviewMessage[] };
   }
 }
-window.__harness = { text: () => text, dirty: () => text !== saved, save, version: () => version, setExternal: (t) => (setText(t), (externalVersion = version)), master: () => master };
+window.__harness = { text: () => text, dirty: () => text !== saved, save, version: () => version, setExternal: (t) => (setText(t), (externalVersion = version)), master: () => master, gmc: gmcLog };
 
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {

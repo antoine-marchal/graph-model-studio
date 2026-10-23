@@ -13,7 +13,13 @@ export interface DocDiff {
 }
 
 /** Structural identity: source positions move with every edit above, so they never count as changes. */
-const sig = (v: unknown) => JSON.stringify(v, (k, x) => (k === 'source' ? undefined : x));
+const sigs = new WeakMap<object, string>();
+/** Memoized per object: unchanged elements keep their identity across edits, so only edited ones are serialized again. */
+const sig = (v: object) => {
+  let s = sigs.get(v);
+  if (s === undefined) sigs.set(v, (s = JSON.stringify(v, (k, x) => (k === 'source' ? undefined : x))));
+  return s;
+};
 
 /** Slide/element changes between a base revision and the current document, keyed by stable ids. */
 export function diffDocs(base: SlideDocument, doc: SlideDocument): DocDiff {
@@ -33,7 +39,7 @@ export function diffDocs(base: SlideDocument, doc: SlideDocument): DocDiff {
     for (const e of s.elements) {
       const old = before.get(e.id);
       if (!old) changes.set(e.id, 'added');
-      else if (sig(old) !== sig(e)) changes.set(e.id, 'modified');
+      else if (old !== e && sig(old) !== sig(e)) changes.set(e.id, 'modified');
     }
     const ids = new Set(s.elements.map((e) => e.id));
     const removed = b.elements.filter((e) => !ids.has(e.id));
