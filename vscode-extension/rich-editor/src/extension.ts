@@ -4,6 +4,7 @@ import { BetterMarkdownProvider } from "./provider";
 import { BetterMarkdownDiffPanel } from "./diffPanel";
 import { SETTING_KEYS } from "../webview/settings";
 import { registerDirectiveCommands } from "./directives";
+import { exportDocx, preflight } from "./exportDocx";
 
 const CUSTOM_EDITOR_VIEW_TYPE = "betterMarkdown.editor";
 const LEGACY_SETTINGS_KEY = "betterMarkdown.settings";
@@ -115,6 +116,79 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("betterMarkdown.exportSnapshot", (uri?: vscode.Uri) =>
       uri ? provider.exportSnapshot(uri) : undefined,
     )
+  );
+
+  // Markdown document for a command: explicit URI, focused rich editor, or active Markdown editor.
+  const targetDocument = (arg?: unknown): vscode.Uri | undefined => {
+    if (arg instanceof vscode.Uri) return arg;
+    const active = provider.activeUri();
+    if (active) return active;
+    const editor = vscode.window.activeTextEditor;
+    return editor?.document.languageId === "markdown" ? editor.document.uri : undefined;
+  };
+  const guarded = (run: (...args: any[]) => Promise<unknown>) => async (...args: any[]) => {
+    try {
+      return await run(...args);
+    } catch (err) {
+      vscode.window.showErrorMessage(`Markdown Studio: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    }
+  };
+
+  // Editable DOCX from source (also behind markdownToolkit.exportDocx).
+  context.subscriptions.push(
+    vscode.commands.registerCommand("markdownStudio.exportDocx", guarded(async (arg?: unknown, opts?: { embedLinks?: boolean; target?: vscode.Uri; mode?: "strict" | "permissive" }) => {
+      const uri = targetDocument(arg);
+      if (!uri) return vscode.window.showInformationMessage("Open a Markdown document before exporting it.");
+      return exportDocx(provider, uri, opts ?? {});
+    })),
+    vscode.commands.registerCommand("markdownStudio.importTemplate", guarded(async (arg?: unknown, file?: vscode.Uri, opts?: { keepAll?: boolean }) => {
+      const uri = targetDocument(arg) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!uri) return vscode.window.showInformationMessage("Open a folder or a Markdown document first.");
+      const result = await provider.library.importDocx(uri, file, undefined, !!opts?.keepAll);
+      if (result) vscode.window.showInformationMessage(`Imported master(s): ${result.ids.join(", ")}. The import report is next to master.json.`);
+      return result;
+    })),
+    vscode.commands.registerCommand("markdownStudio.preflight", guarded(async (arg?: unknown) => {
+      const uri = targetDocument(arg);
+      if (!uri) return vscode.window.showInformationMessage("Open a Markdown document first.");
+      await provider.flush(uri);
+      const report = await preflight(provider, uri);
+      return provider.showReport(uri, report);
+    })),
+    vscode.commands.registerCommand("markdownStudio.manageMasters", guarded(async (arg?: unknown) => {
+      const uri = targetDocument(arg) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+      if (!uri) return vscode.window.showInformationMessage("Open a folder or a Markdown document first.");
+      const { entries } = await provider.library.list(uri);
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: "$(add) Import Word template…", action: "import" },
+          { label: "$(new-file) New master…", action: "create" },
+          ...entries.map((e) => ({ label: e.name, description: `${e.id}${e.readonly ? " · built-in" : ""}`, detail: e.errors?.join("; ") ?? e.description, action: "entry", id: e.id, readonly: e.readonly })),
+        ],
+        { title: "Document masters", placeHolder: "Pick a master to manage" },
+      );
+      if (!pick) return;
+      if (pick.action === "import") return provider.library.importDocx(uri);
+      if (pick.action === "create") {
+        const name = await vscode.window.showInputBox({ prompt: "Master name" });
+        return name && provider.library.create(uri, name);
+      }
+      const id = (pick as { id: string }).id;
+      const ops = (pick as { readonly: boolean }).readonly ? ["Duplicate"] : ["Rename", "Duplicate", "Reimport", "Open master.json", "Delete"];
+      const op = await vscode.window.showQuickPick(ops, { title: pick.label });
+      if (op === "Duplicate") {
+        const name = await vscode.window.showInputBox({ prompt: "Name of the copy", value: `${pick.label} copy` });
+        return name && provider.library.create(uri, name, id);
+      }
+      if (op === "Rename") {
+        const name = await vscode.window.showInputBox({ prompt: "New display name (the id stays)", value: pick.label });
+        return name && provider.library.rename(uri, id, name);
+      }
+      if (op === "Reimport") return provider.library.reimport(uri, id);
+      if (op === "Delete") return provider.library.delete(uri, id);
+      if (op === "Open master.json") return vscode.window.showTextDocument(vscode.Uri.joinPath(provider.library.folderOf(uri, id), "master.json"));
+    })),
   );
 
   // Zen mode — hides the editor chrome and dims all but the current block.

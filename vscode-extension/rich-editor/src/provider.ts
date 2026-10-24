@@ -4,7 +4,10 @@ import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
 import { linkMrRevision, sendReview } from "./review";
-import { minimalEdit, withEol } from "../../shared/minimal-edit";
+import { PanelSync, enqueue } from "./panelSync";
+import { MasterLibrary } from "./masterLibrary";
+import { preflight, reportMarkdown, type ExportHost } from "./exportDocx";
+import type { ExportReport } from "./docx/compile";
 
 const CONFIG_NAMESPACE = "markdownStudio";
 const CURSORS_KEY = "betterMarkdown.cursors";
@@ -74,7 +77,86 @@ function assetsFolder(document: vscode.TextDocument): vscode.Uri {
   return vscode.Uri.file(path.resolve(docDir, expanded));
 }
 
-export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
+export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, ExportHost {
+  readonly library = new MasterLibrary();
+  /** Per document: flush hooks of its open panels (pending edits sent and acknowledged). */
+  private flushers = new Map<string, Set<() => Promise<void>>>();
+  private requestSequence = 0;
+  private pendingReplies = new Map<string, (msg: any) => void>();
+
+  /** Ask one panel something and wait for its reply (`requestId`), with a timeout. */
+  private ask<T = any>(webview: vscode.Webview, msg: Record<string, unknown>, timeoutMs: number): Promise<T | undefined> {
+    const requestId = `host-${++this.requestSequence}`;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => (this.pendingReplies.delete(requestId), resolve(undefined)), timeoutMs);
+      this.pendingReplies.set(requestId, (reply) => (clearTimeout(timer), resolve(reply)));
+      void webview.postMessage({ ...msg, requestId });
+    });
+  }
+
+  async flush(uri: vscode.Uri): Promise<void> {
+    await Promise.all([...(this.flushers.get(uri.toString()) ?? [])].map((f) => f()));
+    await enqueue(uri, async () => undefined);
+  }
+
+  async renderMermaid(uri: vscode.Uri, code: string): Promise<Uint8Array | undefined> {
+    const webview = this.webviewByUri.get(uri.toString());
+    if (!webview) return undefined;
+    const reply = await this.ask(webview, { type: "renderMermaidPng", code }, 20_000);
+    const dataUrl = typeof reply?.dataUrl === "string" ? reply.dataUrl : undefined;
+    return dataUrl ? Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64") : undefined;
+  }
+
+  async showReport(uri: vscode.Uri, report: ExportReport, target?: vscode.Uri): Promise<boolean> {
+    const webview = this.webviewByUri.get(uri.toString());
+    if (webview) {
+      await webview.postMessage({ type: "exportReport", report, target: target ? path.basename(target.fsPath) : undefined });
+      return true;
+    }
+    const doc = await vscode.workspace.openTextDocument({ language: "markdown", content: reportMarkdown(report, target) });
+    await vscode.window.showTextDocument(doc, { preview: true, viewColumn: vscode.ViewColumn.Beside });
+    return true;
+  }
+
+  /** Masters for the editor: library + starters, and webview URIs of master folders (assets). */
+  private async mastersPayload(document: vscode.TextDocument, webview: vscode.Webview) {
+    const { entries, masters } = await this.library.list(document.uri);
+    const assetBases: Record<string, string> = {};
+    for (const e of entries) if (e.folder) assetBases[e.id] = webview.asWebviewUri(vscode.Uri.file(e.folder)).toString();
+    return { entries, masters, assetBases };
+  }
+
+  private async masterAction(document: vscode.TextDocument, msg: any): Promise<unknown> {
+    const uri = document.uri;
+    switch (msg.action) {
+      case "import":
+        return this.library.importDocx(uri);
+      case "create":
+        return this.library.create(uri, String(msg.name || "New master"), msg.from ? String(msg.from) : undefined);
+      case "duplicate":
+        return this.library.create(uri, String(msg.name || `${msg.id} copy`), String(msg.id));
+      case "rename":
+        return this.library.rename(uri, String(msg.id), String(msg.name));
+      case "delete":
+        return this.library.delete(uri, String(msg.id));
+      case "reimport":
+        return this.library.reimport(uri, String(msg.id));
+      case "save":
+        return this.library.save(uri, msg.master);
+      case "usage": {
+        const u = await this.library.usage(uri, String(msg.id));
+        return { documents: u.documents.map((d) => vscode.workspace.asRelativePath(d)), masters: u.masters };
+      }
+      case "openSource": {
+        const file = vscode.Uri.joinPath(this.library.folderOf(uri, String(msg.id)), "master.json");
+        await vscode.window.showTextDocument(file, { viewColumn: vscode.ViewColumn.Beside });
+        return true;
+      }
+      default:
+        throw new Error(`Unknown master action ${msg.action}`);
+    }
+  }
+
   async revealReviewComment(uri: vscode.Uri, focus: { noteId: number; line: number }): Promise<boolean> {
     if (uri.scheme !== "pi-mr" || !uri.path.toLowerCase().endsWith(".md")) return false;
     let panels = [...(this.reviewPanels.get(uri.toString()) ?? [])].filter((panel) => panel.visible);
@@ -100,6 +182,17 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         const notify = () => { for (const wv of this.openWebviews) void wv.postMessage({ type: "deckThumbnailChanged" }); };
         watcher.onDidCreate(notify);
         watcher.onDidChange(notify);
+        return watcher;
+      })(),
+      (() => {
+        const watcher = vscode.workspace.createFileSystemWatcher("**/.markdown-studio/masters/**");
+        const notify = () => {
+          this.library.invalidate();
+          for (const wv of this.openWebviews) void wv.postMessage({ type: "mastersChanged" });
+        };
+        watcher.onDidCreate(notify);
+        watcher.onDidChange(notify);
+        watcher.onDidDelete(notify);
         return watcher;
       })(),
       onCustomCssChange(async () => {
@@ -318,7 +411,14 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
     // Raw filesystem path of the document's folder (for restoring relative paths on save)
     const docFolderPath = docFolder.fsPath;
 
-    let pendingWebviewEdits = 0;
+    const sync = new PanelSync(document, (m) => void webview.postMessage(m), isReadonly);
+    // Export / save / source switch first collect this panel's pending edit.
+    const flusher = async () => {
+      await this.ask(webview, { type: "flushRequest" }, 3000);
+    };
+    const flushSet = this.flushers.get(document.uri.toString()) ?? new Set();
+    flushSet.add(flusher);
+    this.flushers.set(document.uri.toString(), flushSet);
 
     // The webview sends no edit on open (no normalization rewrite); edits
     // follow VS Code's save behavior, or `saveOnEdit`.
@@ -333,6 +433,55 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
     this.pairDiffPane(pane);
 
     const msgDisposable = webview.onDidReceiveMessage(async (msg) => {
+      if (typeof msg?.requestId === "string" && msg.requestId.startsWith("host-")) {
+        this.pendingReplies.get(msg.requestId)?.(msg);
+        this.pendingReplies.delete(msg.requestId);
+        return;
+      }
+      try {
+        if (msg.type === "undo" || msg.type === "redo") {
+          // One history: VS Code's, for typing, layout and source edits alike.
+          await enqueue(document.uri, async () => undefined);
+          webviewPanel.reveal(undefined, false);
+          await vscode.commands.executeCommand(msg.type);
+          return;
+        }
+        if (msg.type === "save") {
+          await enqueue(document.uri, async () => undefined);
+          if (!isReadonly && document.isDirty) await document.save();
+          return;
+        }
+        if (msg.type === "masters") {
+          webview.postMessage({ type: "mastersResult", requestId: msg.requestId, ...(await this.mastersPayload(document, webview)) });
+          return;
+        }
+        if (msg.type === "masterAction") {
+          const result = await this.masterAction(document, msg);
+          webview.postMessage({ type: "masterActionResult", requestId: msg.requestId, result: result ?? null, ...(await this.mastersPayload(document, webview)) });
+          return;
+        }
+        if (msg.type === "preflight") {
+          await enqueue(document.uri, async () => undefined);
+          webview.postMessage({ type: "preflightResult", requestId: msg.requestId, report: await preflight(this, document.uri) });
+          return;
+        }
+        if (msg.type === "exportDocx") {
+          await vscode.commands.executeCommand("markdownStudio.exportDocx", document.uri);
+          return;
+        }
+        if (msg.type === "revealSource" && typeof msg.line === "number") {
+          const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preserveFocus: false });
+          const pos = new vscode.Position(Math.max(0, msg.line - 1), 0);
+          editor.selection = new vscode.Selection(pos, pos);
+          editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
+          return;
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (msg.requestId) webview.postMessage({ type: `${msg.type}Result`, requestId: msg.requestId, error: message });
+        vscode.window.showErrorMessage(`Markdown Studio: ${message}`);
+        return;
+      }
       if (msg.type === "diffScroll") {
         pane.peer?.webview.postMessage({ ...msg, type: "diffScrollTo" });
         return;
@@ -352,7 +501,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
       if (msg.type === "ready") {
         webview.postMessage({
           type: "init",
-          content: document.getText(),
+          ...sync.snapshot(),
           baseUri,
           docFolderPath,
           filePath: document.uri.fsPath,
@@ -368,6 +517,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           gmcVersion: String(this.context.extension.packageJSON.version ?? ""),
         });
         webview.postMessage({ type: "customCss", css: await readCustomCss() });
+        void this.mastersPayload(document, webview).then((payload) => webview.postMessage({ type: "mastersResult", ...payload }));
         pane.ready = true;
         sendDiff(pane);
         if (document.uri.scheme === "pi-mr") void sendReview(document, webview, { action: "load" });
@@ -623,15 +773,9 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
           webview.postMessage({ type: "imageUploaded", src: null });
         }
       } else if (msg.type === "edit") {
-        if (isReadonly) return;
-        // Only the changed span is replaced (cursors, folding and scroll of a source
-        // editor on the same file stay put; one undo step as before).
-        const change = minimalEdit(document.getText(), withEol(msg.content as string, document.eol === vscode.EndOfLine.CRLF));
-        if (!change) return;
-        pendingWebviewEdits++;
-        const edit = new vscode.WorkspaceEdit();
-        edit.replace(document.uri, new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.text);
-        await vscode.workspace.applyEdit(edit);
+        // Versioned replacements (panelSync.ts); only changed spans are written, so cursors,
+        // folding and scroll of a source editor on the same file stay put.
+        await sync.edit(msg);
         if (
           vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>("saveOnEdit", false)
         ) {
@@ -672,16 +816,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         if (e.contentChanges.length === 0) return;
         sendDiff(pane);
         if (pane.peer) sendDiff(pane.peer);
-
-        if (pendingWebviewEdits > 0) {
-          pendingWebviewEdits--;
-          return;
-        }
-
-        webview.postMessage({
-          type: "update",
-          content: document.getText(),
-        });
+        sync.onDidChange();
       },
     );
 
@@ -693,6 +828,8 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
       if (pane.peer) pane.peer.peer = undefined;
       msgDisposable.dispose();
       docChangeDisposable.dispose();
+      flushSet.delete(flusher);
+      if (!flushSet.size) this.flushers.delete(document.uri.toString());
       this.openWebviews.delete(webview);
       if (this.webviewByUri.get(uriKey) === webview) this.webviewByUri.delete(uriKey);
     });

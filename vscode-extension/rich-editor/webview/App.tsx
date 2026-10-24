@@ -24,7 +24,6 @@ import { TableControls } from "./components/TableControls";
 import { TableFillHandle } from "./components/TableFillHandle";
 import { ImageInsertDialog } from "./components/ImageInsertDialog";
 import { FrontmatterPanel } from "./components/FrontmatterPanel";
-import { ToolkitMenu } from "./components/ToolkitMenu";
 import { useSettingsPanel } from "./hooks/useSettingsPanel";
 import { useAppearance } from "./hooks/useAppearance";
 import { matchesBinding, selectWordAtCursor } from "./utils";
@@ -32,10 +31,23 @@ import { useEditorState } from "./hooks/useEditorState";
 import { useClipboardHandlers } from "./hooks/useClipboardHandlers";
 import { useDragDrop } from "./hooks/useDragDrop";
 import { vscodeApi } from "./vscode-api";
+import { HostHistory } from "./extensions/StudioNodes";
+import { Pagination } from "./studio/pagination";
+import { StudioIntegrity, bindActions } from "./studio/actions";
+import { Shell, hostRedo, hostUndo } from "./studio/Shell";
+import { PageLayer, Ruler, StyleSheetCss, setZoom, manualZoom } from "./studio/PageLayer";
+import { ObjectLayer } from "./studio/ObjectLayer";
+import { studio, useStudio } from "./studio/store";
+import type { DocumentSync } from "./studio/documentSync";
+import { parseBlockProps } from "./extensions/StudioNodes";
+import "./studio/bridge";
 
 export function App() {
   const handleUpdateRef = useRef<() => void>(() => {});
+  // The editor container is the scroller (sticky headings, outline, search and line numbers rely on it).
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRef = editorContainerRef;
+  const syncRef = useRef<DocumentSync | null>(null);
 
   const {
     settings,
@@ -48,7 +60,16 @@ export function App() {
   useAppearance(settings);
 
   const editor = useEditor({
-    extensions: [...contentExtensions(), ZenFocus, SlashCommand, DiffMarks, ReviewThreads],
+    extensions: [
+      ...contentExtensions({ history: false }),
+      ZenFocus,
+      SlashCommand,
+      DiffMarks,
+      ReviewThreads,
+      HostHistory.configure({ onUndo: hostUndo, onRedo: hostRedo }),
+      Pagination,
+      StudioIntegrity,
+    ],
     editorProps: {
       attributes: { class: "tiptap-editor" },
       // Excel-like ranges: a copied cell selection goes out as TSV (its
@@ -87,9 +108,17 @@ export function App() {
     toggleDiff,
     frontmatter,
     setFrontmatter,
-    addFrontmatter,
-  } = useEditorState({ editor, settingsRef, handleUpdateRef, applySettings });
+  } = useEditorState({ editor, settingsRef, handleUpdateRef, applySettings, syncRef });
   const review = useReview(editor);
+  const pageView = useStudio((s) => s.pageView);
+  const zoom = useStudio((s) => s.zoom);
+  const layout = useStudio((s) => s.layout);
+  const showRulers = useStudio((s) => s.showRulers);
+  const masterEdit = useStudio((s) => s.masterEdit);
+
+  useEffect(() => {
+    if (editor && syncRef.current) bindActions(editor, syncRef.current);
+  }, [editor, syncRef.current]);
 
   useClipboardHandlers(editor, baseUri, docFolderPath, settingsRef, uploadImage);
   const { dragOver } = useDragDrop(editor, uploadImage, editorContainerRef);
@@ -106,15 +135,18 @@ export function App() {
       if (e.data?.type === "toggleZen") setZen((z) => !z);
     };
     window.addEventListener("message", handler);
-    return () => window.removeEventListener("message", handler);
-  }, []);
+    const diff = () => toggleDiff();
+    window.addEventListener("ms:toggleDiff", diff);
+    return () => {
+      window.removeEventListener("message", handler);
+      window.removeEventListener("ms:toggleDiff", diff);
+    };
+  }, [toggleDiff]);
 
   // Keyboard shortcuts (spans settings + search concerns)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault(); // prevent browser "Save HTML" dialog
-      } else if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f") {
         e.preventDefault();
         setSearchVisible(true);
       } else if (e.key === "Escape") {
@@ -132,15 +164,10 @@ export function App() {
         e.preventDefault();
         const selected = selectWordAtCursor(editor);
         if (selected || !editor.state.selection.empty) {
-          // Queue after Tiptap's selection transaction settles so the
-          // bubble menu plugin has mounted/positioned before we switch
-          // it to keyboard-nav mode.
           requestAnimationFrame(() => {
             window.dispatchEvent(new CustomEvent("btrmk:focusBubbleMenu"));
           });
         } else {
-          // Cursor not inside a word — still focus so any follow-up
-          // selection drag will show the menu.
           editor.commands.focus();
         }
       }
@@ -169,6 +196,86 @@ export function App() {
     return () => window.removeEventListener("message", handler);
   }, []);
 
+  // Current page (caret / viewport), word count, fit width, scroll to page.
+  useEffect(() => {
+    if (!editor) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const words = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const text = editor.state.doc.textBetween(0, editor.state.doc.content.size, " ", " ");
+        let title = "";
+        editor.state.doc.forEach((n) => {
+          if (!title && n.type.name === "heading") title = n.textContent;
+        });
+        studio.set({ words: (text.match(/\S+/g) ?? []).length, title: title || studio.get().fileName.replace(/\.md$/i, "") });
+      }, 400);
+    };
+    const page = () => {
+      const l = studio.get().layout;
+      if (!l) return;
+      try {
+        const coords = editor.view.coordsAtPos(editor.state.selection.from);
+        const root = editor.view.dom.getBoundingClientRect();
+        const y = (coords.top - root.top) / (studio.get().zoom || 1);
+        const index = l.pages.findIndex((p) => y < p.top + p.height + 14);
+        studio.set({ currentPage: Math.max(1, index + 1 || l.pages.length) });
+      } catch {
+        // Position not rendered yet.
+      }
+    };
+    editor.on("update", words);
+    editor.on("selectionUpdate", page);
+    words();
+    const fit = () => {
+      const l = studio.get().layout;
+      const w = scrollRef.current?.clientWidth;
+      if (l && w) setZoom((w - 48) / l.width);
+    };
+    const toPage = (e: Event) => {
+      const l = studio.get().layout;
+      const p = l?.pages[(e as CustomEvent<number>).detail];
+      if (p && scrollRef.current) scrollRef.current.scrollTo({ top: p.top * (studio.get().zoom || 1), behavior: "smooth" });
+    };
+    window.addEventListener("ms:fit", fit);
+    window.addEventListener("ms:scrollToPage", toPage);
+    return () => {
+      editor.off("update", words);
+      editor.off("selectionUpdate", page);
+      window.removeEventListener("ms:fit", fit);
+      window.removeEventListener("ms:scrollToPage", toPage);
+    };
+  }, [editor]);
+
+  // Narrow panels: fit the page width until the user picks a zoom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const fitIfNeeded = () => {
+      const l = studio.get().layout;
+      if (!l || manualZoom) return;
+      const fit = Math.min(1, (el.clientWidth - 32) / l.width);
+      if (Math.abs(fit - studio.get().zoom) > 0.01) setZoom(fit);
+    };
+    const ro = new ResizeObserver(fitIfNeeded);
+    ro.observe(el);
+    fitIfNeeded();
+    return () => ro.disconnect();
+  }, [layout?.width]);
+
+  // Ctrl+wheel zoom.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      setZoom(studio.get().zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), true);
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  });
+
   const handleSetupChoice = (choice: SetupChoice) => {
     setSetupPromptVisible(false);
     if (choice === "review") setSettingsVisible(true);
@@ -177,164 +284,93 @@ export function App() {
 
   const dismissSetupPrompt = () => {
     setSetupPromptVisible(false);
-    // Treat dismissal as "keep defaults" — record consent so the host
-    // doesn't re-prompt on the next file open.
     vscodeApi.postMessage({ type: "setupPromptChoice", choice: "keep" });
   };
 
   if (!editor) return null;
+  const $from = editor.state.selection.$from;
+  const blockProps = $from.depth ? parseBlockProps($from.node(1).attrs.msBlock) : {};
+  const paged = pageView && !diffVisible;
 
   return (
-    <div className={"editor-layout" + (review.enabled ? " has-review" : "")}>
-      <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef}>
-        <SearchBar
-          visible={searchVisible}
-          onClose={(activeRange) => {
-            setSearchVisible(false);
-            if (activeRange && editor) {
-              try {
-                const pos = editor.view.posAtDOM(
-                  activeRange.startContainer,
-                  activeRange.startOffset,
-                );
-                editor.commands.focus();
-                editor.commands.setTextSelection(pos);
-              } catch {
-                editor.commands.focus();
+    <Shell editor={editor} readonly={readonly} onSource={switchToSource} onFind={() => setSearchVisible(true)}>
+      <StyleSheetCss />
+      <div className={"editor-layout" + (review.enabled ? " has-review" : "") + (paged ? " ms-paged" : " ms-continuous")}>
+        <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef}>
+          <SearchBar
+            visible={searchVisible}
+            onClose={(activeRange) => {
+              setSearchVisible(false);
+              if (activeRange && editor) {
+                try {
+                  const pos = editor.view.posAtDOM(activeRange.startContainer, activeRange.startOffset);
+                  editor.commands.focus();
+                  editor.commands.setTextSelection(pos);
+                } catch {
+                  editor.commands.focus();
+                }
               }
-            }
+            }}
+          />
+          {status && <div className="status-bar">{status}</div>}
+          {review.enabled && <div className="ms-review-strip"><ReviewBar review={review} /></div>}
+          <SettingsPanel visible={settingsVisible} settings={settings} onChange={updateSettings} onClose={() => setSettingsVisible(false)} />
+          <SetupPrompt visible={setupPromptVisible} onChoice={handleSetupChoice} onDismiss={dismissSetupPrompt} />
+          {diffVisible && diffData && (
+            <DiffView
+              oldContent={diffData.headContent}
+              newContent={currentMarkdown}
+              fileName={diffData.fileName}
+              baseUri={baseUri.current}
+              layout={settings.diffLayout}
+              mode={settings.diffMode}
+              onClose={() => setDiffVisible(false)}
+              onLayoutChange={(layout) => updateSettings({ ...settings, diffLayout: layout })}
+              onModeChange={(diffMode) => updateSettings({ ...settings, diffMode })}
+            />
+          )}
+          {!diffVisible && !paged && <StickyHeadings />}
+          <FrontmatterPanel value={frontmatter} readonly={readonly} onChange={setFrontmatter} />
+          {masterEdit && <div className="ms-master-mode-strip" role="status">Master edit mode: the paper previews <strong>{masterEdit.name}</strong>. Save or cancel in the inspector.</div>}
+          {paged && showRulers && <Ruler indentLeft={blockProps.indentLeft} firstLine={blockProps.firstLine} indentRight={blockProps.indentRight} />}
+            <div className="ms-paper-sizer" style={paged && layout ? { height: layout.height * zoom + 48, width: layout.width * zoom } : undefined}>
+              <div className="ms-paper" style={paged ? { transform: `scale(${zoom})`, width: layout?.width } : undefined}>
+                {paged && <PageLayer />}
+                {(settings.lineNumbers || review.enabled) && !paged && (
+                  <LineNumbers editor={editor} markdown={review.enabled ? review.source : undefined} review={review.enabled ? review : undefined} />
+                )}
+                <EditorContent editor={editor} />
+                <ObjectLayer editor={editor} />
+                {review.enabled && <ReviewLayer editor={editor} review={review} />}
+              </div>
+            </div>
+          {!readonly && <EditorBubbleMenu editor={editor} />}
+          {!readonly && !zen && zoom === 1 && <BlockHandle editor={editor} containerRef={editorContainerRef} gutter={settings.lineNumbers && !paged ? 40 : 0} />}
+          {!diffVisible && <TableFillHandle editor={editor} />}
+          <TableControls editor={editor} containerRef={editorContainerRef} verticalAlign={settings.tableVerticalAlign} onVerticalAlign={(tableVerticalAlign) => updateSettings({ ...settings, tableVerticalAlign })} />
+          {!zen && <TableFilterMenu editor={editor} containerRef={editorContainerRef} />}
+        </div>
+        {!paged && settings.outlineStyle === "panel" && (
+          <div className="toc-wrapper">
+            <TableOfContents />
+          </div>
+        )}
+        {!paged && settings.outlineStyle === "rail" && <OutlineRail />}
+        {zen && (
+          <div className="zen-bar">
+            <button onClick={() => setZen(false)}>Exit Zen Mode (Esc)</button>
+          </div>
+        )}
+        <ImageInsertDialog
+          visible={imageDialogVisible}
+          onClose={() => setImageDialogVisible(false)}
+          onUploadFile={uploadImage}
+          onInsert={(src) => {
+            setImageDialogVisible(false);
+            editor?.chain().focus().setImage({ src }).run();
           }}
         />
-        {status && <div className="status-bar">{status}</div>}
-        <div className="editor-toolbar">
-          {review.enabled && <ReviewBar review={review} />}
-          {readonly && <div className="readonly-badge">Read-only</div>}
-          {!readonly && (
-            <button
-              className={"diff-button" + (diffVisible ? " active" : "")}
-              onClick={toggleDiff}
-              title="Diff against HEAD"
-              aria-label="Toggle git diff view"
-            >
-              Diff
-            </button>
-          )}
-          {!readonly && <ToolkitMenu />}
-          <button
-            className="diff-button"
-            onClick={() => setZen(true)}
-            title="Zen mode (Ctrl+. / ⌘.)"
-            aria-label="Enter zen mode"
-          >
-            Zen
-          </button>
-          <button
-            className="settings-button"
-            onClick={() => setSettingsVisible(true)}
-            title="Markdown settings"
-            aria-label="Open markdown settings"
-          >
-            ⚙
-          </button>
-        </div>
-        <SettingsPanel
-          visible={settingsVisible}
-          settings={settings}
-          onChange={updateSettings}
-          onClose={() => setSettingsVisible(false)}
-        />
-        <SetupPrompt
-          visible={setupPromptVisible}
-          onChoice={handleSetupChoice}
-          onDismiss={dismissSetupPrompt}
-        />
-        {diffVisible && diffData && (
-          <DiffView
-            oldContent={diffData.headContent}
-            newContent={currentMarkdown}
-            fileName={diffData.fileName}
-            baseUri={baseUri.current}
-            layout={settings.diffLayout}
-            mode={settings.diffMode}
-            onClose={() => setDiffVisible(false)}
-            onLayoutChange={(layout) =>
-              updateSettings({ ...settings, diffLayout: layout })
-            }
-            onModeChange={(diffMode) =>
-              updateSettings({ ...settings, diffMode })
-            }
-          />
-        )}
-        {!diffVisible && <StickyHeadings />}
-        <div className="toggle-source-row">
-          <span
-            className="toggle-source"
-            onClick={switchToSource}
-            role="button"
-            tabIndex={0}
-          >
-            Open in Default Editor
-          </span>
-          {frontmatter === null && !readonly && (
-            <span
-              className="toggle-source"
-              onClick={addFrontmatter}
-              role="button"
-              tabIndex={0}
-              title="Add a YAML frontmatter block at the top of the file"
-            >
-              Add Frontmatter
-            </span>
-          )}
-        </div>
-        <FrontmatterPanel
-          value={frontmatter}
-          readonly={readonly}
-          onChange={setFrontmatter}
-        />
-        {(settings.lineNumbers || review.enabled) && <LineNumbers editor={editor}
-          markdown={review.enabled ? review.source : undefined}
-          review={review.enabled ? review : undefined}
-        />}
-        <EditorContent editor={editor} />
-        {review.enabled && <ReviewLayer editor={editor} review={review} />}
-        {!readonly && <EditorBubbleMenu editor={editor} />}
-        {!readonly && !zen && (
-          <BlockHandle
-            editor={editor}
-            containerRef={editorContainerRef}
-            gutter={settings.lineNumbers ? 40 : 0}
-          />
-        )}
-        {!diffVisible && <TableFillHandle editor={editor} />}
-        <TableControls
-          editor={editor}
-          containerRef={editorContainerRef}
-          verticalAlign={settings.tableVerticalAlign}
-          onVerticalAlign={(tableVerticalAlign) => updateSettings({ ...settings, tableVerticalAlign })}
-        />
-        {!zen && <TableFilterMenu editor={editor} containerRef={editorContainerRef} />}
       </div>
-      {settings.outlineStyle === "panel" && (
-        <div className="toc-wrapper">
-          <TableOfContents />
-        </div>
-      )}
-      {settings.outlineStyle === "rail" && <OutlineRail />}
-      {zen && (
-        <div className="zen-bar">
-          <button onClick={() => setZen(false)}>Exit Zen Mode (Esc)</button>
-        </div>
-      )}
-      <ImageInsertDialog
-        visible={imageDialogVisible}
-        onClose={() => setImageDialogVisible(false)}
-        onUploadFile={uploadImage}
-        onInsert={(src) => {
-          setImageDialogVisible(false);
-          editor?.chain().focus().setImage({ src }).run();
-        }}
-      />
-    </div>
+    </Shell>
   );
 }

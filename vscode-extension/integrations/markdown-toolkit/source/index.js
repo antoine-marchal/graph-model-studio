@@ -2,7 +2,7 @@
 
 const vscode = require('vscode')
 const { copyAsHtml } = require('./copy-as-html')
-const { registerExports } = require('./export')
+const { registerExports, GmcExportRenderer } = require('./export')
 const { registerPaste } = require('./paste')
 const { formatMarkdownTables } = require('./tables')
 
@@ -38,4 +38,5 @@ function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate, formatTables }
+// GmcExportRenderer: GMC fences → PNG for the Markdown Studio DOCX compiler (rich editor).
+module.exports = { activate, deactivate, formatTables, GmcExportRenderer }

@@ -105,6 +105,9 @@ export interface BetterMarkdownSettings {
   /** HTML / PDF / PNG export colors: light on no background, or as in the editor. */
   exportTheme: "light" | "editor";
 
+  /** Paginated paper view (pages, margins, headers / footers); false = one continuous column. */
+  pageView: boolean;
+
   /**
    * Folder for assets — .gmc files created by a GMC block's "to file", pasted
    * or dropped images: relative to the document, `${workspaceFolder}/…`, or
@@ -173,6 +176,7 @@ export const DEFAULT_SETTINGS: BetterMarkdownSettings = {
   tocHeading: true,
   tocHeadingText: "Table of content",
   exportTheme: "light",
+  pageView: true,
   assetsFolder: "",
 };
 
@@ -210,6 +214,7 @@ export const SETTING_KEYS: (keyof BetterMarkdownSettings)[] = [
   "tocHeading",
   "tocHeadingText",
   "exportTheme",
+  "pageView",
   "assetsFolder",
 ];
 

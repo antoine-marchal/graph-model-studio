@@ -24,7 +24,6 @@
   "s025.export.preview.as.html": "Export Preview as HTML",
   "s026.export.preview.as.pdf": "Export Preview as PDF",
   "s027.export.preview.as.png": "Export Preview as PNG",
-  "s028.export.as.docx.with.pandoc": "Export as DOCX with Pandoc",
   "s029.toggle.zen.mode": "Toggle Zen Mode",
   "s030.insert.file.embed": "Insert File Embed…",
   "s031.insert.file.link": "Insert File Link…",
@@ -105,5 +104,17 @@
   "s129.merge.request.target.branch.for": "Merge request target branch for the “MR base” comparison (empty: origin's default branch).",
   "s130.no.template.imported.yet.import": "No template imported yet. [Import a PowerPoint Template](command:corporateSlides.importTemplate)\n[Import a PowerPoint Presentation](command:corporateSlides.importPresentation)",
   "s200.deck.thumbnail": "Write <deck>.png (first slide) next to the deck when it is saved; Markdown Studio deck blocks show it.",
-  "s201.deck.foldFrontmatter": "Fold the YAML headers (deck and slides) when a .deck source opens in the text editor, so the slide text reads first."
+  "s201.deck.foldFrontmatter": "Fold the YAML headers (deck and slides) when a .deck source opens in the text editor, so the slide text reads first.",
+  "s028.export.as.editable.docx": "Export as editable DOCX",
+  "s200.export.editable.docx": "Export editable DOCX",
+  "s201.import.word.template.as.master": "Import Word template as master",
+  "s202.manage.document.masters": "Manage document masters",
+  "s203.run.corporate.preflight": "Run corporate preflight",
+  "s204.pandoc.is.no.longer.used": "Pandoc is no longer used: DOCX export is built in.",
+  "s205.reference.docs.are.replaced.by.masters": "Reference documents are replaced by Markdown Studio masters: use \"Import Word template as master\".",
+  "s206.show.documents.as.paginated.pages": "Show documents as paginated pages (paper, margins, headers and footers). Off: one continuous column.",
+  "s207.permissive.export": "Write the document; unrepresentable content uses documented fallbacks listed in the report.",
+  "s208.strict.export": "Refuse to write a document that would lose content.",
+  "s209.docx.export.mode": "How **Export editable DOCX** handles content Word cannot represent.",
+  "s210.hidden.objects.in.docx": "Whether objects hidden in the document are written to DOCX."
 }

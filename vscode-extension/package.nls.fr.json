@@ -24,7 +24,6 @@
   "s025.export.preview.as.html": "Exporter l'aperçu en HTML",
   "s026.export.preview.as.pdf": "Exporter l'aperçu en PDF",
   "s027.export.preview.as.png": "Exporter l'aperçu en PNG",
-  "s028.export.as.docx.with.pandoc": "Exporter en DOCX avec Pandoc",
   "s029.toggle.zen.mode": "Basculer le mode zen",
   "s030.insert.file.embed": "Insérer une inclusion de fichier…",
   "s031.insert.file.link": "Insérer un lien vers un fichier…",
@@ -105,5 +104,17 @@
   "s129.merge.request.target.branch.for": "Branche cible des merge requests pour la comparaison « base MR » (vide : branche par défaut d'origin).",
   "s130.no.template.imported.yet.import": "Aucun gabarit importé. [Importer un gabarit PowerPoint](command:corporateSlides.importTemplate)\n[Importer une présentation PowerPoint](command:corporateSlides.importPresentation)",
   "s200.deck.thumbnail": "Écrire <deck>.png (première diapositive) à côté de la présentation à chaque enregistrement ; les blocs « deck » de Markdown Studio l'affichent.",
-  "s201.deck.foldFrontmatter": "Replier les en-têtes YAML (présentation et diapositives) à l'ouverture d'une source .deck dans l'éditeur de texte, pour lire d'abord le texte des diapositives."
+  "s201.deck.foldFrontmatter": "Replier les en-têtes YAML (présentation et diapositives) à l'ouverture d'une source .deck dans l'éditeur de texte, pour lire d'abord le texte des diapositives.",
+  "s028.export.as.editable.docx": "Exporter en DOCX modifiable",
+  "s200.export.editable.docx": "Exporter en DOCX modifiable",
+  "s201.import.word.template.as.master": "Importer un modèle Word comme masque",
+  "s202.manage.document.masters": "Gérer les masques de document",
+  "s203.run.corporate.preflight": "Lancer le contrôle avant livraison",
+  "s204.pandoc.is.no.longer.used": "Pandoc n'est plus utilisé : l'export DOCX est intégré.",
+  "s205.reference.docs.are.replaced.by.masters": "Les documents de référence sont remplacés par les masques Markdown Studio : utilisez « Importer un modèle Word comme masque ».",
+  "s206.show.documents.as.paginated.pages": "Afficher les documents en pages (papier, marges, en-têtes et pieds de page). Désactivé : une seule colonne continue.",
+  "s207.permissive.export": "Écrire le document ; le contenu non représentable utilise des solutions de repli listées dans le rapport.",
+  "s208.strict.export": "Refuser d'écrire un document qui perdrait du contenu.",
+  "s209.docx.export.mode": "Traitement par **Exporter en DOCX modifiable** du contenu que Word ne peut pas représenter.",
+  "s210.hidden.objects.in.docx": "Écrire ou non dans le DOCX les objets masqués du document."
 }

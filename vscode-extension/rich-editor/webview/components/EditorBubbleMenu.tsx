@@ -406,7 +406,9 @@ export function EditorBubbleMenu({ editor }: Props) {
           e.isActive("gmcBlock") ||
           e.isActive("rawHtmlBlock") ||
           e.isActive("githubEmbed") ||
-          e.isActive("image")
+          e.isActive("image") ||
+          // Positioned objects and breaks are formatted from the ribbon / inspector.
+          ("node" in selection && ["msObject", "msPageBreak", "msSection"].includes((selection as any).node?.type.name))
         ) {
           return false;
         }

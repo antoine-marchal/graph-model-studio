@@ -26,6 +26,11 @@ The extension uses the same parser, serializer, notation registry, layout engine
 
 Every Markdown file gets an **Open in Rich Editor** CodeLens (or `Ctrl+Shift+M` / `Cmd+Shift+M`, or the editor title button). The rich editor and the text editor stay in sync; switch back at any time.
 
+-   **Document studio**: paginated paper (A4 / Letter / custom, margins, portrait / landscape sections, page and section breaks, keep-with-next, widow / orphan control, tables split with repeated headers), ribbon, outline / pages / masters rail, inspector with styles, layers and review, rulers and zoom. The Markdown stays the source: only edited blocks are rewritten, and undo is VS Code's.
+-   **Objects**: text boxes, shapes, pictures and connectors anchored to a paragraph or fixed on the page, with square / top-and-bottom wrap, front / behind planes, groups, locks, hiding, snapping and keyboard nudges.
+-   **Masters**: import a corporate `.docx` / `.dotx` as masters (styles, theme, numbering, page designs, first / even / default headers and footers, letterhead pictures) with an import report; starters Body, Cover, Chapter opener, Letterhead and Landscape appendix; master designer with Reset to master for local style overrides.
+-   **Editable DOCX**: native Word paragraphs, styles, lists, tables, sections, header / footer fields, pictures, text boxes, shapes, groups and attached connectors — without Pandoc, with a report of fallbacks. The source format and support matrix are documented in `rich-editor/STUDIO.md` (source repository).
+
 -   **Writing**: `/` slash commands, checkboxes, tables, KaTeX math (inline and block), quotes, code blocks with highlighting, Mermaid diagrams, GitHub URL cards, highlights, alignment blocks, and image upload/paste.
 -   **Blocks and tables**: Notion-style block handle (add, drag, duplicate, delete), column/row resizing, spreadsheet-like range selection with sum and average, fill handle, sort and view-only filters.
 -   **GMC diagrams**: ` ```gmc ` / ` ```graphmodel ` fences render with the same renderer as the preview. Each block edits its `id=`, `view=`, `theme=`, `width=`, `height=` attributes, opens the **interactive** graph editor in a modal (changes sync back into the block), moves the diagram **to file** (`.gmc` + embed), or exports a **png**. `/gmc` inserts a starter model.
@@ -185,7 +190,7 @@ Use **Paste as Markdown: Copy as HTML** to copy a Markdown selection (or file fr
 | **Markdown Toolkit: Export Preview as PDF**      | Exports through a local Chromium, Edge, or Chrome headless browser.                                                                                                       |
 | **Markdown Toolkit: Export Preview as PNG**      | Captures the styled preview using the configured PNG viewport.                                                                                                            |
 | **Markdown Toolkit: Export Preview\...**         | Preview-title button that opens the HTML/PDF/PNG/DOCX format picker.                                                                                                      |
-| **Markdown Toolkit: Export as DOCX with Pandoc** | Generates DOCX and lets you select an optional reference DOCX template.                                                                                                   |
+| **Markdown Toolkit: Export as editable DOCX**    | Generates an editable Word document with the document's master (no Pandoc); a report lists native content and fallbacks.                                                  |
 
 ## Settings
 
@@ -203,15 +208,16 @@ Use **Paste as Markdown: Copy as HTML** to copy a Markdown selection (or file fr
 | `markdownToolkit.export.browserPath`        | empty   | Optional Chromium/Chrome/Edge executable for PDF and PNG export.                         |
 | `markdownToolkit.export.pngWidth`           | `1440`  | PNG export viewport width.                                                               |
 | `markdownToolkit.export.pngHeight`          | `10000` | PNG export capture height (increase for very long documents).                            |
-| `markdownToolkit.pandoc.path`               | empty   | Optional path to the Pandoc executable.                                                  |
-| `markdownToolkit.pandoc.referenceDoc`       | empty   | Optional default reference DOCX template offered during export.                          |
+| `markdownStudio.docx.mode`                  | `permissive` | `strict` refuses to write a DOCX that would lose content.                           |
+| `markdownStudio.docx.hiddenObjects`         | `omit`  | Whether objects hidden in the document are written to DOCX.                              |
+| `markdownToolkit.pandoc.*`                  | empty   | Deprecated, ignored (DOCX export is built in; import reference documents as masters).    |
 | `corporateSlides.exportFolder`              | `out`   | Slides Studio export folder, relative to the deck.                                       |
 | `corporateSlides.referenceThumbnails`       | `true`  | Render layout thumbnails with PowerPoint during template import (Windows, if installed). |
 | `corporateSlides.mrTargetBranch`            | empty   | Merge request target branch for the "base MR" visual diff (empty: origin's default).     |
 
 Named regions such as `<!-- embed:example --> … <!-- embed:example:end -->` are recognized as foldable blocks and collapse automatically after updates.
 
-PDF and PNG export require Edge, Chrome, or Chromium. DOCX export requires [Pandoc](https://pandoc.org/). GMC fences are rendered to PNG before Pandoc is run, and the Markdown document directory is included in Pandoc's resource path so relative images remain available.
+PDF and PNG export require Edge, Chrome, or Chromium. DOCX export is built in: GMC fences are rendered to pictures, relative images resolve against the document folder, and nothing is downloaded.
 
 The theme button in the interactive graph stores an explicit extension-level theme preference. That choice survives document refreshes, reopened previews, and VS Code restarts. Automatic Markdown PNG generation uses the same selected theme; an explicit `theme=` fence attribute overrides it for that diagram only.
 

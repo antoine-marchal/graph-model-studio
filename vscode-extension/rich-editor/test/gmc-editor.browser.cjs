@@ -27,10 +27,17 @@ window.__intervals = [];
 const setI = window.setInterval;
 window.setInterval = (fn, ms, ...a) => (window.__intervals.push(ms), setI(fn, ms, ...a));
 const reply = (m) => setTimeout(() => window.postMessage(m, '*'));
+// Versioned edits (src/panelSync.ts): replacements against a version, acknowledged.
+window.__doc = { text: ${JSON.stringify(content)}, version: 1 };
+const applyChanges = (t, cs) => { let o = '', at = 0; for (const c of cs) { o += t.slice(at, c.start) + c.text; at = c.end; } return o + t.slice(at); };
 window.acquireVsCodeApi = () => ({
   postMessage(m) {
     window.__msgs.push(m);
-    if (m.type === 'ready') reply({ type: 'init', content: ${JSON.stringify(content)}, baseUri: 'https://file+.vscode-resource.vscode-cdn.net/c%3A/docs', docFolderPath: 'c:/docs', filePath: 'c:/docs/doc.md', isReadonly: false, settings: ${JSON.stringify(settings)}, gmcRuntimeUri: '/dist/markdown-preview/runtime.js', gmcEditorUri: '/fake/webview.js', gmcEditorCssUri: '/fake/webview.css', gmcVersion: 't' });
+    if (m.type === 'edit') {
+      window.__doc = { text: applyChanges(window.__doc.text, m.changes), version: window.__doc.version + 1 };
+      reply({ type: 'ack', id: m.id, version: window.__doc.version });
+    }
+    if (m.type === 'ready') reply({ type: 'init', content: ${JSON.stringify(content)}, version: 1, baseUri: 'https://file+.vscode-resource.vscode-cdn.net/c%3A/docs', docFolderPath: 'c:/docs', filePath: 'c:/docs/doc.md', isReadonly: false, settings: ${JSON.stringify(settings)}, gmcRuntimeUri: '/dist/markdown-preview/runtime.js', gmcEditorUri: '/fake/webview.js', gmcEditorCssUri: '/fake/webview.css', gmcVersion: 't' });
     if (m.type === 'gmcReadFile') reply({ type: 'gmcReadFileResult', requestId: m.requestId, source: 'model {}' });
     if (m.type === 'gmcViews') reply({ type: 'gmcViewsResult', requestId: m.requestId, views: ['context'] });
   },
@@ -74,8 +81,9 @@ async function openAndEdit(browser, doc, target) {
   await shell.waitFor({ state: 'detached', timeout: 3000 });
   await p.waitForTimeout(800);
   const msgs = await p.evaluate(() => window.__msgs);
+  const text = await p.evaluate(() => window.__doc.text);
   await p.close();
-  return { render, msgs };
+  return { render, msgs, text };
 }
 
 server.listen(0, async () => {
@@ -84,8 +92,9 @@ server.listen(0, async () => {
     const fence = await openAndEdit(browser, FENCE, '[data-testid="gmc-fence-preview"]');
     assert.equal(fence.render.view, 'context');
     assert.equal(fence.render.name, 'demo');
-    const edit = fence.msgs.filter((m) => m.type === 'edit').at(-1);
-    assert.ok(edit?.content.includes('```gmc id=demo view=context\nmodel {} // edited\n```'), 'fence edit not synced with its options');
+    assert.ok(fence.msgs.some((m) => m.type === 'edit'), 'fence edit not sent');
+    assert.ok(fence.text.includes('```gmc id=demo view=context\nmodel {} // edited\n```'), 'fence edit not synced with its options');
+    assert.ok(fence.text.startsWith('# Doc\n\n') && fence.text.endsWith('\n\nAfter.\n'), 'text around the fence kept');
 
     const linked = await openAndEdit(browser, LINKED, '.directive-content .image-block');
     assert.equal(linked.render.view, 'context');
@@ -93,7 +102,8 @@ server.listen(0, async () => {
     assert.equal(linked.msgs.filter((m) => m.type === 'edit').length, 0, 'linked edit rewrote the Markdown document');
     // Outline panel follows edits and scrolling without polling timers.
     content = `# One\n\n${'text\n\n'.repeat(80)}## Two\n\n${'text\n\n'.repeat(80)}`;
-    settings = { outlineStyle: 'panel' };
+    // The outline panel and sticky headings belong to the continuous view.
+    settings = { outlineStyle: 'panel', pageView: false };
     const p = await browser.newPage({ viewport: { width: 1200, height: 800 } });
     await p.goto(`http://localhost:${server.address().port}/`);
     await p.locator('.toc-entry').nth(1).waitFor({ timeout: 15_000 });
@@ -104,7 +114,9 @@ server.listen(0, async () => {
     // Ctrl+S sends the debounced edit at once (the save must include it).
     await p.keyboard.type('!');
     await p.keyboard.press('Control+s');
-    assert.ok((await p.evaluate(() => window.__msgs.filter((m) => m.type === 'edit').at(-1)?.content ?? '')).startsWith('# One renamed!\n'), 'Ctrl+S did not flush the pending edit');
+    await p.waitForFunction(() => window.__msgs.some((m) => m.type === 'save'), null, { timeout: 2000 });
+    const flushed = await p.evaluate(() => { const i = window.__msgs.findIndex((m) => m.type === 'save'); return { text: window.__doc.text, editBeforeSave: window.__msgs.slice(0, i).some((m) => m.type === 'edit') }; });
+    assert.ok(flushed.editBeforeSave && flushed.text.startsWith('# One renamed!\n'), 'Ctrl+S did not flush the pending edit before saving');
     await p.locator('.editor-container').evaluate((c) => c.scrollTo(0, c.scrollHeight));
     await p.waitForFunction(() => document.querySelector('.toc-active')?.textContent === 'Two', null, { timeout: 2000 });
     await p.locator('.sticky-heading').first().waitFor({ timeout: 2000 });

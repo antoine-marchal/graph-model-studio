@@ -8,7 +8,6 @@ const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const MarkdownIt = require('markdown-it')
 const { MarkdownEmbedder } = require('../../markdown-code-embedder/embedder')
-const { PANDOC_FROM, prepareReferenceDoc, writeDocxFilter } = require('./docx')
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false })
 
@@ -110,27 +109,6 @@ async function replaceGmcFences(source, renderer) {
   return result + source.slice(cursor)
 }
 
-async function replaceGmcFencesWithFiles(source, renderer, outputDirectory) {
-  const regex = /^(`{3,}|~{3,})\s*(gmc|graphmodel)\b([^\n]*)\r?\n([\s\S]*?)^\1\s*$/gmi
-  const matches = [...source.matchAll(regex)]
-  let cursor = 0
-  let result = ''
-  for (let index = 0; index < matches.length; index++) {
-    const match = matches[index]
-    result += source.slice(cursor, match.index)
-    const options = parseOptions(match[3] || '')
-    options.id ||= `diagram-${index + 1}`
-    const dataUrl = await renderer.render(match[4], options)
-    const comma = dataUrl.indexOf(',')
-    if (comma < 0) throw new Error(`Could not export GMC diagram ${options.id}.`)
-    const filename = `gmc-${String(index + 1).padStart(3, '0')}.png`
-    fs.writeFileSync(path.join(outputDirectory, filename), Buffer.from(dataUrl.slice(comma + 1), 'base64'))
-    result += `![GMC diagram: ${options.id}](${filename})`
-    cursor = match.index + match[0].length
-  }
-  return result + source.slice(cursor)
-}
-
 function documentHtml(title, body, dark) {
   const colors = dark
     ? 'color:#d4d4d4;background:#1e1e1e;--border:#444;--code:#2b2b2b;--link:#4daafc'
@@ -219,41 +197,6 @@ function runBrowser(browser, args) {
   }))
 }
 
-function findPandoc() {
-  const configured = vscode.workspace.getConfiguration('markdownToolkit.pandoc').get('path', '')
-  if (configured && fs.existsSync(configured)) return configured
-  const candidates = process.platform === 'win32' ? [
-    process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Pandoc', 'pandoc.exe'),
-    process.env.PROGRAMFILES && path.join(process.env.PROGRAMFILES, 'Pandoc', 'pandoc.exe'),
-  ] : ['/usr/local/bin/pandoc', '/usr/bin/pandoc', '/opt/homebrew/bin/pandoc']
-  return candidates.filter(Boolean).find(fs.existsSync) || (commandExists('pandoc') ? 'pandoc' : undefined)
-}
-
-function runProcess(executable, args) {
-  return new Promise((resolve, reject) => cp.execFile(executable, args, { timeout: 180_000, windowsHide: true }, (error, _stdout, stderr) => {
-    if (error) reject(new Error(stderr || error.message)); else resolve()
-  }))
-}
-
-async function chooseReferenceDoc() {
-  const configured = vscode.workspace.getConfiguration('markdownToolkit.pandoc').get('referenceDoc', '')
-  const choices = []
-  if (configured && fs.existsSync(configured)) choices.push({ label: 'Use configured DOCX template', description: configured, value: configured })
-  choices.push(
-    { label: 'No DOCX template', description: 'Use Pandoc default styles', value: '' },
-    { label: 'Choose DOCX template...', description: 'Select a reference .docx file', choose: true },
-  )
-  const choice = await vscode.window.showQuickPick(choices, { placeHolder: 'Choose a Pandoc DOCX template' })
-  if (!choice) return undefined
-  if (!choice.choose) return choice.value
-  const selected = await vscode.window.showOpenDialog({
-    canSelectMany: false,
-    filters: { 'Word document template': ['docx'] },
-    title: 'Choose Pandoc reference DOCX',
-  })
-  return selected?.[0]?.fsPath
-}
-
 async function chooseTarget(document, extension, label) {
   const basename = path.basename(document.fileName, path.extname(document.fileName))
   return vscode.window.showSaveDialog({
@@ -314,42 +257,13 @@ async function exportDocument(context, format) {
   vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`)
 }
 
-async function exportDocx(context) {
+/** Editable Word export without Pandoc: the Markdown Studio compiler (rich editor) owns it. */
+async function exportDocx() {
   const document = await resolveMarkdownDocument()
   if (!document) return vscode.window.showInformationMessage('Open a Markdown document before exporting it.')
-  const pandoc = findPandoc()
-  if (!pandoc) throw new Error('Pandoc was not found. Install Pandoc or configure markdownToolkit.pandoc.path.')
   const embedLinks = await chooseEmbedMode(document)
   if (embedLinks === undefined) return
-  const referenceDoc = await chooseReferenceDoc()
-  if (referenceDoc === undefined) return
-  const target = await chooseTarget(document, 'docx', 'Word document')
-  if (!target) return
-  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Exporting Markdown to DOCX with Pandoc...' }, async () => {
-    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'gmc-pandoc-export-'))
-    const input = path.join(temporaryDirectory, 'document.md')
-    let renderer
-    try {
-      let source = await prepareExportSource(document, embedLinks)
-      if (/^(`{3,}|~{3,})\s*(?:gmc|graphmodel)\b/gmi.test(source)) {
-        renderer = new GmcExportRenderer(context)
-        source = await replaceGmcFencesWithFiles(source, renderer, temporaryDirectory)
-      }
-      fs.writeFileSync(input, source, 'utf8')
-      const resourcePath = [path.dirname(document.fileName), temporaryDirectory].join(path.delimiter)
-      const reference = await prepareReferenceDoc(pandoc, referenceDoc, temporaryDirectory, runProcess)
-      const args = [
-        input, `--output=${target.fsPath}`, `--from=${PANDOC_FROM}`, '--standalone',
-        `--resource-path=${resourcePath}`, `--reference-doc=${reference}`,
-        `--lua-filter=${writeDocxFilter(temporaryDirectory)}`,
-      ]
-      await runProcess(pandoc, args)
-    } finally {
-      renderer?.dispose()
-      try { fs.rmSync(temporaryDirectory, { recursive: true, force: true }) } catch {}
-    }
-  })
-  vscode.window.showInformationMessage(`Exported ${path.basename(target.fsPath)}`)
+  return vscode.commands.executeCommand('markdownStudio.exportDocx', document.uri, { embedLinks })
 }
 
 async function showExportPicker(context) {
@@ -357,10 +271,10 @@ async function showExportPicker(context) {
     { label: '$(code) HTML', description: 'Self-contained styled preview', format: 'html' },
     { label: '$(file-pdf) PDF', description: 'Rendered with Edge, Chrome, or Chromium', format: 'pdf' },
     { label: '$(file-media) PNG', description: 'Long preview image', format: 'png' },
-    { label: '$(file) DOCX (Pandoc)', description: 'Choose an optional reference DOCX template', format: 'docx' },
+    { label: '$(file) DOCX (editable Word)', description: 'Native Word styles, sections, headers, tables and drawings; uses the document master', format: 'docx' },
   ], { placeHolder: 'Export Markdown preview' })
   if (!choice) return
-  return choice.format === 'docx' ? exportDocx(context) : exportDocument(context, choice.format)
+  return choice.format === 'docx' ? exportDocx() : exportDocument(context, choice.format)
 }
 
 function registerExports(context) {
@@ -382,11 +296,11 @@ function registerExports(context) {
     vscode.commands.registerCommand('markdownToolkit.exportHtml', guarded(() => exportDocument(context, 'html'))),
     vscode.commands.registerCommand('markdownToolkit.exportPdf', guarded(() => exportDocument(context, 'pdf'))),
     vscode.commands.registerCommand('markdownToolkit.exportPng', guarded(() => exportDocument(context, 'png'))),
-    vscode.commands.registerCommand('markdownToolkit.exportDocx', guarded(() => exportDocx(context))),
+    vscode.commands.registerCommand('markdownToolkit.exportDocx', guarded(() => exportDocx())),
   )
 }
 
 module.exports = {
-  prepareExportSource, chooseEmbedMode, GmcExportRenderer, documentHtml, exportDocx, findPandoc, registerExports,
-  renderMarkdownDocument, replaceGmcFences, replaceGmcFencesWithFiles, showExportPicker,
+  prepareExportSource, chooseEmbedMode, GmcExportRenderer, documentHtml, exportDocx, registerExports,
+  renderMarkdownDocument, replaceGmcFences, showExportPicker,
 }

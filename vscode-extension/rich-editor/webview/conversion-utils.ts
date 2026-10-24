@@ -1,3 +1,6 @@
+import { groupSpans, groupStudioChildren, sanitizeSpanStyle, studioRemarkRehypeHandlers } from "../document/remarkStudio";
+import { commentJson } from "../document/markers";
+
 /**
  * Shared conversion utilities used by both the production pipeline
  * (useVSCodeSync.ts, DOMParser-based) and the test pipeline
@@ -313,8 +316,8 @@ export function remarkGroupDirectives() {
     if (!Array.isArray(node.children)) return;
     node.children.forEach(walk);
     node.children = PHRASING_PARENTS.has(node.type)
-      ? groupMarks(node.children)
-      : groupDirectiveChildren(attachTableLayouts(node.children));
+      ? groupSpans(groupMarks(node.children))
+      : groupStudioChildren(groupDirectiveChildren(attachTableLayouts(node.children)));
   };
   return (tree: any) => walk(tree);
 }
@@ -349,6 +352,33 @@ export function rehypeUnwrapDirectives() {
       if (child.type === "element" && child.properties?.dataType === "align") {
         return [rawHtmlPre(`<div align="${child.properties.dataAlign}">`), ...child.children, rawHtmlPre("</div>")];
       }
+      if (child.type === "element" && child.properties?.dataType === "msObject") {
+        const open = rawHtmlPre(`<!-- ms:object ${commentJson({ id: String(child.properties.dataId) })} -->`);
+        const body = child.children.filter((c: any) => c.type === "element");
+        return body.length ? [open, ...child.children, rawHtmlPre("<!-- ms:endobject -->")] : [open];
+      }
+      if (child.type === "element" && child.properties?.dataType === "msPageBreak") return [rawHtmlPre("<!-- ms:pagebreak -->")];
+      if (child.type === "element" && child.properties?.dataType === "msSection") {
+        let props: object = {};
+        try {
+          props = JSON.parse(String(child.properties.dataProps ?? "{}"));
+        } catch {
+          // Unreadable props: an empty section marker still starts the section.
+        }
+        return [rawHtmlPre(`<!-- ms:section ${commentJson(props)} -->`)];
+      }
+      if (child.type === "element" && child.properties?.dataMsBlock) {
+        const json = String(child.properties.dataMsBlock);
+        delete child.properties.dataMsBlock;
+        let props: Record<string, unknown> = {};
+        try {
+          props = JSON.parse(json);
+        } catch {
+          return [child];
+        }
+        const kept = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== undefined && v !== null && v !== ""));
+        return Object.keys(kept).length ? [rawHtmlPre(`<!-- ms:block ${commentJson(kept)} -->`), child] : [child];
+      }
       if (child.type !== "element" || child.properties?.dataType !== "directive") return [child];
       const open = String(child.properties.dataOpen ?? "");
       const close = String(child.properties.dataClose ?? "");
@@ -369,6 +399,7 @@ const PHRASING_PARENTS = new Set([
 /** mathHandlers plus `code` (keeps fence meta) and block `html` handlers. */
 export const remarkRehypeHandlers: Record<string, (state: any, node: any, parent?: any) => any> = {
   ...mathHandlers,
+  ...studioRemarkRehypeHandlers,
   highlight(state: any, node: any): any {
     return {
       type: "element",
@@ -440,6 +471,15 @@ export const remarkRehypeHandlers: Record<string, (state: any, node: any, parent
 
 /** rehype-remark handlers: `<mark>` → inline HTML around its markdown children. */
 export const rehypeRemarkHandlers: Record<string, (state: any, node: any) => any> = {
+  /** Styled spans (font, size, colors, character style) stay inline HTML; plain spans unwrap. */
+  span(state: any, node: any): any {
+    const style = sanitizeSpanStyle(String(node.properties?.style ?? ""));
+    const msStyle = String(node.properties?.dataMsStyle ?? "").replace(/[^\w -]/g, "");
+    const children = state.all(node);
+    if (!style && !msStyle) return children;
+    const attrs = `${msStyle ? ` data-ms-style="${msStyle}"` : ""}${style ? ` style="${style}"` : ""}`;
+    return [{ type: "html", value: `<span${attrs}>` }, ...children, { type: "html", value: "</span>" }];
+  },
   mark(state: any, node: any): any {
     const color = node.properties?.dataColor;
     const open = color && color !== "yellow" ? `<mark data-color="${String(color).replace(/[^a-z]/gi, "")}">` : "<mark>";

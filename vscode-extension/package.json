@@ -75,7 +75,11 @@
     "workspaceContains:.corporate-slides/master/corporate-master.json",
     "onCustomEditor:corporateSlides.deck",
     "onCustomEditor:corporateSlides.editor",
-    "onLanguage:deck"
+    "onLanguage:deck",
+    "onCommand:markdownStudio.exportDocx",
+    "onCommand:markdownStudio.importTemplate",
+    "onCommand:markdownStudio.manageMasters",
+    "onCommand:markdownStudio.preflight"
   ],
   "contributes": {
     "customEditors": [
@@ -225,8 +229,29 @@
       },
       {
         "command": "markdownToolkit.exportDocx",
-        "title": "%s028.export.as.docx.with.pandoc%",
+        "title": "%s028.export.as.editable.docx%",
         "category": "Markdown Toolkit"
+      },
+      {
+        "command": "markdownStudio.exportDocx",
+        "title": "%s200.export.editable.docx%",
+        "category": "Markdown Studio",
+        "icon": "$(file)"
+      },
+      {
+        "command": "markdownStudio.importTemplate",
+        "title": "%s201.import.word.template.as.master%",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "markdownStudio.manageMasters",
+        "title": "%s202.manage.document.masters%",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "markdownStudio.preflight",
+        "title": "%s203.run.corporate.preflight%",
+        "category": "Markdown Studio"
       },
       {
         "command": "betterMarkdown.toggleZen",
@@ -720,6 +745,12 @@
             "order": 68,
             "markdownDescription": "%s098.colors.of.html.pdf.png%"
           },
+          "markdownStudio.pageView": {
+            "type": "boolean",
+            "default": true,
+            "order": 69,
+            "markdownDescription": "%s206.show.documents.as.paginated.pages%"
+          },
           "markdownStudio.assetsFolder": {
             "type": "string",
             "default": "",
@@ -854,15 +885,41 @@
             "maximum": 30000,
             "description": "%s123.maximum.captured.page.height.used%"
           },
+          "markdownStudio.docx.mode": {
+            "type": "string",
+            "enum": [
+              "permissive",
+              "strict"
+            ],
+            "enumDescriptions": [
+              "%s207.permissive.export%",
+              "%s208.strict.export%"
+            ],
+            "default": "permissive",
+            "order": 70,
+            "markdownDescription": "%s209.docx.export.mode%"
+          },
+          "markdownStudio.docx.hiddenObjects": {
+            "type": "string",
+            "enum": [
+              "omit",
+              "include"
+            ],
+            "default": "omit",
+            "order": 71,
+            "markdownDescription": "%s210.hidden.objects.in.docx%"
+          },
           "markdownToolkit.pandoc.path": {
             "type": "string",
             "default": "",
-            "description": "%s124.optional.path.to.the.pandoc%"
+            "description": "%s124.optional.path.to.the.pandoc%",
+            "deprecationMessage": "%s204.pandoc.is.no.longer.used%"
           },
           "markdownToolkit.pandoc.referenceDoc": {
             "type": "string",
             "default": "",
-            "description": "%s125.optional.default.reference.docx.template%"
+            "description": "%s125.optional.default.reference.docx.template%",
+            "deprecationMessage": "%s205.reference.docs.are.replaced.by.masters%"
           }
         }
       },
@@ -984,10 +1041,14 @@
     "watch:rich-editor": "node ./rich-editor/esbuild.mjs --watch",
     "test:rich-editor": "tsx rich-editor/test/test-conversions.ts && tsx rich-editor/test/test-roundtrip.ts",
     "test:rich-editor:browser": "node rich-editor/test/gmc-editor.browser.cjs",
-    "test": "node --test tests/review-bridge.test.cjs tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/docx-export.test.cjs tests/vfile-location-patch.test.cjs && pnpm run test:rich-editor",
+    "test": "node --test tests/review-bridge.test.cjs tests/embed-diagnostics.test.cjs tests/embed-folding.test.cjs tests/gmc-embed-rendering.test.cjs tests/markdown-embed-paths.test.cjs tests/vfile-location-patch.test.cjs && pnpm run test:rich-editor && pnpm run test:studio",
     "build:all": "pnpm run build:source && pnpm run build",
     "build:slides-studio": "pnpm --dir slides-studio install --frozen-lockfile && pnpm --dir slides-studio run build",
-    "test:slides-studio": "pnpm --dir slides-studio test"
+    "test:slides-studio": "pnpm --dir slides-studio test",
+    "test:studio": "node --import tsx --test rich-editor/test/studio-core.test.ts rich-editor/test/panel-sync.test.ts rich-editor/test/docx-compile.test.ts rich-editor/test/docx-import.test.ts",
+    "check:rich-editor": "tsc -p rich-editor/tsconfig.json",
+    "test:studio:browser": "tsx rich-editor/test/studio.browser.ts",
+    "test:studio:host": "node rich-editor/test/host/run.mjs"
   },
   "devDependencies": {
     "@primer/primitives": "11.10.0",
@@ -1015,7 +1076,10 @@
     "autoprefixer": "^10.4.20",
     "diff": "8.0.4",
     "diff2html": "3.4.56",
+    "docx": "9.9.0",
     "esbuild": "^0.24.2",
+    "fast-xml-parser": "5.11.2",
+    "jszip": "3.10.2",
     "katex": "0.16.45",
     "lowlight": "3.3.0",
     "lucide-react": "1.7.0",
@@ -1037,6 +1101,7 @@
     "turndown-plugin-gfm": "1.0.2",
     "typescript": "^5.7.2",
     "unified": "11.0.5",
-    "vite": "^6.0.5"
+    "vite": "^6.0.5",
+    "yaml": "2.9.1"
   }
 }

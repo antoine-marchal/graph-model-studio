@@ -22,6 +22,7 @@ import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/B
 import { TableFilter } from "./extensions/TableFilter";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
 import { HeadingIndent } from "./extensions/HeadingIndent";
+import { PageBreak, SectionBreak, StudioBlockAttrs, StudioObject, TextStyle } from "./extensions/StudioNodes";
 
 const highlighter = createLowlight(common);
 
@@ -71,12 +72,14 @@ const TabCharacter = Extension.create({
  * Everything that renders document content — shared by the rich editor and
  * the rendered diff, so a diff looks exactly like read mode.
  */
-export function contentExtensions() {
+export function contentExtensions({ history = true }: { history?: boolean } = {}) {
   return [
     StarterKit.configure({
       codeBlock: false, // replaced by CodeBlockLowlight
       code: false, // replaced below so inline code can coexist with bold/italic
       heading: { levels: [1, 2, 3, 4, 5, 6] },
+      // The rich editor uses VS Code's undo history (StudioNodes.HostHistory).
+      ...(history ? {} : { undoRedo: false }),
     }),
     // Tiptap's default Code mark sets `excludes: '_'`, which strips every
     // other mark (e.g. bold) when the code mark is applied. Override to ''
@@ -107,5 +110,10 @@ export function contentExtensions() {
     GitHubEmbed,
     HeadingIndent,
     TabCharacter,
+    StudioBlockAttrs,
+    PageBreak,
+    SectionBreak,
+    StudioObject,
+    TextStyle,
   ];
 }

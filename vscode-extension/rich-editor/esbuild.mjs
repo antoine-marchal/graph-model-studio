@@ -94,9 +94,11 @@ function writeCss() {
   const d2h = readFileSync(require.resolve('diff2html/bundles/css/diff2html.min.css'), 'utf8')
   const katexDist = path.join(path.dirname(require.resolve('katex/package.json')), 'dist')
   const katex = readFileSync(path.join(katexDist, 'katex.min.css'), 'utf8')
+  // Studio chrome and paper (Markdown Studio document shell) last: it lays out the editor.
+  const studio = readFileSync(path.join(here, 'webview', 'styles', 'studio.css'), 'utf8')
   writeFileSync(
     path.join(outdir, 'editor.css'),
-    `${editor}\n\n/* diff2html */\n${d2h}\n\n/* katex */\n${katex}\n\n/* themes */\n${themesCss()}`,
+    `${editor}\n\n/* diff2html */\n${d2h}\n\n/* katex */\n${katex}\n\n/* themes */\n${themesCss()}\n\n/* studio */\n${studio}`,
   )
   const fontsDir = path.join(outdir, 'fonts')
   mkdirSync(fontsDir, { recursive: true })

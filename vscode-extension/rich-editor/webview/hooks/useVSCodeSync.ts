@@ -72,13 +72,41 @@ export function restoreTabs(editor: { state: any; view: { dispatch(tr: any): voi
   editor.view.dispatch(tr.setMeta("addToHistory", false).setMeta("preventUpdate", true));
 }
 
+/**
+ * Top-level blocks carry their index among the source's top-level blocks (`data-ms-blk`, see
+ * studio/sourceMap.ts): the editor reuses the exact source text of every block it did not change.
+ */
+export const isSourceBlock = (n: any) => n.type !== "definition" && n.type !== "footnoteDefinition";
+function remarkStampBlocks() {
+  return (tree: any) => {
+    let i = 0;
+    for (const child of tree.children) {
+      if (!isSourceBlock(child)) continue;
+      child.data = { ...child.data, msBlk: i, hProperties: { ...child.data?.hProperties, dataMsBlk: String(i) } };
+      i++;
+    }
+  };
+}
+/** Custom handlers ignore hProperties: copy the block stamp onto what they return. */
+const stampedHandlers = Object.fromEntries(
+  Object.entries(remarkRehypeHandlers).map(([name, handler]) => [
+    name,
+    (state: any, node: any, parent?: any) => {
+      const out = handler(state, node, parent);
+      if (node.data?.msBlk !== undefined && out?.type === "element") out.properties = { ...out.properties, dataMsBlk: String(node.data.msBlk) };
+      return out;
+    },
+  ]),
+);
+
 /** Markdown → HTML for Tiptap, built once (frozen: stateless across runs). */
 const markdownProcessor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkGroupDirectives)
-  .use(remarkRehype, { handlers: remarkRehypeHandlers })
+  .use(remarkStampBlocks)
+  .use(remarkRehype, { handlers: stampedHandlers })
   .use(rehypeStringify)
   .freeze();
 
@@ -175,6 +203,7 @@ export async function markdownToHtml(
       if (a.childElementCount !== 1 || img?.tagName !== "IMG" || (p.textContent ?? "").trim()) return;
       const div = doc.createElement("div");
       div.setAttribute("data-type", "deckBlock");
+      if (p.getAttribute("data-ms-blk")) div.setAttribute("data-ms-blk", p.getAttribute("data-ms-blk")!);
       div.setAttribute("data-href", a.getAttribute("href")!);
       div.setAttribute("data-alt", img.getAttribute("alt") ?? "");
       div.appendChild(img);
@@ -189,6 +218,8 @@ export async function markdownToHtml(
       if (!parent) return;
       imgs.forEach((img, i) => {
         const wrapper = doc.createElement("p");
+        const blk = p.getAttribute("data-ms-blk");
+        if (blk) wrapper.setAttribute("data-ms-blk", blk);
         wrapper.appendChild(img.cloneNode(true));
         parent.insertBefore(wrapper, p);
       });
@@ -323,6 +354,8 @@ function postprocessMarkdown(
   md = md.replace(new RegExp(TAB_PH, "g"), "\t");
   md = restoreFenceMeta(md);
   md = restoreRawHtml(md);
+  // A block marker sits on the line right above its block.
+  md = md.replace(/^(<!-- ms:block [^\n]*-->)\n\n(?=\S)/gm, "$1\n");
   // Restore math from code/pre placeholders (after normalizeMarkdown to avoid interference)
   md = md.replace(/`BTRMK_MATH:(.*?)`/g, (_m, latex) => `$${latex}$`);
   md = md.replace(/```btrmk-math-block\n([\s\S]*?)\n```/g, (_m, latex) => `$$\n${latex}\n$$`);

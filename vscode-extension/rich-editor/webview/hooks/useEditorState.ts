@@ -1,21 +1,12 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import type { Editor } from "@tiptap/react";
-import {
-  markdownToHtml,
-  htmlToMarkdown,
-  htmlToMarkdownSync,
-  restoreTabs,
-} from "./useVSCodeSync";
-import {
-  extractFrontmatter,
-  prependFrontmatter,
-  frontmatterBody,
-  buildFrontmatter,
-  defaultFrontmatter,
-} from "../frontmatter";
+import { markdownToHtml, htmlToMarkdownSync, restoreTabs } from "./useVSCodeSync";
+import { frontmatterBody, buildFrontmatter, defaultFrontmatter } from "../frontmatter";
 import { mergeSettings, type BetterMarkdownSettings } from "../settings";
 import { vscodeApi } from "../vscode-api";
+import { DocumentSync } from "../studio/documentSync";
+import { studio } from "../studio/store";
 
 /** Latest markdown source, for consumers like the line-number gutter. */
 function emitSource(md: string) {
@@ -50,6 +41,7 @@ interface UseEditorStateOptions {
   settingsRef: MutableRefObject<BetterMarkdownSettings>;
   handleUpdateRef: MutableRefObject<() => void>;
   applySettings: (s: BetterMarkdownSettings) => void;
+  syncRef: MutableRefObject<DocumentSync | null>;
 }
 
 export function useEditorState({
@@ -57,18 +49,12 @@ export function useEditorState({
   settingsRef,
   handleUpdateRef,
   applySettings,
+  syncRef,
 }: UseEditorStateOptions) {
   const initialized = useRef(false);
   const baseUri = useRef("");
   const docFolderPath = useRef("");
   const filePath = useRef("");
-  const frontmatterRef = useRef("");
-  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Async work finishing out of order must not win: an edit is posted only if no
-  // newer edit or external update started meanwhile, an update applied only if
-  // it is still the latest one received.
-  const editGen = useRef(0);
-  const updateGen = useRef(0);
   const isReadonly = useRef(false);
   // Opening a file must never rewrite it: transactions fired while loading
   // (node views, plugins) are not sent back until the user has interacted.
@@ -125,9 +111,24 @@ export function useEditorState({
     editor.setEditable(!readonly);
   }, [editor, readonly]);
 
+  // The versioned source sync (studio/documentSync.ts).
+  const sync = useMemo(() => {
+    if (!editor) return null;
+    return new DocumentSync({
+      editor,
+      toHtml: (md) => markdownToHtml(md, baseUri.current),
+      toMarkdown: (html) => htmlToMarkdownSync(html, baseUri.current, docFolderPath.current, settingsRef.current),
+      afterLoad: () => restoreTabs(editor),
+    });
+  }, [editor, settingsRef]);
+  syncRef.current = sync;
+  const syncFrontmatterState = useCallback(() => {
+    if (sync) setFrontmatterState(frontmatterBody(sync.fm));
+  }, [sync]);
+
   // On mount: request content from host, load into editor
   useEffect(() => {
-    if (!editor) return;
+    if (!editor || !sync) return;
 
     const handler = async (e: MessageEvent) => {
       const msg = e.data;
@@ -137,89 +138,63 @@ export function useEditorState({
         if (msg.docFolderPath) docFolderPath.current = msg.docFolderPath;
         if (msg.filePath) filePath.current = msg.filePath;
         if (msg.settings) {
-          applySettings(mergeSettings(msg.settings));
+          const merged = mergeSettings(msg.settings);
+          applySettings(merged);
+          studio.set({ pageView: merged.pageView });
         }
         if (msg.isReadonly) {
           isReadonly.current = true;
+          sync.readonly = true;
           setReadonly(true);
+          studio.set({ sync: "readonly" });
         }
+        studio.set({ fileName: String(msg.filePath ?? "").split(/[\\/]/).pop() ?? "" });
         const rawMd = (msg.content as string) || "";
         emitSource(rawMd);
-        if (rawMd.trim()) {
-          setStatus("Parsing markdown...");
-          try {
-            const { content: noFm, frontmatter } = extractFrontmatter(rawMd);
-            frontmatterRef.current = frontmatter;
-            setFrontmatterState(frontmatterBody(frontmatter));
-            const html = await markdownToHtml(noFm, baseUri.current);
-            editor.commands.setContent(html, { emitUpdate: false });
-            restoreTabs(editor);
-            // Place the caret: restore the last-known position for this
-            // file if we have one, otherwise drop it inside the first
-            // heading (usually the title). Falls back to doc start.
-            const maxPos = editor.state.doc.content.size;
-            let targetPos: number | null = null;
-            if (typeof msg.cursorPosition === "number") {
-              targetPos = Math.max(0, Math.min(msg.cursorPosition, maxPos));
-            } else {
-              editor.state.doc.descendants((n, pos) => {
-                if (targetPos !== null) return false;
-                if (n.type.name === "heading") {
-                  targetPos = pos + 1;
-                  return false;
-                }
-                return true;
-              });
-            }
-            if (targetPos !== null) {
-              editor.commands.setTextSelection(targetPos);
-            }
-            editor.commands.focus();
-          } catch (err: any) {
-            setStatus(`Parse error: ${err?.message || err}`);
+        setStatus("Parsing markdown...");
+        try {
+          await sync.load(rawMd, Number(msg.version) || 0);
+          syncFrontmatterState();
+          // Place the caret: restore the last-known position for this
+          // file if we have one, otherwise drop it inside the first
+          // heading (usually the title). Falls back to doc start.
+          const maxPos = editor.state.doc.content.size;
+          let targetPos: number | null = null;
+          if (typeof msg.cursorPosition === "number") {
+            targetPos = Math.max(0, Math.min(msg.cursorPosition, maxPos));
+          } else {
+            editor.state.doc.descendants((n, pos) => {
+              if (targetPos !== null) return false;
+              if (n.type.name === "heading") {
+                targetPos = pos + 1;
+                return false;
+              }
+              return true;
+            });
           }
+          if (targetPos !== null) {
+            try {
+              editor.commands.setTextSelection(targetPos);
+            } catch {
+              // Position inside an atom: leave the default selection.
+            }
+          }
+          editor.commands.focus();
+        } catch (err: any) {
+          setStatus(`Parse error: ${err?.message || err}`);
+          return;
         }
         setStatus(null);
       } else if (msg.type === "update" && initialized.current) {
-        emitSource(msg.content);
-        // Pending or in-flight serializations describe the replaced content.
-        if (debounceTimer.current) clearTimeout(debounceTimer.current);
-        debounceTimer.current = null;
-        editGen.current++;
-        const gen = ++updateGen.current;
-        try {
-          const { content: noFm, frontmatter } = extractFrontmatter(
-            msg.content,
-          );
-          frontmatterRef.current = frontmatter;
-          setFrontmatterState(frontmatterBody(frontmatter));
-          const html = await markdownToHtml(noFm, baseUri.current);
-          if (gen !== updateGen.current) return;
-          // setContent resets the ProseMirror selection to the doc end.
-          // Snapshot the caret before replacing content and restore it
-          // (clamped to the new doc size) so external updates — e.g. VS
-          // Code's own Cmd+Z firing a document change that echoes back —
-          // don't yank the cursor to the end of the file.
-          const { from, to } = editor.state.selection;
-          const wasFocused = editor.isFocused;
-          // emitUpdate: false suppresses the re-serialization loop that
-          // otherwise fires when an external save participant (e.g. VS
-          // Code's built-in markdown formatter with formatOnSave) mutates
-          // the doc post-Ctrl+S. Without this, setContent would fire
-          // Tiptap's update event → handleUpdate → new edit back to the
-          // host → dirty-after-save. The host just told us the content;
-          // echoing it back as an edit is redundant.
-          editor.commands.setContent(html, { emitUpdate: false });
-            restoreTabs(editor);
-          const maxPos = editor.state.doc.content.size;
-          editor.commands.setTextSelection({
-            from: Math.min(from, maxPos),
-            to: Math.min(to, maxPos),
-          });
-          if (wasFocused) editor.commands.focus();
-        } catch {
-          // Ignore parse failures on external updates
-        }
+        await sync.onUpdate(String(msg.content), Number(msg.version));
+        syncFrontmatterState();
+      } else if (msg.type === "ack") {
+        sync.onAck(String(msg.id), Number(msg.version));
+      } else if (msg.type === "rejected") {
+        sync.onRejected(String(msg.id), String(msg.reason ?? "rejected"));
+      } else if (msg.type === "flushRequest") {
+        await sync.flush();
+        vscodeApi.postMessage({ type: "flushed", requestId: msg.requestId });
       } else if (msg.type === "insertDirective" && typeof msg.text === "string") {
         userTouched.current = true;
         editor
@@ -230,7 +205,9 @@ export function useEditorState({
       } else if (msg.type === "openSearch") {
         setSearchVisible(true);
       } else if (msg.type === "settingsUpdated") {
-        applySettings(mergeSettings(msg.settings));
+        const merged = mergeSettings(msg.settings);
+        applySettings(merged);
+        studio.set({ pageView: merged.pageView });
       } else if (msg.type === "gitDiffResponse") {
         if (typeof msg.headContent !== "string") {
           setStatus("Not tracked by git — nothing to diff against HEAD.");
@@ -244,7 +221,7 @@ export function useEditorState({
     window.addEventListener("message", handler);
     vscodeApi.postMessage({ type: "ready" });
     return () => window.removeEventListener("message", handler);
-  }, [editor, applySettings]);
+  }, [editor, sync, applySettings, syncFrontmatterState]);
 
   // Restore cursor when the webview regains focus.
   // ProseMirror keeps the selection in state across blur, but the DOM
@@ -300,52 +277,24 @@ export function useEditorState({
       window.removeEventListener("btrmk:showImageDialog", handler);
   }, []);
 
-  // Sync: editor changes → extension host
+  // Sync: editor changes → extension host (debounced, versioned).
   const handleUpdate = useCallback(() => {
-    if (!initialized.current || !editor) return;
+    if (!initialized.current || !sync) return;
     if (isReadonly.current || !userTouched.current) return;
-    if (debounceTimer.current) clearTimeout(debounceTimer.current);
-    debounceTimer.current = setTimeout(async () => {
-      debounceTimer.current = null;
-      const gen = ++editGen.current;
-      try {
-        const markdown = await htmlToMarkdown(
-          editor.getHTML(),
-          baseUri.current,
-          docFolderPath.current,
-          settingsRef.current,
-        );
-        if (gen === editGen.current) postEdit(markdown);
-      } catch (err: any) {
-        setStatus(`Save error: ${err?.message || String(err)}`);
-        console.error("[better-markdown] htmlToMarkdown failed:", err);
-      }
-    }, 300);
-  }, [editor, settingsRef]);
+    sync.touched = true;
+    sync.schedule();
+  }, [sync]);
 
-  const postEdit = (markdown: string) => {
-    markdown = prependFrontmatter(markdown, frontmatterRef.current);
-    emitSource(markdown);
-    vscodeApi.postMessage({ type: "edit", content: markdown });
-    setStatus(null);
-  };
-
-  // Ctrl+S, leaving the window or closing it: the debounced edit goes now
-  // (synchronously: no event-loop turn left on close), so the save has it.
+  // Ctrl+S, leaving the window or closing it: the pending edit goes now, then VS Code saves.
   useEffect(() => {
-    if (!editor) return;
-    const flush = () => {
-      if (!debounceTimer.current) return;
-      clearTimeout(debounceTimer.current);
-      debounceTimer.current = null;
-      editGen.current++;
-      try {
-        postEdit(htmlToMarkdownSync(editor.getHTML(), baseUri.current, docFolderPath.current, settingsRef.current));
-      } catch (err) {
-        console.error("[better-markdown] htmlToMarkdown failed:", err);
+    if (!sync) return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        void sync.flush().then(() => vscodeApi.postMessage({ type: "save" }));
       }
     };
-    const onKey = (e: KeyboardEvent) => (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s" && flush();
+    const flush = () => void sync.flush();
     window.addEventListener("keydown", onKey, true);
     window.addEventListener("blur", flush);
     window.addEventListener("pagehide", flush);
@@ -354,8 +303,7 @@ export function useEditorState({
       window.removeEventListener("blur", flush);
       window.removeEventListener("pagehide", flush);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editor, settingsRef]);
+  }, [sync]);
 
   useEffect(() => {
     if (!editor) return;
@@ -367,19 +315,18 @@ export function useEditorState({
   }, [editor, handleUpdate, handleUpdateRef]);
 
   // Frontmatter edits (panel, "Add frontmatter" button, /frontmatter slash
-  // command) live outside the Tiptap doc, so push them through the same
-  // serialization path as editor updates.
+  // command) live outside the Tiptap doc.
   const setFrontmatter = useCallback(
     (body: string | null) => {
-      frontmatterRef.current = buildFrontmatter(body);
+      if (!sync) return;
+      sync.setRawFrontmatter(buildFrontmatter(body));
       setFrontmatterState(body);
-      handleUpdate();
     },
-    [handleUpdate],
+    [sync],
   );
 
   const addFrontmatter = useCallback(() => {
-    if (frontmatterRef.current || isReadonly.current) return;
+    if (!sync || sync.fm || isReadonly.current) return;
     let title = "";
     editor?.state.doc.descendants((n) => {
       if (title) return false;
@@ -393,9 +340,10 @@ export function useEditorState({
       const name = filePath.current.split(/[\\/]/).pop() || "";
       title = name.replace(/\.(md|markdown)$/i, "");
     }
+    userTouched.current = true;
     setFrontmatter(defaultFrontmatter(title));
     window.dispatchEvent(new CustomEvent("btrmk:expandFrontmatter"));
-  }, [editor, setFrontmatter]);
+  }, [editor, sync, setFrontmatter]);
 
   useEffect(() => {
     window.addEventListener("btrmk:addFrontmatter", addFrontmatter);
@@ -429,8 +377,9 @@ export function useEditorState({
   }, [editor]);
 
   const switchToSource = useCallback(() => {
-    vscodeApi.postMessage({ type: "toggleEditor" });
-  }, []);
+    // Pending visual edits reach the document before the text editor opens.
+    void (sync?.flush() ?? Promise.resolve()).then(() => vscodeApi.postMessage({ type: "toggleEditor" }));
+  }, [sync]);
 
   const toggleDiff = useCallback(() => {
     if (diffVisible) {
@@ -443,17 +392,13 @@ export function useEditorState({
 
   // Current editor content as markdown (for the diff "new" side)
   const currentMarkdown = useMemo(() => {
-    if (!editor || !diffVisible) return "";
+    if (!sync || !diffVisible) return "";
     try {
-      const html = editor.getHTML();
-      return prependFrontmatter(
-        htmlToMarkdownSync(html, baseUri.current, docFolderPath.current, settingsRef.current),
-        frontmatterRef.current,
-      );
+      return sync.source();
     } catch {
       return "";
     }
-  }, [editor, diffVisible, diffData, settingsRef]);
+  }, [sync, diffVisible, diffData]);
 
   return {
     status,
