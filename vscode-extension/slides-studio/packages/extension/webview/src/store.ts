@@ -139,6 +139,51 @@ export interface EditorState {
 }
 
 let txCounter = 0;
+/** Live drag / slider preview: document it started from, latest mutations, scheduled frame. */
+let gesture: { base: SlideDocument; mutations: Mutation[]; frame: number } | null = null;
+/** End the preview in progress (if any), returning its baseline. */
+function endGesture(): SlideDocument | null {
+  if (!gesture) return null;
+  if (gesture.frame) cancelAnimationFrame(gesture.frame);
+  const { base } = gesture;
+  gesture = null;
+  return base;
+}
+
+/** `next` with every subtree deep-equal to `prev`'s reused from `prev` (structural sharing). */
+export function share<T>(prev: unknown, next: T): T {
+  if (prev === next || typeof next !== 'object' || next === null || typeof prev !== 'object' || prev === null) return Object.is(prev, next) ? (prev as T) : next;
+  if (Array.isArray(next) !== Array.isArray(prev)) return next;
+  let same: boolean;
+  let out: unknown;
+  if (Array.isArray(next)) {
+    const p = prev as unknown[];
+    // Slides and elements are matched by id so an insertion does not shift every later item.
+    const byId = new Map(p.map((x) => [(x as { id?: unknown } | null)?.id, x]));
+    const arr = next.map((x, i) => {
+      const id = (x as { id?: unknown } | null)?.id;
+      return share(id !== undefined && byId.has(id) ? byId.get(id) : p[i], x);
+    });
+    same = arr.length === p.length && arr.every((x, i) => x === p[i]);
+    out = arr;
+  } else {
+    const p = prev as Record<string, unknown>;
+    const o: Record<string, unknown> = {};
+    const keys = Object.keys(next as object);
+    same = keys.length === Object.keys(p).length;
+    for (const k of keys) {
+      o[k] = share(p[k], (next as Record<string, unknown>)[k]);
+      if (o[k] !== p[k]) same = false;
+    }
+    out = o;
+  }
+  return (same ? prev : out) as T;
+}
+
+const sameRecord = (a: Record<string, string>, b: Record<string, string>) => {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+};
 let noticeCounter = 0;
 
 export const useEditor = create<EditorState>((set, get) => ({
@@ -213,10 +258,14 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({ ready: true, ...p, doc: s.doc, confirmed: s.confirmed, master: designMaster(p.master, d.canvasLayout), slideId: s.slideId, pending: new Set(), design: { ...d, real: { doc: p.doc, master: p.master, slideId: d.real.slideId } } });
       return;
     }
-    const slideId = p.doc.slides.some((x) => x.id === s.slideId) ? s.slideId : (p.doc.slides[0]?.id ?? null);
-    const slide = p.doc.slides.find((x) => x.id === slideId);
+    // Unchanged slides / elements keep their identity: memoized thumbnails and views skip them.
+    const doc = share(s.confirmed, p.doc);
+    const slideId = doc.slides.some((x) => x.id === s.slideId) ? s.slideId : (doc.slides[0]?.id ?? null);
+    const slide = doc.slides.find((x) => x.id === slideId);
     const selected = s.selected.filter((id) => slide?.elements.some((e) => e.id === id));
-    set({ ready: true, ...p, confirmed: p.doc, doc: p.doc, slideId, selected, pending: new Set() });
+    // A gesture in progress restarts from the new document at its next pointer move.
+    if (gesture) gesture.base = doc;
+    set({ ready: true, ...p, master: share(s.master, p.master), assetUrls: sameRecord(s.assetUrls, p.assetUrls) ? s.assetUrls : p.assetUrls, confirmed: doc, doc, slideId, selected, pending: new Set() });
   },
 
   mutate(mutations) {
@@ -224,10 +273,13 @@ export const useEditor = create<EditorState>((set, get) => ({
     if (!doc || !mutations.length) return;
     if (readOnly) return get().notify('info', tr('Révision de merge request : la présentation est en lecture seule.', 'Merge request revision: the presentation is read-only.'));
     if (get().design) return designApply(get, set, mutations);
+    // A gesture's final mutations apply to the document it started from, not to its last frame.
+    const base = endGesture() ?? doc;
     let next: SlideDocument;
     try {
-      next = applyToDocument(doc, mutations);
+      next = applyToDocument(base, mutations);
     } catch (e) {
+      set({ doc: base });
       get().notify('error', (e as Error).message);
       return;
     }
@@ -237,16 +289,25 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   preview(mutations) {
-    const base = get().confirmed;
-    if (!base) return;
-    try {
-      set({ doc: applyToDocument(base, mutations) });
-    } catch {
-      /* ignore invalid previews */
-    }
+    // Baseline = displayed document when the gesture starts: optimistic edits not yet acknowledged
+    // by the host stay visible. At most one application per animation frame.
+    const doc = get().doc;
+    if (!doc) return;
+    gesture ??= { base: doc, mutations, frame: 0 };
+    gesture.mutations = mutations;
+    gesture.frame ||= requestAnimationFrame(() => {
+      if (!gesture) return;
+      gesture.frame = 0;
+      try {
+        set({ doc: applyToDocument(gesture.base, gesture.mutations) });
+      } catch {
+        /* ignore invalid previews */
+      }
+    });
   },
   cancelPreview() {
-    set((s) => ({ doc: s.confirmed }));
+    const base = endGesture();
+    if (base) set({ doc: base });
   },
 
   ack(txId, version) {
@@ -262,6 +323,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       pending.delete(txId);
       return { pending, doc: s.confirmed };
     });
+    endGesture();
     get().notify('error', reason);
   },
 
@@ -388,6 +450,19 @@ function saveDesign(get: Get, set: Put) {
   const canvasLayout = { ...design.canvasLayout, placeholders: layout.placeholders };
   set({ design: { ...design, base: layout, origin, canvasLayout }, master: designMaster(get().master ?? design.real.master, canvasLayout) });
   post({ type: 'saveLayout', layout, indexMap });
+}
+
+/** Follow the pointer until it is released (`end(true)`) or the gesture is cancelled (`end(false)`). */
+export function trackPointer(move: (e: PointerEvent) => void, end: (commit: boolean, e: PointerEvent) => void) {
+  const stop = (e: PointerEvent) => {
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', stop);
+    window.removeEventListener('pointercancel', stop);
+    end(e.type === 'pointerup', e);
+  };
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', stop);
+  window.addEventListener('pointercancel', stop);
 }
 
 export const currentSlide = (s: EditorState) => s.doc?.slides.find((x) => x.id === s.slideId) ?? null;

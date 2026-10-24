@@ -8,6 +8,7 @@ import { tr } from '@corporate-slides/core';
 /** URI scheme of merge request revisions opened by the Project Integration (GitLab) companion. */
 export const MR_SCHEME = 'pi-mr';
 const RENDERED_REVIEW = 'projectIntegration.mrReview.rendered';
+const LOCAL_REVISION = 'projectIntegration.mrReview.localRevision';
 
 interface MrRef {
   m?: { iid: number; project: number; side: 'old' | 'new'; oldPath: string; newPath: string };
@@ -49,13 +50,27 @@ export function mrTwin(uri: vscode.Uri): vscode.Uri | undefined {
 }
 
 /**
+ * Link a local file to its merge request revision without opening it from the Changes list:
+ * the companion finds the open merge request of the checked-out branch that changes this file.
+ * Resolved again each time: a push moves the merge request head, and discussions follow the latest one.
+ */
+export async function linkMrRevision(document: vscode.TextDocument): Promise<boolean> {
+  if (document.uri.scheme !== 'file') return false;
+  if (!(await vscode.commands.getCommands(true)).includes(LOCAL_REVISION)) return false;
+  const uri = await vscode.commands.executeCommand<string | undefined>(LOCAL_REVISION, document.uri.toString());
+  if (!uri) return false;
+  twins.set(twinKey(document.uri.fsPath), uri);
+  return true;
+}
+
+/**
  * Relay a rendered-review action to the companion. The URI always comes from the host document:
  * the merge request revision itself, or for a local file the revision of the same path opened
  * from the merge request (the companion only knows files opened from its Changes list).
  */
 export async function reviewRequest(document: vscode.TextDocument, request: { action: string; line?: number; text?: string; discussionId?: string; resolved?: boolean }): Promise<ReviewData> {
   const twin = document.uri.scheme === MR_SCHEME ? undefined : mrTwin(document.uri);
-  if (document.uri.scheme !== MR_SCHEME && !twin) throw new Error(tr('Ouvrez une fois ce fichier depuis la liste des modifications de la merge request (Project Integration) : ses discussions s’afficheront ensuite aussi sur la copie locale.', 'Open this file once from the merge request changes list (Project Integration): its discussions then also show on the local copy.'));
+  if (document.uri.scheme !== MR_SCHEME && !twin) throw new Error(tr('Aucune merge request ouverte de la branche courante ne modifie ce fichier. Ouvrez-le depuis la liste des modifications de la merge request (Project Integration) : ses discussions s’afficheront ensuite aussi sur la copie locale.', 'No open merge request of the current branch changes this file. Open it from the merge request changes list (Project Integration): its discussions then also show on the local copy.'));
   const commands = await vscode.commands.getCommands(true);
   if (!commands.includes(RENDERED_REVIEW)) throw new Error(tr('Mettez à jour l’extension Project Integration pour commenter dans l’éditeur visuel.', 'Update the Project Integration extension to comment in the visual editor.'));
   const uri = twin ?? document.uri;

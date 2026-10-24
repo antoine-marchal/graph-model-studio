@@ -64,7 +64,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), harnessBridge()],
   // Inline (empty) PostCSS config: do not inherit Graph Model Studio's Tailwind 3 postcss.config.cjs.
   css: { postcss: {} },
-  server: { port: Number(process.env.PORT) || 5173, strictPort: true },
+  // The GMC editor shell is shared with Markdown Studio (vscode-extension/shared).
+  server: { port: Number(process.env.PORT) || 5173, strictPort: true, fs: { allow: [resolve(__dirname, '../../..')] } },
   build: {
     // Bundled into the Graph Model Studio extension (vscode-extension/dist/slides-studio/webview).
     outDir: resolve(__dirname, '../../../dist/slides-studio/webview'),

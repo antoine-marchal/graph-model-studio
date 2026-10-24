@@ -12,6 +12,7 @@ export interface ReviewData {
   side: "old" | "new";
   canComment: boolean;
   canCreate: boolean;
+  notice?: string;
   focus?: { noteId: number; line: number };
   threads: ReviewThread[];
 }

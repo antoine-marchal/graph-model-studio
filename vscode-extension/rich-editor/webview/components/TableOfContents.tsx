@@ -1,23 +1,8 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { GripVertical, ChevronLeft, ChevronRight, Filter } from "lucide-react";
+import { HEADING_SELECTOR, scrollToHeadingByIndex, useHeadingEvents } from "../hooks/useHeadingEvents";
 
-/** Scroll to the Nth heading element in the editor. */
-export function scrollToHeadingByIndex(index: number) {
-  const container = document.querySelector(".editor-container");
-  if (!container) return;
-  const headings = container.querySelectorAll(
-    ".tiptap-editor h1, .tiptap-editor h2, .tiptap-editor h3, .tiptap-editor h4, .tiptap-editor h5, .tiptap-editor h6"
-  );
-  const el = headings[index];
-  if (!el) return;
-
-  const stickyEl = container.querySelector(".sticky-headings");
-  const stickyHeight = stickyEl ? stickyEl.getBoundingClientRect().height : 0;
-  const elTop = el.getBoundingClientRect().top;
-  const containerTop = container.getBoundingClientRect().top;
-  const offset = elTop - containerTop + container.scrollTop - stickyHeight;
-  container.scrollTo({ top: offset, behavior: "smooth" });
-}
+export { scrollToHeadingByIndex };
 
 interface TocEntry {
   id: string;
@@ -42,24 +27,23 @@ export function TableOfContents() {
   const startWidth = useRef(0);
   const wasCollapsed = useRef(false);
 
-  const updateToc = useCallback(() => {
+  // Text changes rebuild the entries (kept when equal); scrolling only moves the current one.
+  const updateEntries = () => {
     const container = document.querySelector(".editor-container");
     if (!container) return;
-
-    const headingEls = container.querySelectorAll(
-      ".tiptap-editor h1, .tiptap-editor h2, .tiptap-editor h3, .tiptap-editor h4, .tiptap-editor h5, .tiptap-editor h6"
-    );
-
     // Use index as identifier — never modify the editor DOM
-    const newEntries: TocEntry[] = [];
-    headingEls.forEach((el, index) => {
+    const next: TocEntry[] = [];
+    container.querySelectorAll(HEADING_SELECTOR).forEach((el, index) => {
       const text = el.textContent?.trim();
-      if (text) {
-        newEntries.push({ id: String(index), text, level: parseInt(el.tagName[1], 10) });
-      }
+      if (text) next.push({ id: String(index), text, level: parseInt(el.tagName[1], 10) });
     });
-    setEntries(newEntries);
-
+    setEntries((prev) => (prev.length === next.length && prev.every((e, i) => e.id === next[i].id && e.text === next[i].text && e.level === next[i].level) ? prev : next));
+    updateActive();
+  };
+  const updateActive = () => {
+    const container = document.querySelector(".editor-container");
+    if (!container) return;
+    const headingEls = container.querySelectorAll(HEADING_SELECTOR);
     const containerRect = container.getBoundingClientRect();
     let closestId: string | null = null;
     let closestDist = Infinity;
@@ -72,19 +56,8 @@ export function TableOfContents() {
       }
     });
     setActiveId(closestId);
-  }, []);
-
-  useEffect(() => {
-    const container = document.querySelector(".editor-container");
-    if (!container) return;
-    container.addEventListener("scroll", updateToc, { passive: true });
-    const interval = setInterval(updateToc, 1000);
-    setTimeout(updateToc, 500);
-    return () => {
-      container.removeEventListener("scroll", updateToc);
-      clearInterval(interval);
-    };
-  }, [updateToc]);
+  };
+  useHeadingEvents(updateEntries, updateActive);
 
   // Drag resize handlers
   useEffect(() => {

@@ -124,15 +124,37 @@ export function reorderIds(slide: SlideNode, elementId: string, direction: 'fron
   return order;
 }
 
-/** Pure canonical application (structural clone). Source-level application lives in @corporate-slides/parser. */
+/**
+ * Pure canonical application, copy-on-write: only the slides and elements a mutation touches are
+ * copied, everything else keeps its identity (memoized thumbnails / slide views stay valid).
+ * Source-level application lives in @corporate-slides/parser.
+ */
 export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): SlideDocument {
-  const next: SlideDocument = structuredClone(doc);
+  const next: SlideDocument = { ...doc, slides: [...doc.slides] };
+  const own = new WeakSet<object>();
+  /** The slide, copied (with its element array) the first time this batch writes to it. */
+  const getSlideW = (slideId: string): SlideNode => {
+    const s = getSlide(next, slideId);
+    if (own.has(s)) return s;
+    const copy = { ...s, elements: [...s.elements] };
+    own.add(copy);
+    next.slides[next.slides.indexOf(s)] = copy;
+    return copy;
+  };
+  const elementW = (slide: SlideNode, el: SlideElement): SlideElement => {
+    if (own.has(el)) return el;
+    const copy = { ...el } as SlideElement;
+    own.add(copy);
+    slide.elements[slide.elements.indexOf(el)] = copy;
+    return copy;
+  };
   for (const m of mutations) {
     switch (m.kind) {
       case 'updateElement': {
-        const slide = getSlide(next, m.slideId);
-        const el = slide.elements.find((e) => e.id === m.elementId);
-        if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
+        const slide = getSlideW(m.slideId);
+        const found = slide.elements.find((e) => e.id === m.elementId);
+        if (!found) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
+        const el = elementW(slide, found);
         const { style, placeholder, ...rest } = normalizePatch(m.patch);
         for (const [k, v] of Object.entries(rest)) {
           if (v === null) delete (el as Record<string, unknown>)[k];
@@ -149,28 +171,28 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         break;
       }
       case 'addElement': {
-        const slide = getSlide(next, m.slideId);
+        const slide = getSlideW(m.slideId);
         if (slide.elements.some((e) => e.id === m.element.id)) throw new MutationError(tr(`Identifiant « ${m.element.id} » déjà utilisé`, `Identifier “${m.element.id}” already used`));
         slide.elements.push(structuredClone(m.element));
         break;
       }
       case 'deleteElement': {
-        const slide = getSlide(next, m.slideId);
+        const slide = getSlideW(m.slideId);
         slide.elements = slide.elements.filter((e) => e.id !== m.elementId);
         break;
       }
       case 'renameElement': {
-        const slide = getSlide(next, m.slideId);
+        const slide = getSlideW(m.slideId);
         const el = slide.elements.find((e) => e.id === m.elementId);
         if (!el) throw new MutationError(tr(`Élément « ${m.elementId} » introuvable`, `Element “${m.elementId}” not found`));
         assertFreeId(slide, m.newId);
-        el.id = m.newId;
+        elementW(slide, el).id = m.newId;
         break;
       }
       case 'reorderElement': {
-        const slide = getSlide(next, m.slideId);
+        const slide = getSlideW(m.slideId);
         const order = reorderIds(slide, m.elementId, m.direction);
-        for (const e of slide.elements) e.z = order.indexOf(e.id);
+        for (const e of [...slide.elements]) elementW(slide, e).z = order.indexOf(e.id);
         break;
       }
       case 'addSlide': {
@@ -199,28 +221,36 @@ export function applyToDocument(doc: SlideDocument, mutations: Mutation[]): Slid
         break;
       }
       case 'setSlideLayout':
-        getSlide(next, m.slideId).layout = m.layout;
+        getSlideW(m.slideId).layout = m.layout;
         break;
       case 'setNotes': {
-        const s = getSlide(next, m.slideId);
+        const s = getSlideW(m.slideId);
         if (m.notes) s.notes = m.notes;
         else delete s.notes;
         break;
       }
       case 'setMasterOverride': {
-        const s = getSlide(next, m.slideId);
+        const s = getSlideW(m.slideId);
         s.masterOverrides = withMasterOverride(s.masterOverrides, m.index, m.override);
         if (!s.masterOverrides) delete s.masterOverrides;
         break;
       }
       case 'shareText': {
         // Approximation for optimistic UI: slides without the placeholder are only known with the master.
-        const el = getSlide(next, m.slideId).elements.find((e) => e.id === m.elementId);
-        if (el?.type !== 'text' || !el.placeholder) throw new MutationError(tr(`Élément « ${m.elementId} » : pas un espace réservé de texte`, `Element “${m.elementId}” is not a text placeholder`));
+        const slide = getSlideW(m.slideId);
+        const found = slide.elements.find((e) => e.id === m.elementId);
+        if (found?.type !== 'text' || !found.placeholder) throw new MutationError(tr(`Élément « ${m.elementId} » : pas un espace réservé de texte`, `Element “${m.elementId}” is not a text placeholder`));
+        const el = elementW(slide, found) as typeof found;
         if (!m.shared) delete el.shared;
         else {
           el.shared = true;
-          for (const s of next.slides) for (const e of s.elements) if (e !== el && e.type === 'text' && e.placeholder === el.placeholder) Object.assign(e, { paragraphs: structuredClone(el.paragraphs), shared: true });
+          // Deck-wide by design: every slide carrying the placeholder takes the text.
+          for (const s0 of [...next.slides])
+            for (const e of s0.elements)
+              if (e !== el && e.type === 'text' && e.placeholder === el.placeholder) {
+                const s = getSlideW(s0.id);
+                Object.assign(elementW(s, e), { paragraphs: structuredClone(el.paragraphs), shared: true });
+              }
         }
         break;
       }

@@ -3,7 +3,8 @@ import * as path from "path";
 import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
-import { sendReview } from "./review";
+import { linkMrRevision, sendReview } from "./review";
+import { minimalEdit, withEol } from "../../shared/minimal-edit";
 
 const CONFIG_NAMESPACE = "markdownStudio";
 const CURSORS_KEY = "betterMarkdown.cursors";
@@ -337,6 +338,14 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         return;
       }
       if (msg.type === "review") {
+        // Refresh: follow the merge request's latest head (a push moves it).
+        if (msg.action === "load" && document.uri.scheme === "file") {
+          const linked = await linkMrRevision(document).catch((err) => (console.warn("merge request lookup failed", err), false));
+          if (!linked) {
+            webview.postMessage({ type: "reviewResult", requestId: msg.requestId, action: "load", error: "No open merge request of the current branch changes this file." });
+            return;
+          }
+        }
         await sendReview(document, webview, msg);
         return;
       }
@@ -362,6 +371,16 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         pane.ready = true;
         sendDiff(pane);
         if (document.uri.scheme === "pi-mr") void sendReview(document, webview, { action: "load" });
+        // A local file shows the discussions of its branch's open merge request.
+        else
+          void linkMrRevision(document).then(
+            async (linked) => {
+              if (!linked) return;
+              await webview.postMessage({ type: "reviewEnabled" });
+              await sendReview(document, webview, { action: "load" });
+            },
+            (err) => console.warn("merge request lookup failed", err),
+          );
         // Fire the first-run setup prompt only after the webview has
         // signalled `ready` — posting earlier would land before the
         // message listener is attached and the message would be lost.
@@ -605,15 +624,13 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider {
         }
       } else if (msg.type === "edit") {
         if (isReadonly) return;
-        const newContent = msg.content as string;
-        if (newContent === document.getText()) return;
+        // Only the changed span is replaced (cursors, folding and scroll of a source
+        // editor on the same file stay put; one undo step as before).
+        const change = minimalEdit(document.getText(), withEol(msg.content as string, document.eol === vscode.EndOfLine.CRLF));
+        if (!change) return;
         pendingWebviewEdits++;
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(
-          document.uri,
-          new vscode.Range(0, 0, document.lineCount, 0),
-          newContent,
-        );
+        edit.replace(document.uri, new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.text);
         await vscode.workspace.applyEdit(edit);
         if (
           vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>("saveOnEdit", false)

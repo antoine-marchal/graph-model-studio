@@ -1,5 +1,5 @@
 import { LayersPanel } from './LayersPanel';
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutInspector, PlaceholderSection } from './LayoutDesigner';
 import {
@@ -289,6 +289,9 @@ export function Navigator() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
   const design = useEditor((s) => s.design);
+  // Per-slide warning badges and open threads, indexed once instead of filtered for every slide.
+  const issuesBySlide = useMemo(() => groupBy(diagnostics, (d) => d.slideId), [diagnostics]);
+  const threadsBySlide = useMemo(() => groupBy(anchors.filter((a) => !a.thread.resolved), (a) => a.slideId), [anchors]);
   if (!doc || !master) return <nav className="navigator" />;
   if (design) return <LayoutNavigator />;
   const ghostsAfter = (after: string | null) => (showDiff ? (diff?.removedSlides ?? []).filter((r) => r.after === after) : []);
@@ -314,10 +317,10 @@ export function Navigator() {
         {ghostsAfter(null).map(ghost)}
         {doc.slides.map((s, i) => {
           const layout = findLayout(master, s.layout);
-          const issues = diagnostics.filter((d) => d.slideId === s.id);
+          const issues = issuesBySlide.get(s.id) ?? [];
           const errors = issues.filter((d) => d.severity === 'error').length;
           const change = showDiff ? diff?.slides.get(s.id) : undefined;
-          const threads = anchors.filter((a) => a.slideId === s.id && !a.thread.resolved).length;
+          const threads = threadsBySlide.get(s.id)?.length ?? 0;
           return [
             <li
               key={s.id}
@@ -388,6 +391,17 @@ export function Navigator() {
       </ol>
     </nav>
   );
+}
+
+function groupBy<T, K>(items: T[], key: (x: T) => K): Map<K, T[]> {
+  const out = new Map<K, T[]>();
+  for (const x of items) {
+    const k = key(x);
+    const list = out.get(k);
+    if (list) list.push(x);
+    else out.set(k, [x]);
+  }
+  return out;
 }
 
 /**

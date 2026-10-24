@@ -23,7 +23,26 @@ import { TableFilter } from "./extensions/TableFilter";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
 import { HeadingIndent } from "./extensions/HeadingIndent";
 
-const lowlight = createLowlight(common);
+const highlighter = createLowlight(common);
+
+/**
+ * Very large code blocks (generated JSON embeds…) stay uncolored: every token is a DOM span, and
+ * Chrome's own typing / selection work walks them all (a 45k-line JSON block made each keystroke
+ * anywhere in the document cost ~150 ms instead of ~17 ms).
+ */
+const MAX_HIGHLIGHT_CHARS = 100_000;
+const MAX_HIGHLIGHT_LINES = 2_000;
+const tooBig = (code: string) => {
+  if (code.length > MAX_HIGHLIGHT_CHARS) return true;
+  for (let i = 0, lines = 0; (i = code.indexOf("\n", i) + 1) > 0; ) if (++lines > MAX_HIGHLIGHT_LINES) return true;
+  return false;
+};
+const plain = (value: string) => ({ type: "root" as const, children: [{ type: "text" as const, value }], data: { language: undefined, relevance: 0 } });
+const lowlight = {
+  ...highlighter,
+  highlight: (language: string, code: string, options?: Parameters<typeof highlighter.highlight>[2]) => (tooBig(code) ? plain(code) : highlighter.highlight(language, code, options)),
+  highlightAuto: (code: string, options?: Parameters<typeof highlighter.highlightAuto>[1]) => (tooBig(code) ? plain(code) : highlighter.highlightAuto(code, options)),
+};
 
 /**
  * Tab typed inside a line inserts a tab character instead of indenting the

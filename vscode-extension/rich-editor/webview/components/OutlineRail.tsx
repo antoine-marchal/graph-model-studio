@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from "react";
-import { scrollToHeadingByIndex } from "./TableOfContents";
+import React, { useState } from "react";
+import { HEADING_SELECTOR, scrollToHeadingByIndex, useHeadingEvents } from "../hooks/useHeadingEvents";
 
 /**
  * Compact heading outline (after nuza's section guides): at the left edge,
@@ -10,8 +10,6 @@ import { scrollToHeadingByIndex } from "./TableOfContents";
 
 /** Deepest heading level (relative to the top one) that gets a mark. */
 const RAIL_DEPTH = 3;
-const HEADINGS =
-  ".tiptap-editor h1, .tiptap-editor h2, .tiptap-editor h3, .tiptap-editor h4, .tiptap-editor h5, .tiptap-editor h6";
 
 interface Mark {
   index: number;
@@ -23,10 +21,10 @@ export function OutlineRail() {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [active, setActive] = useState(-1);
 
-  const update = useCallback(() => {
+  const update = () => {
     const container = document.querySelector(".editor-container");
     if (!container) return;
-    const els = Array.from(container.querySelectorAll<HTMLElement>(HEADINGS));
+    const els = Array.from(container.querySelectorAll<HTMLElement>(HEADING_SELECTOR));
     const levels = els.map((el) => parseInt(el.tagName[1], 10));
     const top = Math.min(6, ...levels);
     const next: Mark[] = [];
@@ -48,26 +46,8 @@ export function OutlineRail() {
       if (el.getBoundingClientRect().top <= limit) current = index;
     });
     setActive(current);
-  }, []);
-
-  useEffect(() => {
-    const container = document.querySelector(".editor-container");
-    if (!container) return;
-    let raf = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(update);
-    };
-    container.addEventListener("scroll", onScroll, { passive: true });
-    const interval = setInterval(update, 1000);
-    const timer = setTimeout(update, 300);
-    return () => {
-      container.removeEventListener("scroll", onScroll);
-      clearInterval(interval);
-      clearTimeout(timer);
-      cancelAnimationFrame(raf);
-    };
-  }, [update]);
+  };
+  useHeadingEvents(update, update);
 
   if (marks.length < 2) return null;
 

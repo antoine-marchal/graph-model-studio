@@ -109,7 +109,7 @@ export type HostMessage =
       /** Set when the document is one side of a GitLab merge request diff. */
       review?: { mr: string; side: 'old' | 'new' };
     }
-  | { type: 'diffBase'; base: DiffBaseKind; label: string; doc: unknown | null; available: DiffBaseKind[]; error?: string }
+  | { type: 'diffBase'; base: DiffBaseKind; label: string; doc: unknown | null; available: DiffBaseKind[]; error?: string; openComments?: boolean }
   | { type: 'review'; requestId?: number; action?: string; data?: ReviewData; error?: string }
   | { type: 'revealReviewComment'; noteId: number }
   | { type: 'gmcFiles'; files: string[] }

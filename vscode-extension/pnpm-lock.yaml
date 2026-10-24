@@ -43,6 +43,9 @@ overrides:
   '@tiptap/starter-kit': 3.22.1
   '@tiptap/suggestion': 3.22.1
 
+patchedDependencies:
+  vfile-location@5.0.3: 9e3387be15414d7b0e5d26c3866e21ef43d0795d39ebc89c064becfbb31ef782
+
 importers:
 
   .:
@@ -5382,7 +5385,7 @@ snapshots:
       hastscript: 9.0.1
       property-information: 7.2.0
       vfile: 6.0.3
-      vfile-location: 5.0.3
+      vfile-location: 5.0.3(patch_hash=9e3387be15414d7b0e5d26c3866e21ef43d0795d39ebc89c064becfbb31ef782)
       web-namespaces: 2.0.1
 
   hast-util-has-property@3.0.0:
@@ -6934,7 +6937,7 @@ snapshots:
 
   version-range@4.15.0: {}
 
-  vfile-location@5.0.3:
+  vfile-location@5.0.3(patch_hash=9e3387be15414d7b0e5d26c3866e21ef43d0795d39ebc89c064becfbb31ef782):
     dependencies:
       '@types/unist': 3.0.3
       vfile: 6.0.3

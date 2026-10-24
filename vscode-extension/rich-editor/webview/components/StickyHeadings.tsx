@@ -1,4 +1,5 @@
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useState, useRef } from "react";
+import { HEADING_SELECTOR, scrollToHeadingByIndex, useHeadingEvents } from "../hooks/useHeadingEvents";
 
 interface StickyHeading {
   index: number;
@@ -17,13 +18,11 @@ export function StickyHeadings() {
   const prevKeyRef = useRef("");
   const prevIndicesRef = useRef<Set<number>>(new Set());
 
-  const update = useCallback(() => {
+  const update = () => {
     const container = document.querySelector(".editor-container");
     if (!container) return;
 
-    const headingEls = container.querySelectorAll(
-      ".tiptap-editor h1, .tiptap-editor h2, .tiptap-editor h3, .tiptap-editor h4, .tiptap-editor h5, .tiptap-editor h6"
-    );
+    const headingEls = container.querySelectorAll(HEADING_SELECTOR);
     const containerRect = container.getBoundingClientRect();
     const stickyEl = container.querySelector(".sticky-headings");
     const stickyHeight = stickyEl ? stickyEl.getBoundingClientRect().height : 0;
@@ -55,40 +54,8 @@ export function StickyHeadings() {
       prevIndicesRef.current = new Set(stack.map((h) => h.index));
       setStickyStack(stack);
     }
-  }, []);
-
-  useEffect(() => {
-    const container = document.querySelector(".editor-container");
-    if (!container) return;
-    let raf = 0;
-    const onScroll = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(update);
-    };
-    container.addEventListener("scroll", onScroll, { passive: true });
-    const interval = setInterval(update, 2000);
-    return () => {
-      container.removeEventListener("scroll", onScroll);
-      clearInterval(interval);
-      cancelAnimationFrame(raf);
-    };
-  }, [update]);
-
-  const scrollToHeading = (index: number) => {
-    const container = document.querySelector(".editor-container");
-    if (!container) return;
-    const headings = container.querySelectorAll(
-      ".tiptap-editor h1, .tiptap-editor h2, .tiptap-editor h3, .tiptap-editor h4, .tiptap-editor h5, .tiptap-editor h6"
-    );
-    const el = headings[index];
-    if (!el) return;
-    const stickyEl = container.querySelector(".sticky-headings");
-    const stickyHeight = stickyEl ? stickyEl.getBoundingClientRect().height : 0;
-    const elTop = el.getBoundingClientRect().top;
-    const containerTop = container.getBoundingClientRect().top;
-    const offset = elTop - containerTop + container.scrollTop - stickyHeight;
-    container.scrollTo({ top: offset, behavior: "smooth" });
   };
+  useHeadingEvents(update, update);
 
   if (stickyStack.length === 0) return null;
 
@@ -98,7 +65,7 @@ export function StickyHeadings() {
         <div
           key={h.index}
           className={`sticky-heading sticky-heading-h${h.level}`}
-          onClick={() => scrollToHeading(h.index)}
+          onClick={() => scrollToHeadingByIndex(h.index)}
           role="button"
           tabIndex={0}
         >

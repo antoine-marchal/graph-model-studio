@@ -22,4 +22,5 @@ integrations/paste-as-markdown/extension.js
 graphify-out/**
 slides-studio/**
 rich-editor/**
+shared/**
 !rich-editor/LICENSE

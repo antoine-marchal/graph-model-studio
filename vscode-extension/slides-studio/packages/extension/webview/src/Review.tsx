@@ -34,10 +34,17 @@ export function useAnchors(): Anchor[] {
   }, [doc, data]);
 }
 
+/** Last diff computed: every consumer (canvas, navigator, ribbon) shares it for the same documents. */
+let lastDiff: { base: SlideDocument; doc: SlideDocument; out: DocDiff } | null = null;
+
 export function useDiff(): DocDiff | null {
   const base = useEditor((s) => s.diff.doc);
   const doc = useEditor((s) => s.doc);
-  return useMemo(() => (base && doc ? diffDocs(base, doc) : null), [base, doc]);
+  return useMemo(() => {
+    if (!base || !doc) return null;
+    if (lastDiff?.base !== base || lastDiff.doc !== doc) lastDiff = { base, doc, out: diffDocs(base, doc) };
+    return lastDiff.out;
+  }, [base, doc]);
 }
 
 let requestId = 0;
@@ -160,7 +167,7 @@ export function CommentsPane() {
       {!review ? (
         <div className="pane-empty">
           <Icon name="comment" size={20} />
-          <p>{tr('Les discussions GitLab de la merge request s’affichent ici, aussi sur ce fichier local, dès que sa version a été ouverte une fois depuis la liste des modifications de la merge request (extension Project Integration).', 'The merge request’s GitLab discussions show here, on this local file too, once its version was opened from the merge request changes list (Project Integration extension).')}</p>
+          <p>{tr('Les discussions GitLab de la merge request s’affichent ici, aussi sur ce fichier local : choisissez la base de la merge request comme version de référence, ou ouvrez sa version depuis la liste des modifications de la merge request (extension Project Integration).', 'The merge request’s GitLab discussions show here, on this local file too: choose the merge request base as reference version, or open its version from the merge request changes list (Project Integration extension).')}</p>
         </div>
       ) : (
         <div className="threads">

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { findLayout, layoutForSlide, patchMasterObjects, resolveColor, round4, staticObjectBox, tr, type Box, type CorporateMaster, type MasterOverride, type StaticObject } from '@corporate-slides/core';
 import { PPI } from '@corporate-slides/renderer';
-import { currentSlide, useEditor, type EditorState } from './store';
+import { currentSlide, trackPointer, useEditor, type EditorState } from './store';
 import { post } from './host';
 import { Icon } from './icons';
 import { ColorPicker, EditableId, IconButton, NumField, Section } from './Panels';
@@ -39,6 +39,8 @@ const literal = (v: string | null, master: CorporateMaster): string | null => (v
 
 /** Master as it was before an "all slides" drag preview (restored on cancel). */
 let previewBase: CorporateMaster | null = null;
+/** Pending preview frame: master previews (every slide redraws) are applied once per frame. */
+let masterFrame = 0;
 
 /** Apply (or with `preview`, only show) a change of master object `index`. */
 export function applyMaster(index: number, patch: MasterPatch, preview = false) {
@@ -50,9 +52,14 @@ export function applyMaster(index: number, patch: MasterPatch, preview = false) 
     const from = previewBase ?? st.master;
     if (preview) {
       previewBase = from;
-      useEditor.setState({ master: patchMasterObjects(from, base.id, index, clean) });
+      cancelAnimationFrame(masterFrame);
+      masterFrame = requestAnimationFrame(() => {
+        masterFrame = 0;
+        if (previewBase === from) useEditor.setState({ master: patchMasterObjects(from, base.id, index, clean) });
+      });
       return;
     }
+    cancelAnimationFrame(masterFrame);
     previewBase = null;
     useEditor.setState({ master: patchMasterObjects(from, base.id, index, clean) });
     post({ type: 'editMaster', layoutId: base.id, index, patch: clean });
@@ -66,6 +73,7 @@ export function applyMaster(index: number, patch: MasterPatch, preview = false) 
 }
 
 export function cancelMasterPreview() {
+  cancelAnimationFrame(masterFrame);
   if (previewBase) useEditor.setState({ master: previewBase });
   previewBase = null;
   useEditor.getState().cancelPreview();
@@ -96,14 +104,7 @@ export function startMasterDrag(e: React.PointerEvent, index: number, box: Box, 
     last = { x: round4(x), y: round4(y), w: round4(w), h: round4(h) };
     applyMaster(index, last, true);
   };
-  const up = () => {
-    window.removeEventListener('pointermove', move);
-    window.removeEventListener('pointerup', up);
-    if (last) applyMaster(index, last);
-    else cancelMasterPreview();
-  };
-  window.addEventListener('pointermove', move);
-  window.addEventListener('pointerup', up);
+  trackPointer(move, (commit) => (last && commit ? applyMaster(index, last) : cancelMasterPreview()));
 }
 
 /** Selection frame and resize handles of the selected master object (slide coordinates). */

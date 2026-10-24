@@ -435,7 +435,7 @@ export function ReviewBar({ review }: { review: ReviewApi }) {
       )}
       {data && !data.canComment && <span className="rv-tally">File absent on this side · comment on the other side</span>}
       {data?.canComment && !data.canCreate && (
-        <span className="rv-tally">No line mapping for this revision · replies still work</span>
+        <span className="rv-tally">{data.notice ?? "No line mapping for this revision · replies still work"}</span>
       )}
       </span>
       <span className="rv-bar-tools">

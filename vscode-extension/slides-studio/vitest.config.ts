@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
-    include: ['packages/*/src/**/*.test.ts', 'tests/integration/**/*.test.ts', 'tests/visual/**/*.test.ts'],
+    include: ['packages/*/src/**/*.test.ts', 'packages/extension/webview/src/**/*.test.ts', 'tests/integration/**/*.test.ts', 'tests/visual/**/*.test.ts'],
     testTimeout: 120_000,
     // Messages are bilingual: tests assert the French strings whatever the machine locale.
     env: { LANG: 'fr_FR.UTF-8', LC_ALL: 'fr_FR.UTF-8' },

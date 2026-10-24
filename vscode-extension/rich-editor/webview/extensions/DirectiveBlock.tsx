@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import { vscodeApi } from "../vscode-api";
 import { parseDirective, setDirectiveAttr, type DirectiveKind as Kind } from "../conversion-utils";
-import { GraphEditorModal, detectTheme } from "./GmcBlock";
+import { detectTheme } from "./GmcBlock";
+import { GraphEditorModal } from "./GraphEditorModal";
 
 /**
  * A toolkit directive and its generated content as one card:
@@ -85,6 +86,24 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
     setGraph(null);
   }, [saveGraph]);
 
+  // Same as Slides Studio: double-click the rendered diagram to edit the .gmc file interactively.
+  // Native listener: the picture is its own node view, rendered through a React portal.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const openGraphRef = useRef(openGraph);
+  openGraphRef.current = openGraph;
+  useEffect(() => {
+    const block = headerRef.current?.closest(".directive-block");
+    if (!gmc || !editable || !block) return;
+    const onDoubleClick = (e: Event) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest(".directive-content") || !t.closest(".image-block, img")) return;
+      e.preventDefault();
+      openGraphRef.current();
+    };
+    block.addEventListener("dblclick", onDoubleClick);
+    return () => block.removeEventListener("dblclick", onDoubleClick);
+  }, [gmc, editable]);
+
   const viewOptions = views && attrs.view && !views.includes(attrs.view) ? [...views, attrs.view] : views;
 
   const setAttr = (name: string, value: string) =>
@@ -99,7 +118,7 @@ function DirectiveBlockView({ node, editor, updateAttributes }: any) {
 
   return (
     <NodeViewWrapper className={`directive-block directive-${kind}${locked ? " locked" : ""}`}>
-      <div className="directive-header" contentEditable={false}>
+      <div ref={headerRef} className="directive-header" contentEditable={false}>
         <span className="directive-kind">
           {ICON[kind]}
           {LABEL[kind]}

@@ -70,7 +70,8 @@ describe('master extraction (real corporate template)', () => {
 
   it('reports unsupported features instead of dropping them silently', () => {
     const features = master.unsupported.map((u) => u.feature);
-    expect(features.some((f) => f.includes('groupées'))).toBe(true);
+    // Grouped shapes are flattened into the layouts since 48ecb346: no longer an unsupported feature.
+    expect(features.some((f) => f.includes('groupées'))).toBe(false);
     expect(features.some((f) => f.includes('EMF'))).toBe(true);
     expect(master.fidelity.method).toBe('reconstructed');
     const report = readFileSync(join(ws, '.corporate-slides/master/compatibility-report.md'), 'utf8');

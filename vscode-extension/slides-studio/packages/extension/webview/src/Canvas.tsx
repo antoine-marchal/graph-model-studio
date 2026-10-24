@@ -26,11 +26,11 @@ import {
   tr,
 } from '@corporate-slides/core';
 import { capsCss, PPI, SlideView, textBoxStyle, tokenHex, type AssetResolver } from '@corporate-slides/renderer';
-import { currentSlide, useEditor } from './store';
+import { currentSlide, trackPointer, useEditor } from './store';
 import { useAnchors, useDiff } from './Review';
 import { Icon } from './icons';
 import { connectMutation, deleteMutations, duplicateMutations, groupMutations, inlineEditor, type RunFormat } from './Format';
-import { TableEditor, TableGridHandles } from './TableEditor';
+import { TableEditor } from './TableEditor';
 import { AdjustHandles } from './Adjust';
 import { post } from './host';
 import { applyMaster, MasterSelection, MasterTextEditor, masterContext, masterTextEditable, startMasterDrag } from './MasterEdit';
@@ -348,25 +348,21 @@ export function Canvas() {
       setEndTarget(target.element.id);
       preview([last]);
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+    document.body.classList.add('is-dragging-end');
+    trackPointer(move, (commit) => {
       document.body.classList.remove('is-dragging-end');
       setEndTarget(null);
-      if (last) mutate([last]);
+      if (last && commit) mutate([last]);
       else cancelPreview();
-    };
-    document.body.classList.add('is-dragging-end');
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    });
   };
 
-  const onPointerUp = () => {
+  const onPointerUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
     setGuides([]);
     if (!d) return;
-    if (d.moved && d.last.length) mutate(d.last);
+    if (d.moved && d.last.length && e.type === 'pointerup') mutate(d.last);
     else cancelPreview();
     if (!d.moved && d.drill && slide) {
       // Second click on a group member (PowerPoint): the group is entered, the member picked.
@@ -403,19 +399,16 @@ export function Canvas() {
       const inside = resolved.elements.filter((x) => !x.element.hidden && x.box.x >= r.x0 && x.box.y >= r.y0 && x.box.x + x.box.w <= r.x1 && x.box.y + x.box.h <= r.y1).map((x) => x.element.id);
       select(slide.id, [...new Set([...base, ...inside])]);
     };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+    const up = (commit: boolean) => {
       document.body.classList.remove('is-marquee');
       setMarquee(null);
-      if (!moved && hitId && additive) {
+      if (commit && !moved && hitId && additive) {
         const cur = useEditor.getState().selected;
         select(slide.id, cur.includes(hitId) ? cur.filter((x) => x !== hitId) : [...cur, hitId]);
       }
     };
     document.body.classList.add('is-marquee');
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    trackPointer(move, up);
   };
 
   /* ------------------------------ keyboard ------------------------------ */
@@ -551,6 +544,7 @@ export function Canvas() {
           onPointerDown={(e) => startDrag(e, 'resize', h)}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           style={{ position: 'absolute', left: `${left}%`, top: `${top}%`, width: handleSize, height: handleSize, marginLeft: -handleSize / 2, marginTop: -handleSize / 2, background: '#fff', border: `${stroke}px solid var(--accent)`, borderRadius: 2 / zoom, pointerEvents: 'auto', cursor: `${h}-resize` }}
         />
       );
@@ -610,7 +604,6 @@ export function Canvas() {
           <div key={r.element.id} style={style} data-selection={r.element.id}>
             {single && handles()}
             {single && <AdjustHandles r={r} zoom={zoom} />}
-            {single && !readOnly && r.element.type === 'table' && <TableGridHandles r={r} slideId={slide.id} />}
             {r.element.locked && <span className="tag" style={{ fontSize: 11 / zoom, top: -18 / zoom }}>{tr('verrouillé', 'locked')}</span>}
             {fit?.overflows && showWarnings && (
               <span className="tag tag-warn" style={{ fontSize: 11 / zoom, bottom: -18 / zoom, top: 'auto' }} title={tr("Estimation : le texte risque de déborder dans PowerPoint", "Estimate: the text may overflow in PowerPoint")}>
@@ -698,6 +691,7 @@ export function Canvas() {
           style={{ width: W * PPI * zoom, height: H * PPI * zoom }}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onPointerOver={(e) => {
             const t = e.target as HTMLElement;
             setHoverId(t.closest<HTMLElement>('[data-element-id]')?.dataset.elementId ?? null);

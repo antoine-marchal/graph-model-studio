@@ -5,14 +5,15 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { imageSize } from 'image-size';
 import { DESIGN_SLIDE_ID, duplicateLayout, findLayout, isDiagramSrc, masterAssetSrc, MutationError, newLayout, patchMasterObjects, renderedImageSrc, resolveSlide, uniqueId, WebviewMessage, type CorporateMaster, type DiffBaseKind, type HostMessage, type Mutation, type SlideDocument, tr } from '@corporate-slides/core';
 import { applyMutations, parseSource, presentationKind, type SourceKind } from '@corporate-slides/parser';
-import { findMasterDir, fsValidateOptions, projectRootOf, resolveImage } from '@corporate-slides/cli';
+import { findMasterDir, projectRootOf, resolveImage } from '@corporate-slides/cli';
 import { convertClipboardDrawing, convertPastedSlide, loadMaster, slugify } from '@corporate-slides/master-extractor';
 import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
-import { loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
+import { linkMrRevision, loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
+import { minimalEdit, withEol } from '../../../../shared/minimal-edit';
 
 /** Deck thumbnails (`<file>.png`, first slide) are written for local files when enabled. */
 const wantsThumbnail = (uri: vscode.Uri) => uri.scheme === 'file' && vscode.workspace.getConfiguration('corporateSlides').get<boolean>('deckThumbnail', true);
@@ -34,6 +35,8 @@ interface PanelState {
   externalVersion: number;
   /** Zen mode turned on by this editor's slide show. */
   zen?: boolean;
+  /** Diagram writes and the close-time render, in arrival order (the render must read the last write). */
+  gmcOps?: Promise<unknown>;
 }
 
 /**
@@ -53,6 +56,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
   /** Documents being edited by `applyTransaction` (their change events are our own). */
   private applying = new Set<string>();
   private panels = new Map<string, Set<PanelState>>();
+  /** Last parse of each document: reused while its version, kind and master are unchanged. */
+  private parsed = new WeakMap<vscode.TextDocument, { version: number; kind: SourceKind; master: CorporateMaster | null; result: ReturnType<typeof parseSource> }>();
+  /** Picture sizes for validation, kept while the file's mtime is unchanged (each read loads the whole file). */
+  private imageSizes = new Map<string, { mtime: number; size: { width: number; height: number } | undefined }>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -393,8 +400,13 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     });
   }
 
+  /** Parsed document (read-only: shared by every caller until the source or the master changes). */
   private parse(document: vscode.TextDocument, kind: SourceKind, master: CorporateMaster | null) {
-    return parseSource(document.getText(), kind, master ? { dimensions: master.dimensions, master } : {});
+    const hit = this.parsed.get(document);
+    if (hit && hit.version === document.version && hit.kind === kind && hit.master === master) return hit.result;
+    const result = parseSource(document.getText(), kind, master ? { dimensions: master.dimensions, master } : {});
+    this.parsed.set(document, { version: document.version, kind, master, result });
+    return result;
   }
 
   async pushDocument({ document, kind, panel }: PanelState): Promise<void> {
@@ -409,13 +421,40 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         if (file) assetUrls[`master:${a.id}`] = panel.webview.asWebviewUri(vscode.Uri.file(join(m.dir, file))).toString();
       }
       const root = projectRootOf(m.dir);
+      // One stat per distinct picture per push, shared by asset URLs and validation.
+      const stats = new Map<string, { path: string; mtime: number } | null>();
+      const stat = (src: string) => {
+        if (!stats.has(src)) {
+          const path = resolveImage(dirname(local), src, root);
+          const st = path ? statSync(path, { throwIfNoEntry: false }) : undefined;
+          stats.set(src, path && st ? { path, mtime: st.mtimeMs } : null);
+        }
+        return stats.get(src)!;
+      };
       for (const s of doc.slides) for (const el of s.elements) {
         if (el.type !== 'image') continue;
-        const p = resolveImage(dirname(local), el.src, root);
+        const f = stat(el.src);
         // mtime query: a re-rendered diagram PNG replaces the cached image.
-        if (p && existsSync(p) && BROWSER_IMAGE.test(p)) assetUrls[`image:${el.src}`] = `${panel.webview.asWebviewUri(vscode.Uri.file(p))}?v=${statSync(p).mtimeMs}`;
+        if (f && BROWSER_IMAGE.test(f.path)) assetUrls[`image:${el.src}`] = `${panel.webview.asWebviewUri(vscode.Uri.file(f.path))}?v=${f.mtime}`;
       }
-      diags = validateDocument(doc, m.master, fsValidateOptions(local, root));
+      diags = validateDocument(doc, m.master, {
+        assetExists: (src: string) => !!stat(src),
+        imageSize: (src: string) => {
+          const f = stat(src);
+          if (!f) return undefined;
+          const hit = this.imageSizes.get(f.path);
+          if (hit?.mtime === f.mtime) return hit.size;
+          let size: { width: number; height: number } | undefined;
+          try {
+            const d = imageSize(readFileSync(f.path));
+            if (d.width && d.height) size = { width: d.width, height: d.height };
+          } catch {
+            /* unreadable picture: no size rule */
+          }
+          this.imageSizes.set(f.path, { mtime: f.mtime, size });
+          return size;
+        },
+      });
       if (document.uri.scheme === 'file') this.publishDiagnostics(document, diags, errors);
     }
     const twin = mrTwin(document.uri);
@@ -435,11 +474,17 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     } satisfies HostMessage);
   }
 
-  private async pushDiffBase(state: PanelState, master: CorporateMaster | null): Promise<void> {
+  /** `linked`: merge request revision already looked up (true also opens the comments pane). */
+  private async pushDiffBase(state: PanelState, master: CorporateMaster | null, linked?: boolean): Promise<void> {
     const base = await loadDiffBase(state.document, state.diffBase);
     const available: DiffBaseKind[] = mrRef(state.document.uri) ? (mrRef(state.document.uri)!.side === 'new' ? ['none', 'mr'] : ['none']) : ['none', 'head', 'mr'];
     const doc = base.text === null ? null : parseSource(base.text, state.kind, master ? { dimensions: master.dimensions, master } : {}).doc;
-    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error } satisfies HostMessage);
+    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error, openComments: linked || undefined } satisfies HostMessage);
+    // Comparing with the merge request: bring its discussions too.
+    if (state.diffBase === 'mr' && (linked ?? (await linkMrRevision(state.document).catch((e) => (log.warn('merge request lookup failed', e), false))))) {
+      await this.pushDocument(state);
+      await this.relayReview(state.document, (m) => state.panel.webview.postMessage(m), { action: 'load' });
+    }
   }
 
   publishDiagnostics(document: vscode.TextDocument, diags: ReturnType<typeof validateDocument>, parseErrors: string[]): void {
@@ -483,7 +528,10 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
       switch (msg.type) {
         case 'ready': {
           await this.pushDocument(state);
-          await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null);
+          // A local file changed by its branch's open merge request opens compared with it, comments shown.
+          const linked = document.uri.scheme === 'file' && (await linkMrRevision(document).catch((e) => (log.warn('merge request lookup failed', e), false)));
+          if (linked) state.diffBase = 'mr';
+          await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null, linked || undefined);
           // Missing or older than the deck: render it now (a deck block may be waiting for it).
           if (wantsThumbnail(document.uri)) {
             const png = `${localPath(document.uri)}.png`;
@@ -661,6 +709,8 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
           break;
         case 'review': {
           const { type: _t, requestId, ...request } = msg;
+          // Refresh: follow the merge request's latest head (a push moves it).
+          if (request.action === 'load' && state.diffBase === 'mr') await linkMrRevision(document).catch((e) => log.warn('merge request lookup failed', e));
           await this.relayReview(document, send, request, requestId);
           break;
         }
@@ -693,20 +743,24 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         case 'gmcWrite': {
           if (readOnly) break;
           const file = this.diagramPath(document, msg.src);
-          const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
-          // An open (possibly dirty) editor of the diagram receives the edit; otherwise the file is written.
-          if (open) {
-            if (open.getText() !== msg.source) await replaceMinimal(open, open.getText(), msg.source);
-          } else await vscode.workspace.fs.writeFile(vscode.Uri.file(file), Buffer.from(msg.source, 'utf8'));
+          await this.gmcInOrder(state, async () => {
+            const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+            // An open (possibly dirty) editor of the diagram receives the edit; otherwise the file is written.
+            if (open) {
+              if (open.getText() !== msg.source) await replaceMinimal(open, open.getText(), msg.source);
+            } else await vscode.workspace.fs.writeFile(vscode.Uri.file(file), Buffer.from(msg.source, 'utf8'));
+          });
           break;
         }
         case 'gmcClose': {
           if (!msg.changed || readOnly) break;
           const file = this.diagramPath(document, msg.src);
-          const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
-          // Saving an open diagram re-renders it through the onDidSave hook (extension.ts).
-          if (open?.isDirty) await open.save();
-          else await renderGmc(file).then(() => this.refreshImages(file));
+          await this.gmcInOrder(state, async () => {
+            const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === file);
+            // Saving an open diagram re-renders it through the onDidSave hook (extension.ts).
+            if (open?.isDirty) await open.save();
+            else await renderGmc(file).then(() => this.refreshImages(file));
+          });
           break;
         }
         case 'editGmc':
@@ -730,6 +784,13 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     } catch (e) {
       send({ type: 'review', requestId, action: request.action, error: (e as Error).message });
     }
+  }
+
+  /** Run a diagram operation after the previous ones of this panel (messages are handled concurrently). */
+  private gmcInOrder(state: PanelState, op: () => Promise<void>): Promise<void> {
+    const run = (state.gmcOps ?? Promise.resolve()).then(op);
+    state.gmcOps = run.catch(() => undefined);
+    return run;
   }
 
   /** Absolute path of a diagram source, refused when it leaves the project. */
@@ -910,13 +971,10 @@ const round = (n: number) => Math.round(n * 10_000) / 10_000;
 
 /** Replace only the changed span so cursors, folding and undo granularity stay sensible. */
 export async function replaceMinimal(document: vscode.TextDocument, before: string, after: string): Promise<boolean> {
-  if (before === after) return true;
-  let start = 0;
-  while (start < before.length && start < after.length && before[start] === after[start]) start++;
-  let endB = before.length, endA = after.length;
-  while (endB > start && endA > start && before[endB - 1] === after[endA - 1]) (endB--, endA--);
+  const change = minimalEdit(before, withEol(after, document.eol === vscode.EndOfLine.CRLF));
+  if (!change) return true;
   const edit = new vscode.WorkspaceEdit();
-  edit.replace(document.uri, new vscode.Range(document.positionAt(start), document.positionAt(endB)), after.slice(start, endA));
+  edit.replace(document.uri, new vscode.Range(document.positionAt(change.start), document.positionAt(change.end)), change.text);
   return vscode.workspace.applyEdit(edit);
 }
 
