@@ -12,6 +12,8 @@ export interface ResolvedStyle {
   name: string;
   type: StyleDef["type"];
   basedOn?: string;
+  /** Style of the paragraph Enter creates after this one. */
+  next?: string;
   outlineLevel?: number;
   paragraph: ParagraphProps;
   run: RunProps;
@@ -38,12 +40,13 @@ export const DEFAULT_STYLES: Record<string, StyleDef> = {
         next: "Normal",
         outlineLevel: n,
         paragraph: { spaceBefore: [0, 18, 14, 12, 10, 8, 8][n], spaceAfter: 6, keepWithNext: true, keepTogether: true },
-        run: { font: "theme.heading", size: [0, 20, 16, 13, 12, 11, 11][n], bold: n > 1, color: n <= 2 ? "theme.accent1" : "theme.dk1" },
+        // Each level reads differently (size, weight, italic, small caps), as Word's built-in headings.
+        run: { font: "theme.heading", size: [0, 20, 16, 14, 12, 11, 11][n], bold: n >= 3, italic: n === 4 || n === 6, smallCaps: n === 5 || undefined, color: n <= 5 ? "theme.accent1" : "theme.dk2" },
       } satisfies StyleDef,
     ]),
   ),
   Quote: { id: "Quote", name: "Quote", type: "paragraph", basedOn: "Normal", paragraph: { indentLeft: 24 }, run: { italic: true, color: "theme.dk2" } },
-  Caption: { id: "Caption", name: "Caption", type: "paragraph", basedOn: "Normal", paragraph: { spaceAfter: 10 }, run: { size: 9, italic: true, color: "theme.dk2" } },
+  Caption: { id: "Caption", name: "Caption", type: "paragraph", basedOn: "Normal", next: "Normal", paragraph: { spaceAfter: 10 }, run: { size: 9, italic: true, color: "theme.dk2" } },
   Code: { id: "Code", name: "Code", type: "paragraph", basedOn: "Normal", paragraph: { spaceAfter: 0, lineSpacing: 1 }, run: { font: "Consolas", size: 9.5 } },
   ListParagraph: { id: "ListParagraph", name: "List Paragraph", type: "paragraph", basedOn: "Normal", paragraph: { spaceAfter: 2 } },
   Header: { id: "Header", name: "Header", type: "paragraph", basedOn: "Normal", paragraph: { spaceAfter: 0 }, run: { size: 9, color: "theme.dk2" } },
@@ -86,10 +89,37 @@ export function resolveTheme(chain: MasterDef[]): Theme {
   return theme;
 }
 
-/** `theme.accent1` → RRGGBB; plain colors normalized to upper-case RRGGBB without `#`. */
+export const THEME_SLOTS = ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"] as const;
+/** Office palette variants: tints toward white, shades toward black (Slides Studio's token names). */
+export const PALETTE_VARIANTS = { lighter80: 0.8, lighter60: 0.6, lighter40: 0.4, lighter25: 0.25, darker25: -0.25, darker50: -0.5 } as const;
+
+function mix(hex: string, amount: number): string {
+  const n = parseInt(hex, 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(amount >= 0 ? c + (255 - c) * amount : c * (1 + amount)));
+  return ch.map((c) => c.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+/** Every palette token of a theme, base colors first, then tints / shades (palette pickers). */
+export function paletteTokens(theme: Theme): { token: string; hex: string }[] {
+  const out: { token: string; hex: string }[] = [];
+  for (const slot of THEME_SLOTS) if (theme.colors[slot]) out.push({ token: `theme.${slot}`, hex: theme.colors[slot]!.toUpperCase() });
+  for (const slot of THEME_SLOTS) {
+    const base = theme.colors[slot];
+    if (base) for (const [v, k] of Object.entries(PALETTE_VARIANTS)) out.push({ token: `theme.${slot}.${v}`, hex: mix(base, k) });
+  }
+  return out;
+}
+
+/** `theme.accent1` / `theme.accent1.lighter40` → RRGGBB; plain colors normalized to upper-case RRGGBB without `#`. */
 export function resolveColor(value: string | undefined | null, theme: Theme): string | undefined {
-  if (!value) return undefined;
-  if (value.startsWith("theme.")) return theme.colors[value.slice(6) as keyof Theme["colors"]]?.toUpperCase();
+  if (!value || value === "none") return undefined;
+  if (value.startsWith("theme.")) {
+    const [, slot, variant] = value.split(".");
+    const base = theme.colors[slot as keyof Theme["colors"]]?.toUpperCase();
+    if (!base || !variant) return base;
+    const k = PALETTE_VARIANTS[variant as keyof typeof PALETTE_VARIANTS];
+    return k === undefined ? base : mix(base, k);
+  }
   const hex = value.replace(/^#/, "");
   if (/^[0-9a-f]{6}$/i.test(hex)) return hex.toUpperCase();
   if (/^[0-9a-f]{3}$/i.test(hex)) return hex.replace(/./g, (c) => c + c).toUpperCase();
@@ -160,6 +190,7 @@ export function resolveStyleSheet(chain: MasterDef[], local: Record<string, Part
       name: def.name,
       type: def.type,
       basedOn: def.basedOn,
+      next: def.next,
       outlineLevel: def.outlineLevel,
       paragraph: { ...parent?.paragraph, ...def.paragraph },
       run: { ...parent?.run, ...def.run },

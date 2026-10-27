@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { createRoot } from "react-dom/client";
 import { Extension } from "@tiptap/core";
 import { Suggestion } from "@tiptap/suggestion";
-import { GMC_STARTER } from "./GmcBlock";
+import { insertGmcBlock } from "./GmcBlock";
 import { vscodeApi } from "../vscode-api";
 import {
   Heading1, Heading2, Heading3, Heading4, Heading5, Heading6,
@@ -38,7 +38,7 @@ const ITEMS: SlashItem[] = [
   { title: "Math Block", icon: <Sigma size={16} />, command: (e) => e.chain().focus().insertContent({ type: "mathBlock", attrs: { latex: "" } }).run() },
   { title: "Inline Math", icon: <Sigma size={16} />, command: (e) => e.chain().focus().insertContent({ type: "mathInline", attrs: { latex: "" } }).run() },
   { title: "Mermaid Diagram", icon: <Workflow size={16} />, command: (e) => e.chain().focus().insertContent({ type: "mermaidBlock" }).run() },
-  { title: "GMC Diagram", icon: <Network size={16} />, command: (e) => e.chain().focus().insertContent({ type: "gmcBlock", attrs: { meta: "id=diagram" }, content: [{ type: "text", text: GMC_STARTER }] }).run() },
+  { title: "GMC Diagram", icon: <Network size={16} />, command: (e) => insertGmcBlock(e) },
   { title: "Slide Deck", icon: <Presentation size={16} />, command: (e) => pickDeck(e) },
   { title: "Image", icon: <ImageIcon size={16} />, command: () => {
     window.dispatchEvent(new CustomEvent("btrmk:showImageDialog"));

@@ -74,7 +74,9 @@ export function useReview(editor: Editor | null) {
   }, [send, reveal]);
 
   useEffect(() => {
-    if (!editor) return;
+    // Off review, typing must not re-render the app (each App commit rescans the selection).
+    if (!editor || !enabled) return;
+    setDocVersion((v) => v + 1);
     // "transaction", not "update": the initial load sets content without emitting updates.
     const bump = ({ transaction }: { transaction: { docChanged: boolean } }) =>
       transaction.docChanged && setDocVersion((v) => v + 1);
@@ -82,7 +84,7 @@ export function useReview(editor: Editor | null) {
     return () => {
       editor.off("transaction", bump);
     };
-  }, [editor]);
+  }, [editor, enabled]);
 
   const lines = useMemo(() => {
     try {

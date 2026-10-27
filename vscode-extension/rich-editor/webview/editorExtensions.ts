@@ -1,4 +1,5 @@
 import { Extension } from "@tiptap/core";
+import "./extensions/nodeViewPositions";
 import { StarterKit } from "@tiptap/starter-kit";
 import { Code } from "@tiptap/extension-code";
 import { Link } from "@tiptap/extension-link";
@@ -22,7 +23,7 @@ import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/B
 import { TableFilter } from "./extensions/TableFilter";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
 import { HeadingIndent } from "./extensions/HeadingIndent";
-import { PageBreak, SectionBreak, StudioBlockAttrs, StudioObject, TextStyle } from "./extensions/StudioNodes";
+import { PageBreak, SectionBreak, StudioBlockAttrs, StudioObject, StudioStory, TextStyle } from "./extensions/StudioNodes";
 
 const highlighter = createLowlight(common);
 
@@ -114,6 +115,7 @@ export function contentExtensions({ history = true }: { history?: boolean } = {}
     PageBreak,
     SectionBreak,
     StudioObject,
+    StudioStory,
     TextStyle,
   ];
 }

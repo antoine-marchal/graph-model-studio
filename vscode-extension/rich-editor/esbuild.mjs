@@ -94,8 +94,18 @@ function writeCss() {
   const d2h = readFileSync(require.resolve('diff2html/bundles/css/diff2html.min.css'), 'utf8')
   const katexDist = path.join(path.dirname(require.resolve('katex/package.json')), 'dist')
   const katex = readFileSync(path.join(katexDist, 'katex.min.css'), 'utf8')
+  // Slides Studio's chrome stylesheet, verbatim (one studio identity), minus what belongs to its own
+  // page: Tailwind, the body / root rules and the global <code> font (document code keeps its look).
+  const slides = readFileSync(path.join(here, '..', 'slides-studio', 'packages', 'extension', 'webview', 'src', 'styles.css'), 'utf8')
+    .replace(/@import ['"]tailwindcss['"];?/, '')
+    .replace(/^html, body, #root \{[^}]*\}/m, '')
+    .replace(/^body \{[^}]*\}/m, '')
+    .replace(/^code \{[^}]*\}/m, '')
   // Studio chrome and paper (Markdown Studio document shell) last: it lays out the editor.
-  const studio = readFileSync(path.join(here, 'webview', 'styles', 'studio.css'), 'utf8')
+  const studio = `${slides}
+
+/* markdown studio */
+${readFileSync(path.join(here, 'webview', 'styles', 'studio.css'), 'utf8')}`
   writeFileSync(
     path.join(outdir, 'editor.css'),
     `${editor}\n\n/* diff2html */\n${d2h}\n\n/* katex */\n${katex}\n\n/* themes */\n${themesCss()}\n\n/* studio */\n${studio}`,

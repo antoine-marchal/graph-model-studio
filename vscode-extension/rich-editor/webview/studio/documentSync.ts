@@ -9,10 +9,13 @@ import type { Editor } from "@tiptap/core";
 import { applyChanges, changesBetween, rebaseChanges } from "../../../shared/edit-sync";
 import { extractFrontmatter } from "../frontmatter";
 import { readMeta, writeMeta } from "../../document/meta";
-import type { StudioMeta } from "../../document/schema";
+import { STUDIO_VERSION, type BlockProps, type StudioMeta } from "../../document/schema";
+import { nonGroupBlocks } from "../../document/groups";
+import { parseBlockProps } from "../extensions/StudioNodes";
 import { mapLoadedDoc, nodeHtml, planBodyUpdate, serializeBody, sourceBlocks, type NodeRanges } from "./sourceMap";
 import { notify, resolveDocument, studio } from "./store";
 import { vscodeApi } from "../vscode-api";
+import { tr } from "../../../slides-studio/packages/core/src/i18n";
 
 export interface SyncDeps {
   editor: Editor;
@@ -64,7 +67,11 @@ export class DocumentSync {
     const html = await this.deps.toHtml(body);
     this.editor.commands.setContent(html, { emitUpdate: false });
     this.deps.afterLoad?.();
-    this.current = { body, map: mapLoadedDoc(this.editor.state.doc, sourceBlocks(body)) };
+    const map = mapLoadedDoc(this.editor.state.doc, sourceBlocks(body));
+    // Blocks still written with `<!-- ms:block -->` / `<!-- ms:object -->` markers are rewritten as
+    // `::: id` groups on the next save.
+    for (const [node, r] of map) if (/^<!-- ms:(block|object|endobject|pagebreak|section)\b/.test(body.slice(r.start, r.end))) map.delete(node);
+    this.current = { body, map };
   }
 
   /** Desired source for the current editor content. */
@@ -72,7 +79,39 @@ export class DocumentSync {
     const { schema, doc } = this.editor.state;
     const out = serializeBody(doc, this.current.body, this.current.map, (node) => this.deps.toMarkdown(nodeHtml(schema, node)));
     this.current = { body: out.text, map: out.map };
+    this.syncBlocks();
     return this.fm + out.text;
+  }
+
+  /** `blocks.<id>` in the frontmatter = the properties of the `::: id` groups of the text. */
+  private syncBlocks(): void {
+    const meta = studio.get().meta;
+    if (studio.get().metaReadOnly) return;
+    const blocks: Record<string, BlockProps> = { ...nonGroupBlocks(meta) };
+    const breaks: NonNullable<StudioMeta["breaks"]> = {};
+    this.editor.state.doc.descendants((n) => {
+      // Page / section breaks: `breaks.<id>` (`page: true`, or the section's properties).
+      if ((n.type.name === "msPageBreak" || n.type.name === "msSection") && n.attrs.id) {
+        breaks[n.attrs.id] = n.type.name === "msPageBreak" ? { page: true } : parseBlockProps(n.attrs.props);
+        return false;
+      }
+      if (!n.attrs.msBlock) return true;
+      const { id, ...props } = parseBlockProps(n.attrs.msBlock);
+      if (id && Object.keys(props).length && !blocks[id]) blocks[id] = props;
+      return true;
+    });
+    const next = Object.keys(blocks).length ? blocks : undefined;
+    const nextBreaks = Object.keys(breaks).length ? breaks : undefined;
+    if (JSON.stringify(next) === JSON.stringify(meta?.blocks) && JSON.stringify(nextBreaks) === JSON.stringify(meta?.breaks)) return;
+    this.writeMeta({ ...(meta ?? { version: STUDIO_VERSION }), version: STUDIO_VERSION, blocks: next, breaks: nextBreaks });
+  }
+
+  private writeMeta(next: StudioMeta | null): void {
+    let fm = writeMeta(this.fm, next);
+    if (!this.fm && fm && !/^\r?\n/.test(this.current.body)) fm += fm.includes("\r\n") ? "\r\n" : "\n";
+    this.fm = fm;
+    studio.set({ meta: next });
+    resolveDocument();
   }
 
   /** Editor changed: send after a short pause (typing stays smooth). */
@@ -96,7 +135,7 @@ export class DocumentSync {
     try {
       text = this.serialize();
     } catch (err) {
-      notify("error", `Could not save: ${err instanceof Error ? err.message : String(err)}`);
+      notify("error", `${tr("Enregistrement impossible", "Could not save")} : ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
     window.dispatchEvent(new CustomEvent("btrmk:source", { detail: text }));
@@ -129,7 +168,7 @@ export class DocumentSync {
     this.inflight = null;
     this.sendAgain = false;
     studio.set({ sync: "conflict" });
-    notify("error", `Edit not written: ${reason}`, lost);
+    notify("error", `${tr("Modification non écrite", "Edit not written")} : ${reason}`, lost);
     this.afterReply();
   }
 
@@ -165,7 +204,7 @@ export class DocumentSync {
       const mine = changesBetween(this.acked.text, local);
       const rebased = rebaseChanges(this.acked.text, content, mine);
       if (rebased) target = applyChanges(content, rebased);
-      else notify("warning", "The source changed where you were editing: the source version was kept. Your text is available to copy.", local);
+      else notify("warning", tr("La source a changé à l’endroit modifié : la version de la source est conservée. Votre texte reste copiable.", "The source changed where you were editing: the source version was kept. Your text is available to copy."), local);
     }
     this.acked = { text: content, version };
     await this.applySource(local, target);
@@ -216,21 +255,20 @@ export class DocumentSync {
     });
   }
 
-  /** Change the document meta (layout, objects, styles…) — one edit, flushed now. */
-  updateMeta(change: (meta: StudioMeta) => StudioMeta | null): void {
+  /**
+   * Change the document meta (layout, objects, styles…) — one edit, flushed now, or after `delay`
+   * ms when more changes of the same gesture follow (a drop, then its re-anchoring: one undo step).
+   */
+  updateMeta(change: (meta: StudioMeta) => StudioMeta | null, delay = 0): void {
     if (this.readonly || studio.get().metaReadOnly) {
-      notify("warning", "Layout is read-only for this document.");
+      notify("warning", tr("La mise en page est en lecture seule pour ce document.", "Layout is read-only for this document."));
       return;
     }
     const current: StudioMeta = structuredClone(studio.get().meta ?? { version: 1 });
     const next = change(current);
-    let fm = writeMeta(this.fm, next);
-    if (!this.fm && fm && !/^\r?\n/.test(this.current.body)) fm += fm.includes("\r\n") ? "\r\n" : "\n";
-    this.fm = fm;
-    studio.set({ meta: next });
-    resolveDocument();
+    this.writeMeta(next ? { ...next, version: STUDIO_VERSION } : next);
     this.touched = true;
-    this.schedule(0);
+    this.schedule(delay);
   }
 
   /** Raw YAML frontmatter edits (frontmatter panel). */

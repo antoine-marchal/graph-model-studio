@@ -108,3 +108,66 @@ test("plain Markdown without frontmatter or master exports", async () => {
   assert.match(doc, /Hello/);
   assert.ok(report.fallbacks.some((f) => f.kind === "diagram"), "unrendered diagram reported");
 });
+
+test("master text boxes and placeholders export as text and Word fields", async () => {
+  const base = masters.get("studio-body")!;
+  const custom = {
+    ...structuredClone(base),
+    id: "with-placeholders",
+    background: {
+      title: { type: "textbox" as const, placement: "page" as const, relativeTo: "page" as const, box: { x: 40, y: 20, width: 300, height: 30 }, placeholder: "title", style: { fill: null, line: null, fontSize: 20 } },
+      stamp: { type: "textbox" as const, placement: "page" as const, relativeTo: "page" as const, box: { x: 40, y: 760, width: 200, height: 20 }, text: "Confidentiel — page {{page}}", style: { fill: null, line: null } },
+      when: { type: "textbox" as const, placement: "page" as const, relativeTo: "page" as const, box: { x: 400, y: 20, width: 120, height: 20 }, placeholder: "date", style: { fill: null, line: null } },
+    },
+  };
+  const all = new Map([...masters, [custom.id, custom]]);
+  const src = "---\nmarkdownStudio:\n  version: 1\n  master: with-placeholders\n  fields:\n    title: Bilan 2026\n---\n\n# Bilan annuel\n\nTexte.\n";
+  const { buffer, report } = await compileDocx(options(src, { masters: (id) => all.get(id) }));
+  assert.ok(buffer);
+  const { names, text } = await unzip(buffer!);
+  const headers = (await Promise.all(names.filter((n) => /^word\/header\d+\.xml$/.test(n)).map(text))).join("\n");
+  assert.match(headers, /<wps:txbx>[\s\S]*?Bilan 2026/, "title placeholder carries the document's text");
+  assert.match(headers, /DATE \\@ (&quot;|")d MMMM yyyy/, "date placeholder is a DATE field");
+  assert.match(headers, /Confidentiel — page[\s\S]*?PAGE/, "free text keeps its page field");
+  assert.ok(report.native.fields >= 3);
+});
+
+test("`::: id` groups: block styles, header text and placeholders come from the frontmatter ids", async () => {
+  const src = [
+    "---",
+    "markdownStudio:",
+    "  version: 2",
+    "  master: studio-body",
+    "  blocks:",
+    "    intro: { style: Lead, align: center }",
+    "    header: { align: right }",
+    "  headers:",
+    "    default: { id: header }",
+    "  placeholders: [ client ]",
+    "---",
+    "",
+    "::: header",
+    "ACME confidential",
+    ":::",
+    "",
+    "::: client",
+    "Contoso",
+    ":::",
+    "",
+    "# Title",
+    "",
+    "::: intro",
+    "Lead text",
+    ":::",
+    "",
+    "Body.",
+    "",
+  ].join("\n");
+  const { buffer } = await compileDocx(options(src));
+  const { names, text } = await unzip(buffer!);
+  const doc = await text("word/document.xml");
+  assert.match(doc, /<w:pStyle w:val="Lead"\/>[\s\S]*?<w:jc w:val="center"\/>[\s\S]*?Lead text/, "group style + alignment");
+  assert.doesNotMatch(doc, /ACME confidential|Contoso|:::/, "header and placeholder groups are not body text");
+  const header = (await Promise.all(names.filter((n) => /word\/header\d*\.xml/.test(n)).map(text))).join("");
+  assert.match(header, /<w:jc w:val="right"\/>[\s\S]*?ACME confidential/, "header text and alignment");
+});

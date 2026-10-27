@@ -116,5 +116,17 @@
   "s207.permissive.export": "Write the document; unrepresentable content uses documented fallbacks listed in the report.",
   "s208.strict.export": "Refuse to write a document that would lose content.",
   "s209.docx.export.mode": "How **Export editable DOCX** handles content Word cannot represent.",
-  "s210.hidden.objects.in.docx": "Whether objects hidden in the document are written to DOCX."
+  "s210.hidden.objects.in.docx": "Whether objects hidden in the document are written to DOCX.",
+  "masters.container": "Corporate masters",
+  "masters.slides": "Presentation masters",
+  "s260.document.masters": "Document masters",
+  "s261.edit.master.on.the.page": "Edit master on the page",
+  "s262.apply.master.to.document": "Apply to the document",
+  "s263.new.master": "New master…",
+  "s264.rename.master": "Rename…",
+  "s265.delete.master": "Delete…",
+  "s266.open.master.json": "Open master.json",
+  "s267.refresh.masters": "Refresh",
+  "s268.duplicate.master": "Duplicate…",
+  "s269.no.document.master": "No document master in this workspace yet.\n[Import a Word template](command:markdownStudio.importTemplate)\n[New master](command:markdownStudio.newMaster)"
 }

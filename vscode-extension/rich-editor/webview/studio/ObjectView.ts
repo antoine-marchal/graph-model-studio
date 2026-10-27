@@ -4,13 +4,14 @@
  * drawn absolutely positioned by the layout pass (pagination.ts → layoutObjects). A click selects
  * the object; a double-click enters its text (Escape leaves to the object).
  */
-import { NodeSelection } from "@tiptap/pm/state";
+import { NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import type { EditorView, NodeView } from "@tiptap/pm/view";
 import { resolveColor } from "../../document/styles";
 import type { ObjectDescriptor, Theme } from "../../document/schema";
 import { ptToPx } from "../../document/units";
 import { objectOf, studio } from "./store";
+import { connectClick } from "./actions";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -50,6 +51,27 @@ export function shapeSvg(d: ObjectDescriptor, w: number, h: number, theme: Theme
   return svg;
 }
 
+/**
+ * Caret for text editing in the object at `pos`: the clicked point when it is in one of its
+ * paragraphs, else the nearest end of one of them — never a position outside the object
+ * (`Selection.near` from a point between two of its blocks would leave it).
+ */
+export function caretInside(view: EditorView, pos: number, at?: number): TextSelection {
+  const doc = view.state.doc;
+  const obj = doc.nodeAt(pos)!;
+  const want = at ?? pos + obj.nodeSize;
+  let best: { pos: number; d: number } | null = null;
+  obj.descendants((n, p) => {
+    if (!n.isTextblock) return true;
+    const start = pos + 1 + p + 1;
+    const end = start + n.content.size;
+    const c = Math.min(Math.max(want, start), end);
+    if (!best || Math.abs(c - want) < best.d) best = { pos: c, d: Math.abs(c - want) };
+    return false;
+  });
+  return TextSelection.create(doc, best ? (best as { pos: number }).pos : pos + 1);
+}
+
 export function createObjectView({ node, view, getPos }: { node: PMNode; view: EditorView; getPos: () => number | undefined }): NodeView {
   let current = node;
   let editing = false;
@@ -61,11 +83,21 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
   body.className = "ms-object-body";
   dom.append(art, body);
 
+  const setEditing = (on: boolean) => {
+    editing = on;
+    const id = String(current.attrs.id);
+    const now = studio.get().editingObject;
+    if (on && now !== id) studio.set({ editingObject: id });
+    else if (!on && now === id) studio.set({ editingObject: null });
+  };
+
   const render = () => {
     const id = String(current.attrs.id);
     const d = objectOf(id);
     dom.dataset.id = id;
     dom.classList.toggle("ms-object-flow", !d);
+    // Continuous view: every positioned object sits in the text flow, at its anchor.
+    dom.classList.toggle("ms-object-inline", !!d && !studio.get().pageView);
     dom.classList.toggle("is-editing", editing);
     if (!d) {
       body.contentEditable = "true";
@@ -99,7 +131,7 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
   const unsubscribe = studio.subscribe(() => {
     const s = studio.get();
     const d = objectOf(String(current.attrs.id));
-    const key = JSON.stringify([d, s.showHidden, s.sections[0]?.sheet.theme, s.selection.includes(String(current.attrs.id)) && s.selection.length > 1]);
+    const key = JSON.stringify([d, s.showHidden, s.pageView, s.sections[0]?.sheet.theme, s.selection.includes(String(current.attrs.id)) && s.selection.length > 1]);
     if (key !== lastKey) {
       lastKey = key;
       render();
@@ -113,15 +145,20 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
   };
   const enter = (e?: MouseEvent) => {
     const d = objectOf(String(current.attrs.id));
-    if (!d || d.locked?.content || !current.childCount) return;
-    editing = true;
+    if (!d || d.locked?.content || d.type === "image" || d.type === "connector") return;
+    let pos = getPos();
+    if (pos === undefined) return;
+    // A shape gets its (empty) text paragraph on first edit, as in Slides Studio / PowerPoint.
+    if (!current.childCount) {
+      view.dispatch(view.state.tr.insert(pos + 1, view.state.schema.nodes.paragraph.create()));
+      pos = getPos();
+      if (pos === undefined) return;
+    }
+    setEditing(true);
     render();
     body.focus();
-    const at = e ? view.posAtCoords({ left: e.clientX, top: e.clientY }) : null;
-    const pos = getPos();
-    if (pos === undefined) return;
-    const inside = at && at.pos > pos && at.pos < pos + current.nodeSize ? at.pos : pos + current.nodeSize - 2;
-    view.dispatch(view.state.tr.setSelection((view.state.selection.constructor as any).near(view.state.doc.resolve(inside))));
+    const at = e && (e.clientX || e.clientY) ? view.posAtCoords({ left: e.clientX, top: e.clientY }) : null;
+    view.dispatch(view.state.tr.setSelection(caretInside(view, pos, at?.pos)));
   };
   dom.addEventListener("dblclick", (e) => {
     if (editing) return;
@@ -132,6 +169,7 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
     if (editing || e.button !== 0) return;
     // Object manipulation: the overlay (ObjectLayer) handles the drag; here only the selection.
     e.preventDefault();
+    if (connectClick(String(current.attrs.id))) return;
     if (e.shiftKey) {
       const id = String(current.attrs.id);
       studio.set((s) => ({ selection: s.selection.includes(id) ? s.selection.filter((x) => x !== id) : [...s.selection, id] }));
@@ -139,22 +177,25 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
     }
     select();
   });
-  dom.addEventListener("keydown", (e) => {
-    if (editing && e.key === "Escape") {
-      e.preventDefault();
-      editing = false;
-      render();
-      select();
-      view.focus();
-    }
-  });
+  // Escape leaves the text to the object. Keys reach the editor root (the body is not focused
+  // on its own), so listen there.
+  const onKey = (e: KeyboardEvent) => {
+    if (!editing || e.key !== "Escape" || view.composing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setEditing(false);
+    render();
+    select();
+    view.focus();
+  };
+  view.dom.addEventListener("keydown", onKey, true);
 
   // Caret leaving the body ends text editing.
   const onSelectionChange = () => {
     if (!editing) return;
     const sel = document.getSelection();
-    if (sel?.anchorNode && !body.contains(sel.anchorNode)) {
-      editing = false;
+    if (sel?.anchorNode && !body.contains(sel.anchorNode) && !(sel.anchorNode as Element).closest?.(".ribbon-wrap, .inspector")) {
+      setEditing(false);
       render();
     }
   };
@@ -182,7 +223,7 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
         const pos = getPos();
         const sel = view.state.selection;
         if (pos === undefined || sel.from < pos || sel.to > pos + current.nodeSize) {
-          editing = false;
+          setEditing(false);
           render();
         }
       }
@@ -195,7 +236,9 @@ export function createObjectView({ node, view, getPos }: { node: PMNode; view: E
       return !body.contains(m.target as globalThis.Node) || (m.type === "attributes" && m.target === body);
     },
     destroy() {
+      if (editing) setEditing(false);
       unsubscribe();
+      view.dom.removeEventListener("keydown", onKey, true);
       document.removeEventListener("selectionchange", onSelectionChange);
     },
   };

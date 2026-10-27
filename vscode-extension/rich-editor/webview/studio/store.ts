@@ -7,6 +7,7 @@
 import { useSyncExternalStore } from "react";
 import type { MasterDef, ObjectDescriptor, StudioMeta } from "../../document/schema";
 import { resolveSections, type ResolvedSection } from "../../document/masters";
+import { setGroupMeta, withGroupTexts } from "../../document/groups";
 import type { ExportReport } from "../../src/docx/compile";
 
 export interface MasterEntry {
@@ -49,8 +50,23 @@ export interface Notice {
   recovery?: string;
 }
 
+export type RibbonTab = "home" | "insert" | "layout" | "references" | "design" | "review" | "view" | "format";
+export type Pane = "format" | "styles" | "layers" | "check";
+
+/** What a right-click hit (context menu target). */
+export type MenuTarget =
+  | { kind: "text" }
+  | { kind: "block"; pos: number }
+  | { kind: "object" }
+  | { kind: "page"; page: number }
+  | { kind: "story"; page: number; story: "headers" | "footers" }
+  | { kind: "master"; page?: number }
+  | { kind: "outline"; pos: number };
+
 export interface StudioState {
   meta: StudioMeta | null;
+  /** Markdown of the header / footer / placeholder `::: id` groups of the text, by id. */
+  groupTexts: Record<string, string>;
   metaReadOnly: boolean;
   masters: MasterDef[];
   entries: MasterEntry[];
@@ -67,13 +83,30 @@ export interface StudioState {
   showHidden: boolean;
   showGuides: boolean;
   showRulers: boolean;
-  leftTab: "outline" | "pages" | "masters";
-  rightTab: "format" | "styles" | "layers" | "review";
+  tab: RibbonTab;
+  pane: Pane;
+  navMode: "outline" | "pages";
+  contextMenu: { x: number; y: number; target: MenuTarget } | null;
+  /** Master edit mode: selected master objects (background ids). */
+  masterSel: string[];
+  snap: boolean;
+  /** Connector tool: null off, "" waiting for the start object, else its id. */
+  connectFrom: string | null;
+  /** Word's "text boundaries": margin frame on the paper. */
+  showBoundaries: boolean;
+  /** Notion-style block handles (+ and grip) beside the hovered block. */
+  showBlockHandles: boolean;
+  /** Source line numbers beside the page (left of the vertical ruler). */
+  showLineNumbers: boolean;
+  /** Object whose text is being edited in place (double-click). */
+  editingObject: string | null;
   leftOpen: boolean;
   rightOpen: boolean;
   ribbonCollapsed: boolean;
   /** Master being edited (master edit mode), null in document mode. */
   masterEdit: MasterDef | null;
+  /** Id of the master the edited copy replaces on the paper (a starter is edited as a new copy). */
+  masterEditOf: string | null;
   report: { report: ExportReport; target?: string; kind: "export" | "preflight" } | null;
   notices: Notice[];
   sync: "saved" | "pending" | "sending" | "conflict" | "readonly";
@@ -86,6 +119,7 @@ export interface StudioState {
 const listeners = new Set<() => void>();
 let state: StudioState = {
   meta: null,
+  groupTexts: {},
   metaReadOnly: false,
   masters: [],
   entries: [],
@@ -100,12 +134,22 @@ let state: StudioState = {
   showHidden: false,
   showGuides: true,
   showRulers: true,
-  leftTab: "outline",
-  rightTab: "format",
+  tab: "home",
+  pane: "format",
+  navMode: "outline",
+  contextMenu: null,
+  masterSel: [],
+  snap: true,
+  connectFrom: null,
+  showBoundaries: false,
+  showBlockHandles: true,
+  showLineNumbers: false,
+  editingObject: null,
   leftOpen: true,
   rightOpen: true,
   ribbonCollapsed: false,
   masterEdit: null,
+  masterEditOf: null,
   report: null,
   notices: [],
   sync: "saved",
@@ -129,6 +173,32 @@ export const studio = {
   },
 };
 
+/** View options remembered per viewer (rulers, handles, line numbers, boundaries, snapping). */
+const VIEW_KEYS = ["showRulers", "showBlockHandles", "showLineNumbers", "showBoundaries", "snap"] as const;
+try {
+  const saved = JSON.parse(localStorage.getItem("markdownStudio.view") ?? "{}");
+  for (const k of VIEW_KEYS) if (typeof saved[k] === "boolean") (state as any)[k] = saved[k];
+} catch {
+  // No storage: defaults.
+}
+let viewKey = "";
+listeners.add(() => {
+  const key = JSON.stringify(Object.fromEntries(VIEW_KEYS.map((k) => [k, state[k]])));
+  if (key === viewKey) return;
+  viewKey = key;
+  try {
+    localStorage.setItem("markdownStudio.view", key);
+  } catch {
+    // Private storage: not remembered.
+  }
+});
+
+// `::: id` groups of the text are classified with the document's current frontmatter.
+setGroupMeta(() => state.meta);
+
+// Dev / test handle (profiling and browser checks read and patch the store through it).
+(globalThis as { __studio?: typeof studio }).__studio = studio;
+
 export function useStudio<T>(select: (s: StudioState) => T): T {
   return useSyncExternalStore(studio.subscribe, () => select(state));
 }
@@ -146,14 +216,14 @@ let sectionMarkers: Record<string, unknown>[] = [];
 
 export function lookupMaster(ref: string): MasterDef | undefined {
   const { masters, masterEdit } = state;
-  if (masterEdit && masterEdit.id === ref) return masterEdit;
+  if (masterEdit && (masterEdit.id === ref || state.masterEditOf === ref || ref.endsWith(`/${state.masterEditOf}/master.json`))) return masterEdit;
   return masters.find((m) => m.id === ref) ?? masters.find((m) => ref.endsWith(`/${m.id}/master.json`));
 }
 
 /** Re-resolve sections after meta, masters or section markers changed. */
 export function resolveDocument(markers?: Record<string, unknown>[]): void {
   if (markers) sectionMarkers = markers;
-  const { sections, diagnostics } = resolveSections(state.meta, sectionMarkers as any, lookupMaster);
+  const { sections, diagnostics } = resolveSections(withGroupTexts(state.meta, state.groupTexts), sectionMarkers as any, lookupMaster);
   studio.set({ sections, sectionDiagnostics: diagnostics });
 }
 

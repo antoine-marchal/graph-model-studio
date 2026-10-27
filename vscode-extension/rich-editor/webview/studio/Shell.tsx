@@ -1,97 +1,60 @@
 /**
- * Markdown Studio chrome (Slides Studio's neutral studio identity): title bar, ribbon, navigation
- * rail, paper well, inspector, status bar. One home per command; panels collapse in narrow views.
+ * Markdown Studio chrome, Slides Studio's layout: ribbon (title bar, tabs, groups), workspace
+ * (navigator | paper | inspector), status bar, master banner, notices and the context menu.
  */
 import React, { useEffect } from "react";
 import type { Editor } from "@tiptap/core";
-import { Redo2, Save, Undo2, FileDown, PanelLeft, PanelRight, Minus, Plus, Maximize2 } from "lucide-react";
 import { Ribbon } from "./Ribbon";
 import { NavPanel } from "./NavPanel";
 import { Inspector } from "./Inspector";
+import { ContextMenu } from "./ContextMenu";
 import { dismissNotice, studio, useStudio } from "./store";
-import { getSync } from "./actions";
-import { setZoom } from "./PageLayer";
-import { vscodeApi } from "../vscode-api";
+import { exitMasterEdit } from "./actions";
+import { manualFit, setZoom } from "./PageLayer";
+import { Icon } from "./icons";
+import { tr } from "./ui";
 
-export const hostUndo = () => void (getSync()?.flush() ?? Promise.resolve()).then(() => vscodeApi.postMessage({ type: "undo" }));
-export const hostRedo = () => void (getSync()?.flush() ?? Promise.resolve()).then(() => vscodeApi.postMessage({ type: "redo" }));
-const save = () => void (getSync()?.flush() ?? Promise.resolve()).then(() => vscodeApi.postMessage({ type: "save" }));
-const exportDocx = () => void (getSync()?.flush() ?? Promise.resolve()).then(() => vscodeApi.postMessage({ type: "exportDocx" }));
-
-function TitleBar({ onSource, readonly }: { onSource: () => void; readonly: boolean }) {
-  const fileName = useStudio((s) => s.fileName);
-  const sync = useStudio((s) => s.sync);
-  const masterEdit = useStudio((s) => s.masterEdit);
-  const leftOpen = useStudio((s) => s.leftOpen);
-  const rightOpen = useStudio((s) => s.rightOpen);
-  return (
-    <header className="ms-titlebar">
-      <div className="ms-quick">
-        <button className="ms-icon" onClick={() => studio.set({ leftOpen: !leftOpen })} aria-pressed={leftOpen} aria-label="Navigation panel" title="Navigation panel">
-          <PanelLeft size={16} />
-        </button>
-        <button className="ms-icon" onClick={save} disabled={readonly} aria-label="Save" title="Save (Ctrl+S)">
-          <Save size={16} />
-        </button>
-        <button className="ms-icon" onClick={hostUndo} disabled={readonly} aria-label="Undo" title="Undo (Ctrl+Z)">
-          <Undo2 size={16} />
-        </button>
-        <button className="ms-icon" onClick={hostRedo} disabled={readonly} aria-label="Redo" title="Redo (Ctrl+Shift+Z)">
-          <Redo2 size={16} />
-        </button>
-      </div>
-      <div className="ms-file">
-        <span className="ms-file-name">{fileName || "Untitled"}</span>
-        {masterEdit && <span className="ms-chip ms-chip-accent">Master: {masterEdit.name}</span>}
-        <span className={`ms-chip ms-sync-${sync}`} role="status">{{ saved: "Synced", pending: "Editing…", sending: "Saving…", conflict: "Conflict", readonly: "Read-only" }[sync]}</span>
-      </div>
-      <div className="ms-title-actions">
-        <div className="ms-switch" role="group" aria-label="Editor mode">
-          <button aria-pressed="true">Visual</button>
-          <button aria-pressed="false" onClick={onSource} title="Open the Markdown source">Source</button>
-        </div>
-        <button className="ms-primary" onClick={exportDocx} title="Export an editable Word document">
-          <FileDown size={15} /> <span className="ms-hide-narrow">Export DOCX</span>
-        </button>
-        <button className="ms-icon" onClick={() => studio.set({ rightOpen: !rightOpen })} aria-pressed={rightOpen} aria-label="Inspector" title="Inspector">
-          <PanelRight size={16} />
-        </button>
-      </div>
-    </header>
-  );
-}
+export { hostRedo, hostUndo } from "./commands";
 
 function StatusBar() {
-  const layout = useStudio((s) => s.layout);
+  const pages = useStudio((s) => s.layout?.pages.length ?? 0);
+  const section = useStudio((s) => (s.layout?.pages[s.currentPage - 1]?.section ?? 0) + 1);
   const current = useStudio((s) => s.currentPage);
   const words = useStudio((s) => s.words);
   const zoom = useStudio((s) => s.zoom);
   const pageView = useStudio((s) => s.pageView);
-  const report = useStudio((s) => s.report);
-  const diags = useStudio((s) => s.sectionDiagnostics.length + (s.layout?.overflows.length ?? 0));
-  const issues = report ? report.report.unsupported.length + report.report.missing.length + report.report.fallbacks.length : 0;
-  const section = layout?.pages[current - 1]?.section ?? 0;
+  const sync = useStudio((s) => s.sync);
+  const pane = useStudio((s) => s.pane);
+  const rightOpen = useStudio((s) => s.rightOpen);
+  const leftOpen = useStudio((s) => s.leftOpen);
+  const issues = useStudio((s) => s.sectionDiagnostics.length + (s.layout?.overflows.length ?? 0) + (s.report ? s.report.report.missing.length + s.report.report.unsupported.length : 0));
+  const syncLabel = { saved: tr("Synchronisé avec la source", "Synced with the source"), pending: tr("Modification…", "Editing…"), sending: tr("Synchronisation…", "Syncing…"), conflict: tr("Conflit avec la source", "Conflict with the source"), readonly: tr("Lecture seule", "Read-only") }[sync];
+  const checking = pane === "check" && rightOpen;
   return (
-    <footer className="ms-statusbar" role="status">
-      {pageView && layout ? <span>Page {current} of {layout.pages.length}</span> : <span>Continuous view</span>}
-      {pageView && layout && <span>Section {section + 1}</span>}
-      <span>{words.toLocaleString()} words</span>
-      <button className="ms-link" onClick={() => studio.set({ rightTab: "review", rightOpen: true })} title="Diagnostics and preflight">
-        {diags + issues ? `⚠ ${diags + issues} issue(s)` : "No issues"}
+    <footer className="statusbar" data-testid="statusbar">
+      <button type="button" className={`status-btn${leftOpen ? " is-active" : ""}`} aria-pressed={leftOpen} title={tr("Volet de navigation", "Navigation pane")} onClick={() => studio.set({ leftOpen: !leftOpen })}><Icon name="panel" size={14} /></button>
+      <span className="status-item" data-testid="page-status">{pageView && pages ? tr(`Page ${current} sur ${pages}`, `Page ${current} of ${pages}`) : tr("Mode continu", "Continuous view")}</span>
+      {pageView && pages > 0 && <span className="status-item">{tr(`Section ${section}`, `Section ${section}`)}</span>}
+      <span className="status-item">{words.toLocaleString()} {words > 1 ? tr("mots", "words") : tr("mot", "word")}</span>
+      <span className={`status-item sync${sync === "pending" || sync === "sending" ? " is-pending" : ""}${sync === "conflict" ? " is-conflict" : ""}`}>
+        <span className="sync-dot" aria-hidden />
+        <span data-testid="sync-state">{syncLabel}</span>
+      </span>
+      <button type="button" className={`status-btn diag-count${issues ? " has-warnings" : " is-clean"}${checking ? " is-active" : ""}`} data-testid="diag-count" onClick={() => studio.set(checking ? { pane: "format" } : { pane: "check", rightOpen: true })}>
+        <Icon name={issues ? "warn" : "check"} size={13} />
+        {issues ? tr(`${issues} point(s) à vérifier`, `${issues} issue(s)`) : tr("Aucun problème", "No issues")}
       </button>
-      {layout && <span className="ms-muted" title="Last pagination pass">layout {layout.ms} ms</span>}
-      <span className="ms-spacer" />
-      <button className="ms-icon" aria-label="Zoom out" onClick={() => setZoom(zoom - 0.1, true)}>
-        <Minus size={14} />
-      </button>
-      <input aria-label="Zoom" type="range" min={25} max={300} step={5} value={Math.round(zoom * 100)} onChange={(e) => setZoom(Number(e.target.value) / 100, true)} />
-      <button className="ms-icon" aria-label="Zoom in" onClick={() => setZoom(zoom + 0.1, true)}>
-        <Plus size={14} />
-      </button>
-      <span className="ms-zoom">{Math.round(zoom * 100)}%</span>
-      <button className="ms-icon" aria-label="Fit page width" title="Fit page width" onClick={() => window.dispatchEvent(new CustomEvent("ms:fit"))}>
-        <Maximize2 size={14} />
-      </button>
+      <span className="grow" />
+      <button type="button" className={`status-btn${rightOpen ? " is-active" : ""}`} aria-pressed={rightOpen} onClick={() => studio.set({ rightOpen: !rightOpen })}><Icon name="brush" size={14} /> {tr("Inspecteur", "Inspector")}</button>
+      <span className="sep" />
+      <div className="zoom" role="group" aria-label="Zoom">
+        <button type="button" className="status-btn" aria-label={tr("Zoom arrière", "Zoom out")} onClick={() => setZoom(zoom / 1.1, true)}><Icon name="zoomOut" size={14} /></button>
+        <input type="range" min={25} max={300} step={1} value={Math.round(zoom * 100)} aria-label={tr("Niveau de zoom", "Zoom level")} onChange={(e) => setZoom(Number(e.target.value) / 100, true)} />
+        <button type="button" className="status-btn" aria-label={tr("Zoom avant", "Zoom in")} onClick={() => setZoom(zoom * 1.1, true)}><Icon name="zoomIn" size={14} /></button>
+        <button type="button" className="status-btn zoom-value" data-testid="zoom-value" title={tr("100 %", "100%")} onClick={() => setZoom(1, true)}>{Math.round(zoom * 100)} %</button>
+        <button type="button" className="status-btn" aria-label={tr("Largeur de page", "Page width")} title={tr("Largeur de page", "Page width")} onClick={() => manualFit("width")}><Icon name="fitWidth" size={14} /></button>
+        <button type="button" className="status-btn" aria-label={tr("Page entière", "Whole page")} title={tr("Page entière", "Whole page")} onClick={() => manualFit("page")}><Icon name="fit" size={14} /></button>
+      </div>
     </footer>
   );
 }
@@ -99,44 +62,72 @@ function StatusBar() {
 function Notices() {
   const notices = useStudio((s) => s.notices);
   return (
-    <div className="ms-notices" aria-live="polite">
+    <div className="notices" aria-live="polite">
       {notices.map((n) => (
-        <div key={n.id} className={`ms-notice ms-notice-${n.level}`} role={n.level === "error" ? "alert" : "status"}>
+        <div key={n.id} className={`notice notice-${n.level}`} role={n.level === "error" ? "alert" : "status"}>
           <span>{n.message}</span>
           {n.recovery && (
-            <button onClick={() => void navigator.clipboard?.writeText(n.recovery!)} title="Copy the text that could not be written">
-              Copy my version
-            </button>
+            <button type="button" className="btn" onClick={() => void navigator.clipboard?.writeText(n.recovery!)}>{tr("Copier ma version", "Copy my version")}</button>
           )}
-          <button aria-label="Dismiss" onClick={() => dismissNotice(n.id)}>×</button>
+          <button type="button" className="ibtn" aria-label={tr("Fermer", "Close")} onClick={() => dismissNotice(n.id)}><Icon name="close" /></button>
         </div>
       ))}
     </div>
   );
 }
 
-export function Shell({ editor, readonly, onSource, onFind, children }: { editor: Editor; readonly: boolean; onSource: () => void; onFind: () => void; children: React.ReactNode }) {
+/** Reminder of the master editing mode and its scope, with a way out (Slides Studio's banner). */
+function MasterBanner() {
+  const master = useStudio((s) => s.masterEdit);
+  if (!master) return null;
+  return (
+    <div className="master-banner" role="status" data-testid="master-banner">
+      <Icon name="masterEdit" />
+      <span>{tr("Modification du masque", "Editing the master")} <code>{master.name}</code> — {tr("tous les documents qui l’utilisent sont modifiés.", "every document using it changes.")}</span>
+      <span className="grow" />
+      <button type="button" className="btn" onClick={() => void exitMasterEdit(false)}>{tr("Abandonner", "Discard")}</button>
+      <button type="button" className="btn btn-primary" data-testid="close-master-edit" onClick={() => void exitMasterEdit(true)}>{tr("Terminer", "Done")}</button>
+    </div>
+  );
+}
+
+export function Shell({ editor, readonly, onSource, children }: { editor: Editor; readonly: boolean; onSource: () => void; children: React.ReactNode }) {
   const leftOpen = useStudio((s) => s.leftOpen);
   const rightOpen = useStudio((s) => s.rightOpen);
-  const masterEdit = useStudio((s) => s.masterEdit);
-  // Narrow panels: start with the side panels closed.
+  const masterEdit = useStudio((s) => !!s.masterEdit);
+  // Narrow panels: start with the side panes closed (Slides Studio collapses the same way).
   useEffect(() => {
     if (window.innerWidth < 900) studio.set({ leftOpen: false });
     if (window.innerWidth < 700) studio.set({ rightOpen: false });
   }, []);
+  // Chrome buttons never take the focus: the text selection, an object's text or a table cell
+  // being edited stays active (and visible) while ribbon tabs, menus and tools are used.
+  useEffect(() => {
+    const keep = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest?.(".ribbon-wrap, .menu, .statusbar, .inspector, .master-banner")) return;
+      if (t.closest("input, textarea, select, [contenteditable='true'], [draggable='true']")) return;
+      e.preventDefault();
+    };
+    document.addEventListener("mousedown", keep, true);
+    return () => document.removeEventListener("mousedown", keep, true);
+  }, []);
   return (
-    <div className={`ms-studio${masterEdit ? " is-master-edit" : ""}`}>
-      <TitleBar onSource={onSource} readonly={readonly} />
-      <Ribbon editor={editor} readonly={readonly} onFind={onFind} />
-      <div className="ms-body">
+    <div className={`app ms-studio${leftOpen ? "" : " no-nav"}${rightOpen ? "" : " no-inspector"}${masterEdit ? " is-master-edit" : ""}`}>
+      <Ribbon editor={editor} readonly={readonly} onSource={onSource} />
+      <div className="workspace">
         {leftOpen && <NavPanel editor={editor} />}
-        <main className="ms-well" aria-label="Document">
-          {children}
+        <main className="center" aria-label={tr("Document", "Document")}>
+          <div className="canvas-area">
+            {children}
+            <MasterBanner />
+            <Notices />
+          </div>
         </main>
         {rightOpen && <Inspector editor={editor} readonly={readonly} />}
       </div>
       <StatusBar />
-      <Notices />
+      <ContextMenu editor={editor} />
     </div>
   );
 }

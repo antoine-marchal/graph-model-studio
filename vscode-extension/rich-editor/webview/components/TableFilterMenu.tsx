@@ -77,14 +77,17 @@ export function TableFilterMenu({ editor, containerRef }: {
     };
   }, [containerRef, editor, open]);
 
-  // Re-render on filter changes so the active-state of buttons updates.
+  // Re-render on filter changes so the active-state of buttons updates — only while the buttons
+  // show (a table is hovered or a menu is open): typing elsewhere must not re-render.
+  const visible = !!(hover || open);
   useEffect(() => {
+    if (!visible) return;
     const onTx = () => force((n) => n + 1);
     editor.on("transaction", onTx);
     return () => {
       editor.off("transaction", onTx);
     };
-  }, [editor]);
+  }, [editor, visible]);
 
   useEffect(() => {
     if (!open) return;

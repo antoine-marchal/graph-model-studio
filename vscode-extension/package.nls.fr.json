@@ -116,5 +116,17 @@
   "s207.permissive.export": "Écrire le document ; le contenu non représentable utilise des solutions de repli listées dans le rapport.",
   "s208.strict.export": "Refuser d'écrire un document qui perdrait du contenu.",
   "s209.docx.export.mode": "Traitement par **Exporter en DOCX modifiable** du contenu que Word ne peut pas représenter.",
-  "s210.hidden.objects.in.docx": "Écrire ou non dans le DOCX les objets masqués du document."
+  "s210.hidden.objects.in.docx": "Écrire ou non dans le DOCX les objets masqués du document.",
+  "masters.container": "Masques corporate",
+  "masters.slides": "Masques de présentation",
+  "s260.document.masters": "Masques de documents",
+  "s261.edit.master.on.the.page": "Modifier le masque sur la page",
+  "s262.apply.master.to.document": "Appliquer au document",
+  "s263.new.master": "Nouveau masque…",
+  "s264.rename.master": "Renommer…",
+  "s265.delete.master": "Supprimer…",
+  "s266.open.master.json": "Ouvrir master.json",
+  "s267.refresh.masters": "Actualiser",
+  "s268.duplicate.master": "Dupliquer…",
+  "s269.no.document.master": "Aucun masque de document dans cet espace de travail.\n[Importer un modèle Word](command:markdownStudio.importTemplate)\n[Nouveau masque](command:markdownStudio.newMaster)"
 }

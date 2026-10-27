@@ -10,7 +10,9 @@ import { connectorPath } from "../../../slides-studio/packages/core/src/geometry
 import { groupParts, groupUnit, inGroup } from "../../../slides-studio/packages/core/src/groups";
 import { pxToPt, ptToPx } from "../../document/units";
 import type { ObjectDescriptor } from "../../document/schema";
-import { notify, objectOf, studio, useStudio } from "./store";
+import { notify, objectOf, studio, useStudio, type Layout, type PageBox } from "./store";
+import { Icon } from "./icons";
+import { ptToCm, tr } from "./ui";
 import { deleteObjects, duplicateObjects, groupObjects, reanchor, selectObject, ungroup, updateObjects } from "./actions";
 
 interface Rect {
@@ -25,12 +27,113 @@ interface Rect {
 }
 
 const SNAP = 5;
+/** A move and the re-anchoring that follows its reflow are sent as one edit (one undo step). */
+const SETTLE_MS = 500;
+
+/** Drop points waiting for the reflow: page index and offset from the page's top-left, px. */
+const pins = new Map<string, { page: number; x: number; y: number; tries: number }>();
+
+function pageAt(layout: Layout, y: number): PageBox {
+  return layout.pages.find((p) => y < p.top + p.height + 14) ?? layout.pages[layout.pages.length - 1];
+}
+
+/** Remember where an object was dropped, kept inside its page (Word keeps objects on a page). */
+function pinObject(r: Rect, layout: Layout): void {
+  const page = pageAt(layout, r.y);
+  const y = r.h < page.height ? Math.min(Math.max(r.y - page.top, 0), page.height - r.h) : 0;
+  const x = r.w < page.width ? Math.min(Math.max(r.x - page.left, 0), page.width - r.w) : 0;
+  pins.set(r.id, { page: page.index, x, y, tries: 0 });
+}
+
+/**
+ * Top-level block at `y` on `page` (paper px): the anchor Word would pick for a drop there. Only
+ * blocks that start on that page qualify: an offset from a paragraph that started on an earlier
+ * page would span a page spacer, and every pagination pass would then move the object again.
+ */
+export function blockAt(editor: Editor, page: PageBox, y: number): { pos: number; top: number } | null {
+  const root = editor.view.dom.getBoundingClientRect();
+  const zoom = studio.get().zoom || 1;
+  let best: { pos: number; top: number } | null = null;
+  let firstOnPage: { pos: number; top: number } | null = null;
+  let continued: { pos: number; top: number } | null = null;
+  editor.state.doc.forEach((node, pos) => {
+    if (["msObject", "msSection", "msPageBreak"].includes(node.type.name)) return;
+    const dom = editor.view.nodeDOM(pos) as HTMLElement | null;
+    if (!dom?.getBoundingClientRect) return;
+    const top = (dom.getBoundingClientRect().top - root.top) / zoom;
+    if (top < page.top) continued = { pos, top };
+    else if (top < page.top + page.height) {
+      firstOnPage ??= { pos, top };
+      if (top <= y) best = { pos, top };
+    }
+  });
+  return best ?? firstOnPage ?? continued;
+}
+
+/** Scrolling ancestor of the paper (the canvas). */
+const scrollerOf = (editor: Editor) => editor.view.dom.closest<HTMLElement>(".editor-container");
+
+/** Anchor block of an object (the block after its marker). */
+function anchorOf(editor: Editor, id: string): number | undefined {
+  let marker = -1;
+  let anchor: number | undefined;
+  editor.state.doc.forEach((node, pos) => {
+    if (anchor !== undefined) return;
+    if (node.type.name === "msObject" && node.attrs.id === id) marker = pos;
+    else if (marker >= 0 && !["msObject", "msSection", "msPageBreak"].includes(node.type.name)) anchor = pos;
+  });
+  return anchor;
+}
+
+/** After a layout pass: bring dropped objects back to their drop point (re-anchoring if needed). */
+function settlePins(editor: Editor): void {
+  if (!pins.size) return;
+  const layout = studio.get().layout;
+  if (!layout) return void pins.clear();
+  for (const [id, pin] of pins) {
+    const d = objectOf(id);
+    const dom = editor.view.dom.querySelector<HTMLElement>(`.ms-object[data-id="${CSS.escape(id)}"]`);
+    const page = layout.pages[pin.page];
+    if (!d || !dom || !page || ++pin.tries > 4) {
+      pins.delete(id);
+      continue;
+    }
+    const tx = page.left + pin.x;
+    const ty = page.top + pin.y;
+    const left = parseFloat(dom.style.left) || 0;
+    const top = parseFloat(dom.style.top) || 0;
+    if (Math.abs(tx - left) < 1 && Math.abs(ty - top) < 1) {
+      pins.delete(id);
+      continue;
+    }
+    const target = blockAt(editor, page, ty);
+    if (!target) {
+      pins.delete(id);
+      continue;
+    }
+    const round = (v: number) => Math.round(pxToPt(v) * 100) / 100;
+    let box: ObjectDescriptor["box"];
+    let move: boolean;
+    if (d.placement === "page") {
+      const rel = d.relativeTo === "page";
+      box = { ...d.box, x: round(tx - page.left - (rel ? 0 : page.margins.left)), y: round(ty - page.top - (rel ? 0 : page.margins.top)) };
+      // A page object belongs to the page of its anchor: re-anchor only when it changed page.
+      move = pageAt(layout, Number(dom.dataset.anchorY) || 0).index !== page.index;
+    } else {
+      box = { ...d.box, x: round(tx - page.left - page.margins.left), y: round(ty - target.top) };
+      move = anchorOf(editor, id) !== target.pos;
+    }
+    const at = target.pos;
+    queueMicrotask(() => (move ? reanchor(id, at, box, SETTLE_MS) : updateObjects({ [id]: { box } }, SETTLE_MS)));
+  }
+}
+
 const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const;
 
 function rectOf(editor: Editor, id: string): Rect | null {
   const dom = editor.view.dom.querySelector<HTMLElement>(`.ms-object[data-id="${CSS.escape(id)}"]`);
   const d = objectOf(id);
-  if (!dom || !d || dom.classList.contains("ms-object-flow")) return null;
+  if (!dom || !d || dom.classList.contains("ms-object-flow") || dom.classList.contains("ms-object-inline")) return null;
   return { id, x: parseFloat(dom.style.left) || 0, y: parseFloat(dom.style.top) || 0, w: ptToPx(d.box.width), h: ptToPx(d.box.height), rot: d.rotation ?? 0, anchorY: Number(dom.dataset.anchorY) || 0, colLeft: Number(dom.dataset.colLeft) || 0 };
 }
 
@@ -40,13 +143,22 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
   const zoom = useStudio((s) => s.zoom);
   const layout = useStudio((s) => s.layout);
   const groupScope = useStudio((s) => s.groupScope);
+  const editingObject = useStudio((s) => s.editingObject);
   const [tick, setTick] = useState(0);
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] });
-  const drag = useRef<null | { kind: "move" | "resize" | "rotate"; handle?: string; sx: number; sy: number; start: Rect[]; moved: boolean }>(null);
+  // sx / sy: pointer at the start in paper px, so scrolling during the gesture moves the object too.
+  const drag = useRef<null | { kind: "move" | "resize" | "rotate"; handle?: string; sx: number; sy: number; start: Rect[]; moved: boolean; last?: { clientX: number; clientY: number; altKey: boolean; shiftKey: boolean } }>(null);
+  const autoScroll = useRef(0);
   const [preview, setPreview] = useState<Rect[] | null>(null);
 
   useEffect(() => {
-    const on = () => setTick((t) => t + 1);
+    // Every pagination pass lays objects out: settle dropped objects, then redraw only when frames
+    // or connectors depend on it.
+    const on = () => {
+      if (!drag.current) settlePins(editor);
+      const s = studio.get();
+      if (s.selection.length || Object.values(s.meta?.objects ?? {}).some((d) => d.type === "connector")) setTick((t) => t + 1);
+    };
     window.addEventListener("ms:objectsLaid", on);
     window.addEventListener("resize", on);
     return () => {
@@ -54,6 +166,21 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
       window.removeEventListener("resize", on);
     };
   }, []);
+
+  // A click (or caret move) in the text outside the selected objects deselects them.
+  useEffect(() => {
+    const on = ({ transaction }: { transaction: any }) => {
+      const { selection: ids } = studio.get();
+      if (!ids.length || (transaction.docChanged && !transaction.getMeta("pointer"))) return;
+      const sel = editor.state.selection;
+      const $from = sel.$from;
+      for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === "msObject" && ids.includes(String($from.node(d).attrs.id))) return;
+      if (sel instanceof NodeSelection && sel.node.type.name === "msObject" && ids.includes(String(sel.node.attrs.id))) return;
+      studio.set({ selection: [] });
+    };
+    editor.on("selectionUpdate", on);
+    return () => void editor.off("selectionUpdate", on);
+  }, [editor]);
 
   // A click on a grouped object selects its outermost group (inside the entered scope, one level down).
   useEffect(() => {
@@ -116,20 +243,61 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
     const start = selection.map((id) => rectOf(editor, id)).filter((r): r is Rect => !!r);
     const locked = start.filter((r) => objectOf(r.id)?.locked?.geometry);
     if (locked.length) {
-      notify("info", `Geometry locked: ${locked.map((r) => objectOf(r.id)?.name ?? r.id).join(", ")}`);
+      notify("info", `${tr("Position verrouillée", "Geometry locked")} : ${locked.map((r) => objectOf(r.id)?.name ?? r.id).join(", ")}`);
       return;
     }
     e.preventDefault();
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { kind, handle, sx: e.clientX, sy: e.clientY, start, moved: false };
+    const p = paperPoint(e);
+    drag.current = { kind, handle, sx: p.x, sy: p.y, start, moved: false };
   };
 
+  const paperPoint = (e: { clientX: number; clientY: number }) => {
+    const root = editor.view.dom.getBoundingClientRect();
+    return { x: (e.clientX - root.left) / zoom, y: (e.clientY - root.top) / zoom };
+  };
+
+  // Near the canvas edges the canvas scrolls under the pointer (moves across pages).
+  const edgeScroll = (clientY: number) => {
+    cancelAnimationFrame(autoScroll.current);
+    const el = scrollerOf(editor);
+    if (!el || !drag.current) return;
+    const r = el.getBoundingClientRect();
+    const EDGE = 40;
+    const speed = clientY < r.top + EDGE ? -(r.top + EDGE - clientY) : clientY > r.bottom - EDGE ? clientY - (r.bottom - EDGE) : 0;
+    if (!speed) return;
+    const tick = () => {
+      if (!drag.current?.last) return;
+      const before = el.scrollTop;
+      el.scrollTop += Math.max(-24, Math.min(24, speed / 2));
+      if (el.scrollTop !== before) autoScroll.current = requestAnimationFrame(tick);
+    };
+    autoScroll.current = requestAnimationFrame(tick);
+  };
+
+  useEffect(() => {
+    const el = scrollerOf(editor);
+    if (!el) return;
+    // The page scrolled under a held pointer: same pointer, new paper point.
+    const onScroll = () => drag.current?.last && move(drag.current.last);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  });
+
   const onPointerMove = (e: React.PointerEvent) => {
+    if (!drag.current) return;
+    drag.current.last = { clientX: e.clientX, clientY: e.clientY, altKey: e.altKey, shiftKey: e.shiftKey };
+    move(drag.current.last);
+    if (drag.current.moved && drag.current.kind === "move") edgeScroll(e.clientY);
+  };
+
+  const move = (e: { clientX: number; clientY: number; altKey: boolean; shiftKey: boolean }) => {
     const g = drag.current;
     if (!g) return;
-    const dx = (e.clientX - g.sx) / zoom;
-    const dy = (e.clientY - g.sy) / zoom;
+    const p = paperPoint(e);
+    const dx = p.x - g.sx;
+    const dy = p.y - g.sy;
     if (!g.moved && Math.hypot(dx, dy) < 2) return;
     g.moved = true;
     if (g.kind === "move") {
@@ -170,6 +338,7 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
   const onPointerUp = () => {
     const g = drag.current;
     drag.current = null;
+    cancelAnimationFrame(autoScroll.current);
     setGuides({ x: [], y: [] });
     const next = preview;
     setPreview(null);
@@ -189,7 +358,11 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
     if (next.length === 1) requestAnimationFrame(() => (selectObject(next[0].id), editor.view.focus()));
   };
 
-  /** One edit for the whole gesture; a lone anchored object dropped on another paragraph moves its anchor there. */
+  /**
+   * One edit for the whole gesture. A move also pins the drop point (page + offset): once the text
+   * has reflowed around the object, `settlePins` re-anchors it to the block at that point, as Word
+   * does, so the object stays where it was dropped instead of following its old paragraph.
+   */
   const commit = (start: Rect[], next: Rect[]) => {
     const patches: Record<string, Partial<ObjectDescriptor>> = {};
     for (const r of next) {
@@ -199,30 +372,9 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
         box: { x: Math.round((d.box.x + pxToPt(r.x - s.x)) * 100) / 100, y: Math.round((d.box.y + pxToPt(r.y - s.y)) * 100) / 100, width: pxToPt(r.w), height: pxToPt(r.h) },
         ...(r.rot !== s.rot ? { rotation: r.rot || undefined } : {}),
       };
+      if (layout && (Math.abs(r.x - s.x) > 0.5 || Math.abs(r.y - s.y) > 0.5)) pinObject(r, layout);
     }
-    if (next.length === 1) {
-      const r = next[0];
-      const d = objectOf(r.id)!;
-      if (d.placement === "anchored" && Math.abs(r.y - start[0].y) > 24) {
-        const root = editor.view.dom.getBoundingClientRect();
-        const hit = editor.view.posAtCoords({ left: root.left + (r.colLeft + 4) * zoom, top: root.top + r.y * zoom + 2 });
-        if (hit) {
-          const $p = editor.state.doc.resolve(Math.min(hit.pos, editor.state.doc.content.size));
-          const blockPos = $p.depth ? $p.before(1) : hit.pos;
-          const block = editor.state.doc.nodeAt(blockPos);
-          const dom = block ? (editor.view.nodeDOM(blockPos) as HTMLElement | null) : null;
-          const currentAnchor = r.anchorY;
-          if (block && dom && block.type.name !== "msObject") {
-            const top = (dom.getBoundingClientRect().top - root.top) / zoom;
-            if (Math.abs(top - currentAnchor) > 1) {
-              reanchor(r.id, blockPos, { ...patches[r.id].box!, y: Math.round(pxToPt(r.y - top) * 100) / 100 });
-              return;
-            }
-          }
-        }
-      }
-    }
-    updateObjects(patches);
+    updateObjects(patches, pins.size ? SETTLE_MS : 0);
   };
 
   // Keyboard: nudges (one commit per burst), delete, duplicate, group, escape.
@@ -238,7 +390,7 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
       if (arrows[e.key]) {
         e.preventDefault();
         e.stopPropagation();
-        if (sel.some((id) => objectOf(id)?.locked?.geometry)) return notify("info", "Geometry locked.");
+        if (sel.some((id) => objectOf(id)?.locked?.geometry)) return notify("info", tr("Position verrouillée.", "Geometry locked."));
         burst ??= { start: sel.map((id) => rectOf(editor, id)).filter((r): r is Rect => !!r), dx: 0, dy: 0 };
         burst.dx += ptToPx(arrows[e.key][0]);
         burst.dy += ptToPx(arrows[e.key][1]);
@@ -323,8 +475,8 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
         {guides.y.map((y) => <line key={`gy${y}`} className="ms-guide" y1={y} y2={y} x1={0} x2={layout?.width ?? 2000} />)}
       </svg>
       {primary && pd && (
-        <div className="ms-anchor-lens" style={{ left: primary.colLeft - 22, top: pd.placement === "page" ? primary.anchorY : primary.anchorY }} title={pd.placement === "anchored" ? "Anchored to this paragraph: moves with the text" : "Positioned on the page of this paragraph"}>
-          <span aria-hidden="true">⚓</span>
+        <div className="ms-anchor-lens" style={{ left: primary.colLeft - 22, top: pd.placement === "page" ? primary.anchorY : primary.anchorY }} title={pd.placement === "anchored" ? tr("Ancré à ce paragraphe : se déplace avec le texte", "Anchored to this paragraph: moves with the text") : tr("Fixe sur la page de ce paragraphe", "Fixed on the page of this paragraph")}>
+          <Icon name="anchor" size={12} />
         </div>
       )}
       {rects.map((r, i) => {
@@ -334,22 +486,28 @@ export function ObjectLayer({ editor }: { editor: Editor }) {
         return (
           <div
             key={r.id}
-            className={`ms-sel-frame${d.locked?.geometry ? " is-locked" : ""}${i === 0 ? " is-primary" : ""}`}
+            className={`ms-sel-frame${d.locked?.geometry ? " is-locked" : ""}${i === 0 ? " is-primary" : ""}${editingObject === r.id ? " is-editing" : ""}`}
             style={{ left: r.x, top: r.y, width: r.w, height: Math.max(r.h, 1), transform: r.rot ? `rotate(${r.rot}deg)` : undefined }}
             onPointerDown={(e) => onPointerDown(e, "move")}
-            onDoubleClick={() => {
+            onDoubleClick={(e) => {
               const g = d.group;
-              if (g) studio.set({ groupScope: groupUnit(g, studio.get().groupScope), selection: [r.id] });
-              else (editor.view.dom.querySelector(`.ms-object[data-id="${CSS.escape(r.id)}"]`) as HTMLElement | null)?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+              const scope = groupUnit(g, studio.get().groupScope);
+              if (g && scope !== studio.get().groupScope) return studio.set({ groupScope: scope, selection: [r.id] });
+              // Double-click edits the text where it was clicked (the frame passes through while editing,
+              // and already for this event: the caret is found under the pointer).
+              const frame = e.currentTarget as HTMLElement;
+              frame.style.pointerEvents = "none";
+              requestAnimationFrame(() => frame.style.removeProperty("pointer-events"));
+              (editor.view.dom.querySelector(`.ms-object[data-id="${CSS.escape(r.id)}"]`) as HTMLElement | null)?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, clientX: e.clientX, clientY: e.clientY }));
             }}
             role="group"
             aria-label={`${d.name ?? r.id}: ${Math.round(d.box.width)} × ${Math.round(d.box.height)} pt`}
           >
-            {single && !d.locked?.geometry && HANDLES.map((h) => <span key={h} className={`ms-handle ms-handle-${h}`} onPointerDown={(e) => onPointerDown(e, "resize", h)} />)}
-            {single && !d.locked?.geometry && d.type !== "connector" && <span className="ms-handle ms-handle-rotate" title="Rotate (Shift: 15° steps)" onPointerDown={(e) => onPointerDown(e, "rotate")} />}
+            {single && !d.locked?.geometry && editingObject !== r.id && HANDLES.map((h) => <span key={h} className={`ms-handle ms-handle-${h}`} onPointerDown={(e) => onPointerDown(e, "resize", h)} />)}
+            {single && !d.locked?.geometry && d.type !== "connector" && <span className="ms-handle ms-handle-rotate" title={tr("Rotation (Maj : pas de 15°)", "Rotate (Shift: 15° steps)")} onPointerDown={(e) => onPointerDown(e, "rotate")} />}
             {i === 0 && (
               <span className="ms-sel-label">
-                {d.name ?? r.id} · {Math.round(pxToPt(r.w))}×{Math.round(pxToPt(r.h))} pt{d.placement === "page" ? " · on page" : " · moves with text"}
+                {d.name ?? r.id} · {ptToCm(pxToPt(r.w))} × {ptToCm(pxToPt(r.h))} cm
               </span>
             )}
           </div>

@@ -36,11 +36,18 @@ import { Pagination } from "./studio/pagination";
 import { StudioIntegrity, bindActions } from "./studio/actions";
 import { Shell, hostRedo, hostUndo } from "./studio/Shell";
 import { PageLayer, Ruler, StyleSheetCss, setZoom, manualZoom } from "./studio/PageLayer";
+import { openContextMenu } from "./studio/ContextMenu";
+import { BlockHandles, LineNumberGutter } from "./studio/Gutter";
 import { ObjectLayer } from "./studio/ObjectLayer";
 import { studio, useStudio } from "./studio/store";
 import type { DocumentSync } from "./studio/documentSync";
-import { parseBlockProps } from "./extensions/StudioNodes";
 import "./studio/bridge";
+
+/** Room beside the page for the vertical ruler, line numbers and block handles (px, each side). */
+const gutterWidth = () => {
+  const s = studio.get();
+  return 16 + (s.showRulers ? 24 : 0) + (s.showLineNumbers ? 32 : 0) + (s.showBlockHandles ? 8 : 0);
+};
 
 export function App() {
   const handleUpdateRef = useRef<() => void>(() => {});
@@ -114,7 +121,26 @@ export function App() {
   const zoom = useStudio((s) => s.zoom);
   const layout = useStudio((s) => s.layout);
   const showRulers = useStudio((s) => s.showRulers);
-  const masterEdit = useStudio((s) => s.masterEdit);
+  const showBlockHandles = useStudio((s) => s.showBlockHandles);
+  const showLineNumbers = useStudio((s) => s.showLineNumbers);
+
+  // Auto-scroll while dragging near the top/bottom edge, page view included (wheel events don't
+  // fire during a native drag: blocks by their grip, pictures, selected text). dragover repeats
+  // ~every 50ms even when still.
+  useEffect(() => {
+    const container = editorContainerRef.current;
+    if (!container) return;
+    const EDGE = 80;
+    const onDragOver = (e: DragEvent) => {
+      const r = container.getBoundingClientRect();
+      const up = e.clientY - r.top;
+      const down = r.bottom - e.clientY;
+      if (up < EDGE) container.scrollTop -= Math.ceil((EDGE - up) / 2);
+      else if (down < EDGE) container.scrollTop += Math.ceil((EDGE - down) / 2);
+    };
+    container.addEventListener("dragover", onDragOver);
+    return () => container.removeEventListener("dragover", onDragOver);
+  }, [editor]);
 
   useEffect(() => {
     if (editor && syncRef.current) bindActions(editor, syncRef.current);
@@ -136,12 +162,21 @@ export function App() {
     };
     window.addEventListener("message", handler);
     const diff = () => toggleDiff();
+    const find = () => setSearchVisible(true);
+    const source = () => switchToSource();
+    const zenOn = () => setZen((z) => !z);
     window.addEventListener("ms:toggleDiff", diff);
+    window.addEventListener("ms:find", find);
+    window.addEventListener("ms:source", source);
+    window.addEventListener("ms:zen", zenOn);
     return () => {
       window.removeEventListener("message", handler);
       window.removeEventListener("ms:toggleDiff", diff);
+      window.removeEventListener("ms:find", find);
+      window.removeEventListener("ms:source", source);
+      window.removeEventListener("ms:zen", zenOn);
     };
-  }, [toggleDiff]);
+  }, [toggleDiff, setSearchVisible, switchToSource]);
 
   // Keyboard shortcuts (spans settings + search concerns)
   useEffect(() => {
@@ -227,10 +262,14 @@ export function App() {
     editor.on("update", words);
     editor.on("selectionUpdate", page);
     words();
-    const fit = () => {
+    const fit = (e: Event) => {
       const l = studio.get().layout;
-      const w = scrollRef.current?.clientWidth;
-      if (l && w) setZoom((w - 48) / l.width);
+      const el = scrollRef.current;
+      if (!l || !el) return;
+      const page = l.pages[Math.max(0, studio.get().currentPage - 1)] ?? l.pages[0];
+      const byWidth = (el.clientWidth - 2 * gutterWidth()) / l.width;
+      setZoom((e as CustomEvent<string>).detail === "page" && page ? Math.min(byWidth, (el.clientHeight - 64) / page.height) : byWidth);
+      if ((e as CustomEvent<string>).detail === "page" && page) requestAnimationFrame(() => el.scrollTo({ top: page.top * studio.get().zoom }));
     };
     const toPage = (e: Event) => {
       const l = studio.get().layout;
@@ -254,14 +293,14 @@ export function App() {
     const fitIfNeeded = () => {
       const l = studio.get().layout;
       if (!l || manualZoom) return;
-      const fit = Math.min(1, (el.clientWidth - 32) / l.width);
+      const fit = Math.min(1, (el.clientWidth - 2 * gutterWidth()) / l.width);
       if (Math.abs(fit - studio.get().zoom) > 0.01) setZoom(fit);
     };
     const ro = new ResizeObserver(fitIfNeeded);
     ro.observe(el);
     fitIfNeeded();
     return () => ro.disconnect();
-  }, [layout?.width]);
+  }, [layout?.width, showRulers, showLineNumbers, showBlockHandles]);
 
   // Ctrl+wheel zoom.
   useEffect(() => {
@@ -288,15 +327,13 @@ export function App() {
   };
 
   if (!editor) return null;
-  const $from = editor.state.selection.$from;
-  const blockProps = $from.depth ? parseBlockProps($from.node(1).attrs.msBlock) : {};
   const paged = pageView && !diffVisible;
 
   return (
-    <Shell editor={editor} readonly={readonly} onSource={switchToSource} onFind={() => setSearchVisible(true)}>
+    <Shell editor={editor} readonly={readonly} onSource={switchToSource}>
       <StyleSheetCss />
       <div className={"editor-layout" + (review.enabled ? " has-review" : "") + (paged ? " ms-paged" : " ms-continuous")}>
-        <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef}>
+        <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef} onContextMenu={paged ? (e) => openContextMenu(editor, e.nativeEvent) : undefined}>
           <SearchBar
             visible={searchVisible}
             onClose={(activeRange) => {
@@ -331,21 +368,23 @@ export function App() {
           )}
           {!diffVisible && !paged && <StickyHeadings />}
           <FrontmatterPanel value={frontmatter} readonly={readonly} onChange={setFrontmatter} />
-          {masterEdit && <div className="ms-master-mode-strip" role="status">Master edit mode: the paper previews <strong>{masterEdit.name}</strong>. Save or cancel in the inspector.</div>}
-          {paged && showRulers && <Ruler indentLeft={blockProps.indentLeft} firstLine={blockProps.firstLine} indentRight={blockProps.indentRight} />}
+          {paged && showRulers && <Ruler editor={editor} />}
             <div className="ms-paper-sizer" style={paged && layout ? { height: layout.height * zoom + 48, width: layout.width * zoom } : undefined}>
+              {paged && showRulers && <Ruler editor={editor} vertical />}
               <div className="ms-paper" style={paged ? { transform: `scale(${zoom})`, width: layout?.width } : undefined}>
-                {paged && <PageLayer />}
+                {paged && <PageLayer editor={editor} />}
+                {paged && showLineNumbers && <LineNumberGutter editor={editor} />}
                 {(settings.lineNumbers || review.enabled) && !paged && (
                   <LineNumbers editor={editor} markdown={review.enabled ? review.source : undefined} review={review.enabled ? review : undefined} />
                 )}
                 <EditorContent editor={editor} />
                 <ObjectLayer editor={editor} />
+                {paged && showBlockHandles && !readonly && !zen && <BlockHandles editor={editor} />}
                 {review.enabled && <ReviewLayer editor={editor} review={review} />}
               </div>
             </div>
           {!readonly && <EditorBubbleMenu editor={editor} />}
-          {!readonly && !zen && zoom === 1 && <BlockHandle editor={editor} containerRef={editorContainerRef} gutter={settings.lineNumbers && !paged ? 40 : 0} />}
+          {!readonly && !zen && !paged && zoom === 1 && <BlockHandle editor={editor} containerRef={editorContainerRef} gutter={settings.lineNumbers && !paged ? 40 : 0} />}
           {!diffVisible && <TableFillHandle editor={editor} />}
           <TableControls editor={editor} containerRef={editorContainerRef} verticalAlign={settings.tableVerticalAlign} onVerticalAlign={(tableVerticalAlign) => updateSettings({ ...settings, tableVerticalAlign })} />
           {!zen && <TableFilterMenu editor={editor} containerRef={editorContainerRef} />}

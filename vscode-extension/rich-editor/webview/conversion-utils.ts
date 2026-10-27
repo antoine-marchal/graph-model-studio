@@ -1,5 +1,6 @@
 import { groupSpans, groupStudioChildren, sanitizeSpanStyle, studioRemarkRehypeHandlers } from "../document/remarkStudio";
 import { commentJson } from "../document/markers";
+import { fenced, groupMeta, maskGroups, wrapGroups } from "../document/groups";
 
 /**
  * Shared conversion utilities used by both the production pipeline
@@ -311,7 +312,18 @@ function tableLayoutComment(table: any): string | null {
   return formatTableLayout(cols, heights);
 }
 
-export function remarkGroupDirectives() {
+export function remarkGroupDirectives(this: any) {
+  // `::: id` fences are blanked before remark tokenizes the body (offsets unchanged), then the
+  // blocks between them are grouped by source range (document/groups.ts).
+  const parse = this?.parser;
+  if (parse) {
+    this.parser = (doc: string, file: any) => {
+      const { masked, groups } = maskGroups(String(doc));
+      const tree = parse(masked, file);
+      tree.data = { ...tree.data, msGroups: groups, msSource: String(doc) };
+      return tree;
+    };
+  }
   const walk = (node: any) => {
     if (!Array.isArray(node.children)) return;
     node.children.forEach(walk);
@@ -319,7 +331,22 @@ export function remarkGroupDirectives() {
       ? groupSpans(groupMarks(node.children))
       : groupStudioChildren(groupDirectiveChildren(attachTableLayouts(node.children)));
   };
-  return (tree: any) => walk(tree);
+  return (tree: any) => {
+    if (tree.data?.msGroups?.length) tree.children = wrapGroups(tree.children, tree.data.msGroups, tree.data.msSource, groupMeta());
+    walk(tree);
+  };
+}
+
+/** Id of the `::: id` group a hast block belongs to (an empty paragraph belongs to none). */
+function blockGroupId(child: any): string | undefined {
+  if (child.type !== "element" || !child.properties?.dataMsBlock) return undefined;
+  if (child.tagName === "p" && !child.children.some((c: any) => c.type !== "text" || /\S/.test(c.value))) return undefined;
+  try {
+    const id = JSON.parse(String(child.properties.dataMsBlock))?.id;
+    return typeof id === "string" && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 const rawHtmlPre = (value: string) => ({
@@ -337,7 +364,9 @@ const rawHtmlPre = (value: string) => ({
 export function rehypeUnwrapDirectives() {
   const walk = (node: any) => {
     if (!Array.isArray(node.children)) return;
-    node.children = node.children.flatMap((child: any) => {
+    // Consecutive blocks of one `::: id` group share its fences.
+    const groupIds: (string | undefined)[] = node.children.map(blockGroupId);
+    node.children = node.children.flatMap((child: any, idx: number) => {
       walk(child);
       if (child.type === "element" && child.tagName === "table") {
         const layout = tableLayoutComment(child);
@@ -353,9 +382,16 @@ export function rehypeUnwrapDirectives() {
         return [rawHtmlPre(`<div align="${child.properties.dataAlign}">`), ...child.children, rawHtmlPre("</div>")];
       }
       if (child.type === "element" && child.properties?.dataType === "msObject") {
-        const open = rawHtmlPre(`<!-- ms:object ${commentJson({ id: String(child.properties.dataId) })} -->`);
+        const id = String(child.properties.dataId);
         const body = child.children.filter((c: any) => c.type === "element");
-        return body.length ? [open, ...child.children, rawHtmlPre("<!-- ms:endobject -->")] : [open];
+        return body.length ? [rawHtmlPre(`::: ${id}`), ...child.children, rawHtmlPre(":::")] : [rawHtmlPre(fenced(id, ""))];
+      }
+      if (child.type === "element" && child.properties?.dataType === "msStory") {
+        return [rawHtmlPre(fenced(String(child.properties.dataId), String(child.properties.dataMarkdown ?? "")))];
+      }
+      // A break with an id is an empty `::: id` group (its kind and properties: `breaks.<id>`).
+      if (child.type === "element" && (child.properties?.dataType === "msPageBreak" || child.properties?.dataType === "msSection") && child.properties.dataId) {
+        return [rawHtmlPre(fenced(String(child.properties.dataId), ""))];
       }
       if (child.type === "element" && child.properties?.dataType === "msPageBreak") return [rawHtmlPre("<!-- ms:pagebreak -->")];
       if (child.type === "element" && child.properties?.dataType === "msSection") {
@@ -368,16 +404,11 @@ export function rehypeUnwrapDirectives() {
         return [rawHtmlPre(`<!-- ms:section ${commentJson(props)} -->`)];
       }
       if (child.type === "element" && child.properties?.dataMsBlock) {
-        const json = String(child.properties.dataMsBlock);
         delete child.properties.dataMsBlock;
-        let props: Record<string, unknown> = {};
-        try {
-          props = JSON.parse(json);
-        } catch {
-          return [child];
-        }
-        const kept = Object.fromEntries(Object.entries(props).filter(([, v]) => v !== undefined && v !== null && v !== ""));
-        return Object.keys(kept).length ? [rawHtmlPre(`<!-- ms:block ${commentJson(kept)} -->`), child] : [child];
+        const id = groupIds[idx];
+        if (!id) return [child];
+        // Properties live in the frontmatter (`blocks.<id>`); the body only has the group.
+        return [...(groupIds[idx - 1] === id ? [] : [rawHtmlPre(`::: ${id}`)]), child, ...(groupIds[idx + 1] === id ? [] : [rawHtmlPre(":::")])];
       }
       if (child.type !== "element" || child.properties?.dataType !== "directive") return [child];
       const open = String(child.properties.dataOpen ?? "");

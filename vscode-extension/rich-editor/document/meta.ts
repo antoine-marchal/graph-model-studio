@@ -67,6 +67,9 @@ function inlineSmallMaps(doc: Document): void {
       if (path.length < 4) return;
       if (node.items.length <= 6 && node.items.every((p) => isScalar(p.value))) node.flow = true;
     },
+    Seq(_key, node) {
+      if (node.items.every((v) => isScalar(v))) node.flow = true;
+    },
   });
 }
 

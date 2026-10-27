@@ -8,6 +8,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { remarkGroupDirectives } from "../webview/conversion-utils";
 import { findFrontmatter, readMeta } from "./meta";
+import { unwrapBlockGroups, withGroupMeta, withGroupTexts } from "./groups";
 import { isValidId, type ObjectDescriptor, type SectionProps, type StudioMeta } from "./schema";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath).use(remarkGroupDirectives);
@@ -60,11 +61,17 @@ export function parseStudioDocument(source: string): StudioDocument {
   const fm = findFrontmatter(source);
   const bodyOffset = fm ? source.indexOf("\n", fm.bodyEnd + 1) + 1 || source.length : 0;
   const body = source.slice(bodyOffset);
-  const tree = parser.runSync(parser.parse(body)) as any;
+  const { meta: fileMeta, diagnostics: metaDiag, readOnly } = readMeta(source);
+  // `::: id` groups are classified with this file's frontmatter.
+  const tree = withGroupMeta(fileMeta, () => parser.runSync(parser.parse(body)) as any);
+  tree.children = unwrapBlockGroups(tree.children);
   shift(tree, bodyOffset, source.slice(0, bodyOffset).split("\n").length - 1);
-  const { meta, diagnostics: metaDiag, readOnly } = readMeta(source);
+  // Header / footer / placeholder groups are not in the flow: their text goes to the meta.
+  const texts: Record<string, string> = {};
+  for (const n of tree.children) if (n.type === "studioStory") texts[n.id] = n.markdown;
+  const meta = withGroupTexts(fileMeta, texts);
   const diagnostics: Diagnostic[] = metaDiag.map((message) => ({ level: "warning", message, line: 1 }));
-  const blocks: any[] = tree.children;
+  const blocks: any[] = tree.children.filter((n: any) => n.type !== "studioStory");
   const sections: StudioDocument["sections"] = [];
   const objects: StudioObjectRef[] = [];
   const blockIds = new Map<string, number>();

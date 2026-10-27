@@ -1,12 +1,13 @@
 /**
  * Markdown Studio document semantics (schema version 1). Markdown stays the source of truth:
  * ordinary content is ordinary Markdown; these types describe only the enhancements, persisted in
- * the `markdownStudio` frontmatter key, in sparse `<!-- ms:… -->` markers (markers.ts) and in
+ * the `markdownStudio` frontmatter key (keyed by id) with the content of those ids in `::: id`
+ * groups of the body (groups.ts), page / section breaks as `<!-- ms:… -->` markers, and in
  * master files (`.markdown-studio/masters/<id>/master.json`). Geometry is in pt (units.ts).
  */
 import { PAGE_SIZES, parseLength, type PageSizeName } from "./units";
 
-export const STUDIO_VERSION = 1;
+export const STUDIO_VERSION = 2;
 
 export interface Margins {
   top: number;
@@ -96,7 +97,11 @@ export interface Theme {
 
 /** Header / footer story: Markdown with `{{page}}`, `{{pages}}`, `{{title}}`, `{{field:name}}` fields. */
 export interface StoryDef {
-  markdown: string;
+  /** Text of a master story; a document story names its `::: id` group instead (filled when resolved). */
+  markdown?: string;
+  id?: string;
+  /** Paragraph style / alignment of the whole story (document: `blocks.<id>`, filled when resolved). */
+  block?: BlockProps;
   /** Recurring drawings of this story (logos, rules), positioned relative to the page. */
   objects?: Record<string, ObjectDescriptor>;
 }
@@ -204,6 +209,13 @@ export interface ObjectDescriptor {
   /** Image without a body (recurring master drawings). Body images use the Markdown image. */
   src?: string;
   alt?: string;
+  /** Master / story text boxes: their text (Markdown inline), stored in the master. */
+  text?: string;
+  /**
+   * Master placeholder: the box shows a document value — `title`, `subtitle`, `date`, `page`,
+   * `pages` or `field:<name>` — and exports as the matching Word field.
+   */
+  placeholder?: string;
 }
 
 export interface SectionProps {
@@ -235,6 +247,12 @@ export interface StudioMeta {
   /** Local style overrides on top of the master: keys set here win; deleting a key resets it to the master. */
   styles?: Record<string, Partial<StyleDef>>;
   fields?: Record<string, string>;
+  /** Master placeholders this document fills: their text is the `::: <key>` group. */
+  placeholders?: string[];
+  /** Properties of the `::: id` block groups (and of document stories), by id. */
+  blocks?: Record<string, BlockProps>;
+  /** Page breaks (`page: true`) and section breaks (their section properties) at their empty `::: id` group. */
+  breaks?: Record<string, SectionProps & { page?: true }>;
   objects?: Record<string, ObjectDescriptor>;
   /** Document headers / footers replacing the master's (Word: unlinked first section stories). */
   headers?: StorySet;

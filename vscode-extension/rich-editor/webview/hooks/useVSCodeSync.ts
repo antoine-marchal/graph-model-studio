@@ -356,6 +356,8 @@ function postprocessMarkdown(
   md = restoreRawHtml(md);
   // A block marker sits on the line right above its block.
   md = md.replace(/^(<!-- ms:block [^\n]*-->)\n\n(?=\S)/gm, "$1\n");
+  // `::: id` fences hug their content (Slides Studio's layout; the parser needs no blank lines).
+  md = md.replace(/^(:{3,} [A-Za-z][\w-]*)\n\n(?=\S)/gm, "$1\n").replace(/(\S[^\n]*)\n\n(:{3,})$/gm, "$1\n$2");
   // Restore math from code/pre placeholders (after normalizeMarkdown to avoid interference)
   md = md.replace(/`BTRMK_MATH:(.*?)`/g, (_m, latex) => `$${latex}$`);
   md = md.replace(/```btrmk-math-block\n([\s\S]*?)\n```/g, (_m, latex) => `$$\n${latex}\n$$`);

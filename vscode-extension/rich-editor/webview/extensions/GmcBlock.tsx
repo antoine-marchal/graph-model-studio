@@ -336,6 +336,7 @@ function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
       <div
         className="mermaid-block-preview gmc-block-preview"
         contentEditable={false}
+        onMouseDown={(e) => e.button === 0 && (e.preventDefault(), selectBlockNode(editor, getPos))}
         // Same as Slides Studio: double-click the diagram to edit it interactively.
         onDoubleClick={() => editor.isEditable && source.trim() && setModalOpen(true)}
         data-testid="gmc-fence-preview"
@@ -363,6 +364,34 @@ function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
       )}
     </NodeViewWrapper>
   );
+}
+
+/** First free diagram id (`diagram`, `diagram-2`…): fences sharing an id would export one picture. */
+function freeGmcId(editor: any): string {
+  const ids = new Set<string>();
+  editor.state.doc.descendants((n: any) => {
+    if (n.type.name === "gmcBlock") ids.add(parseFenceOptions(n.attrs.meta || "").id || "diagram");
+    return true;
+  });
+  let id = "diagram";
+  for (let i = 2; ids.has(id); i++) id = `diagram-${i}`;
+  return id;
+}
+
+/** A GMC block's JSON with its own id (duplicate). */
+export function withUniqueGmcId(editor: any, json: any): any {
+  return { ...json, attrs: { ...json.attrs, meta: setFenceOption(json.attrs?.meta || "", "id", freeGmcId(editor)) } };
+}
+
+/** Insert a starter diagram with a unique id (slash menu and ribbon share it). */
+export function insertGmcBlock(editor: any): boolean {
+  return editor.chain().focus().insertContent({ type: "gmcBlock", attrs: { meta: `id=${freeGmcId(editor)}` }, content: [{ type: "text", text: GMC_STARTER }] }).run();
+}
+
+/** A click on a rendered diagram selects the whole block (inspector, menus, floating). */
+export function selectBlockNode(editor: any, getPos: unknown): void {
+  const pos = typeof getPos === "function" ? getPos() : undefined;
+  if (typeof pos === "number" && editor.isEditable) editor.commands.setNodeSelection(pos);
 }
 
 export const GmcBlock = Node.create({

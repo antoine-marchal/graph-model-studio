@@ -1,3 +1,4 @@
+import { selectBlockNode } from "./GmcBlock";
 import React, { useEffect, useRef, useState } from "react";
 import { Node, mergeAttributes } from "@tiptap/core";
 import {
@@ -50,7 +51,7 @@ export async function renderMermaidSvg(source: string, theme: string): Promise<s
   return (await mermaid.render(id, text)).svg;
 }
 
-function MermaidBlockView({ node }: any) {
+function MermaidBlockView({ node, editor, getPos }: any) {
   const source = node.textContent as string;
   const [svg, setSvg] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -118,7 +119,7 @@ function MermaidBlockView({ node }: any) {
       >
         <NodeViewContent as="code" className="language-mermaid" />
       </pre>
-      <div className="mermaid-block-preview" contentEditable={false}>
+      <div className="mermaid-block-preview" contentEditable={false} onMouseDown={(e) => e.button === 0 && (e.preventDefault(), selectBlockNode(editor, getPos))}>
         {!source.trim() ? (
           <div className="mermaid-block-empty">
             Enter mermaid syntax above (e.g. graph TD; A--&gt;B)

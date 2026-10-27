@@ -16,6 +16,7 @@ const CONSENT_SHOWN_KEY = "betterMarkdown.consentShown";
 /** Commands the rich editor may run against its document (see "runCommand"). */
 const TOOLKIT_COMMANDS = new Set([
   "gmc.openPreview",
+  "markdownStudio.newMaster",
   "gmc.exportMarkdownDiagram",
   "gmc.exportAllMarkdownDiagrams",
   "markdown-embed.update",
@@ -189,6 +190,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
         const notify = () => {
           this.library.invalidate();
           for (const wv of this.openWebviews) void wv.postMessage({ type: "mastersChanged" });
+          for (const fire of this.mastersListeners) fire();
         };
         watcher.onDidCreate(notify);
         watcher.onDidChange(notify);
@@ -205,6 +207,20 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
   }
 
   private activeWebview: vscode.Webview | null = null;
+  private mastersListeners = new Set<() => void>();
+
+  /** Called when the workspace master library changes on disk. */
+  onMastersChanged(fire: () => void): void {
+    this.mastersListeners.add(fire);
+  }
+
+  /** Message to the focused (else last focused) Markdown Studio editor; false when none is open. */
+  postToStudio(msg: Record<string, unknown>): boolean {
+    const webview = this.activeWebview ?? [...this.openWebviews].pop();
+    if (!webview) return false;
+    void webview.postMessage(msg);
+    return true;
+  }
   private recentPanes: DiffPane[] = [];
   private openWebviews = new Set<vscode.Webview>();
   /** Most recently focused rich editor webview per document URI. */
@@ -952,7 +968,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     const nonce = getNonce();
 
     return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${vscode.env.language}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">

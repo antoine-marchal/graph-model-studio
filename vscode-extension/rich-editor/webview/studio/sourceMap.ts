@@ -35,7 +35,8 @@ const blkOf = (node: PMNode): number | undefined => {
 
 /**
  * Freshly loaded document → ranges, from the block stamps; nodes without a stamp take the only
- * unclaimed block between their stamped neighbours (when there is exactly one).
+ * unclaimed block between their stamped neighbours (when there is exactly one), or join the
+ * previous block when there is none.
  */
 export function mapLoadedDoc(doc: PMNode, ranges: Range[]): NodeRanges {
   const map: NodeRanges = new Map();
@@ -55,6 +56,8 @@ export function mapLoadedDoc(doc: PMNode, ranges: Range[]): NodeRanges {
     const lo = i > 0 ? idx[i - 1]! : -1;
     const hi = j < nodes.length ? idx[j]! : ranges.length;
     if (hi - lo === 2) for (let k = i; k < j; k++) idx[k] = lo + 1;
+    // No unclaimed block: they are pieces of the previous one (a block image splits its paragraph).
+    else if (hi - lo === 1 && lo >= 0) for (let k = i; k < j; k++) idx[k] = lo;
     i = j;
   }
   nodes.forEach((n, i) => idx[i] !== undefined && map.set(n, ranges[idx[i]!]));
@@ -69,6 +72,14 @@ export function nodeHtml(schema: Schema, node: PMNode): string {
 }
 
 const blank = (s: string) => !/\S/.test(s);
+
+function groupIdOf(node: PMNode): string | undefined {
+  try {
+    return node.attrs?.msBlock ? JSON.parse(node.attrs.msBlock)?.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Body text for `doc`: unchanged blocks (same node object, whole group present, range used once)
@@ -102,7 +113,14 @@ export function serializeBody(doc: PMNode, base: string, map: NodeRanges, toMark
         continue;
       }
     }
-    pieces.push({ text: toMarkdown(nodes[i]).replace(/\s+$/, ""), nodes: [nodes[i]] });
+    const text = toMarkdown(nodes[i]).replace(/\s+$/, "");
+    const prev = pieces[pieces.length - 1];
+    const id = groupIdOf(nodes[i]);
+    // Consecutive new blocks of one `::: id` group share its fences.
+    if (id && prev && !prev.src && groupIdOf(prev.nodes[prev.nodes.length - 1]) === id && /\n:{3,}$/.test(prev.text) && text.startsWith(`::: ${id}\n`)) {
+      prev.text = `${prev.text.replace(/\n:{3,}$/, "")}\n\n${text.slice(`::: ${id}\n`.length)}`;
+      prev.nodes.push(nodes[i]);
+    } else pieces.push({ text, nodes: [nodes[i]] });
     i++;
   }
 
@@ -111,19 +129,25 @@ export function serializeBody(doc: PMNode, base: string, map: NodeRanges, toMark
   const first = pieces.find((p) => p.text);
   if (first?.src && blank(base.slice(0, first.src.start))) text = base.slice(0, first.src.start);
   else if (first) text = /^\s*/.exec(base)![0].replace(/[^\n\r]/g, "");
+  // New text takes the document's line breaks: VS Code keeps a CRLF file CRLF, and a mismatch
+  // would come back as an external change (re-rendering the block being edited).
+  const eol = /\r\n/.test(base) ? "\r\n" : "\n";
   let prev: Piece | undefined;
   for (const p of pieces) {
-    if (!p.text && !p.src) {
-      for (const n of p.nodes) out.set(n, { start: text.length, end: text.length });
+    if (!p.text) {
+      const at = { start: text.length, end: text.length };
+      for (const n of p.nodes) out.set(n, at);
       continue;
     }
     if (prev) {
       const gap = prev.src && p.src && p.src.start >= prev.src.end ? base.slice(prev.src.end, p.src.start) : null;
-      text += gap !== null && blank(gap) && /\n/.test(gap) ? gap : "\n\n";
+      text += gap !== null && blank(gap) && /\n/.test(gap) ? gap : eol + eol;
     }
-    const start = text.length;
-    text += p.text;
-    for (const n of p.nodes) out.set(n, { start, end: text.length });
+    const piece = p.src || eol === "\n" ? p.text : p.text.replace(/\r?\n/g, eol);
+    const range = { start: text.length, end: text.length + piece.length };
+    text += piece;
+    // One range object per piece: a group is recognised by range identity next time.
+    for (const n of p.nodes) out.set(n, range);
     prev = p;
   }
   if (prev?.src && blank(base.slice(prev.src.end))) text += base.slice(prev.src.end);
@@ -197,12 +221,18 @@ export async function planBodyUpdate(doc: PMNode, schema: Schema, oldBody: strin
       const fresh = new Set<PMNode>();
       content.forEach((n) => void fresh.add(n));
       const local = mapLoadedDoc(schema.topNodeType.create(null, content), segRanges.map((r) => ({ start: r.start - segStart, end: r.end - segStart })));
+      // Shifted ranges are shared by the nodes of a group (groups are recognised by identity).
+      const moved = new Map<Range, Range>();
+      const shift = (r: Range, by: number) => {
+        if (!moved.has(r)) moved.set(r, { start: r.start + by, end: r.end + by });
+        return moved.get(r)!;
+      };
       newDoc.forEach((n) => {
         const old = map.get(n);
-        if (old && !fresh.has(n)) out.set(n, old.end <= s ? old : { start: old.start + delta, end: old.end + delta });
+        if (old && !fresh.has(n)) out.set(n, old.end <= s ? old : shift(old, delta));
         else {
           const r = local.get(n);
-          if (r) out.set(n, { start: r.start + segStart, end: r.end + segStart });
+          if (r) out.set(n, shift(r, segStart));
         }
       });
       return out;

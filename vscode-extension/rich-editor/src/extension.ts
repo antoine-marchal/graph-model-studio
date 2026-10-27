@@ -1,3 +1,4 @@
+import { registerMasterView } from "./masterTree";
 import * as vscode from "vscode";
 import * as path from "path";
 import { BetterMarkdownProvider } from "./provider";
@@ -190,6 +191,9 @@ export function activate(context: vscode.ExtensionContext): void {
       if (op === "Open master.json") return vscode.window.showTextDocument(vscode.Uri.joinPath(provider.library.folderOf(uri, id), "master.json"));
     })),
   );
+
+  // Explorer view of the document masters (beside Slides Studio's corporate masters).
+  registerMasterView(context, provider.library, (msg) => provider.postToStudio(msg), (fire) => provider.onMastersChanged(fire));
 
   // Zen mode — hides the editor chrome and dims all but the current block.
   context.subscriptions.push(

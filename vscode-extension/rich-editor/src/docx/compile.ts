@@ -13,6 +13,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { parseStudioDocument, plainText, type StudioDocument, type StudioObjectRef } from "../../document/model";
 import { resolveSections, type MasterLookup, type ResolvedSection } from "../../document/masters";
+import { placeholderKey, placeholderValue } from "../../document/placeholders";
 import { resolveColor, resolveFont, defaultStyleFor, type ResolvedStyle, type StyleSheet } from "../../document/styles";
 import { ptToEmu, ptToHalfPt, ptToTwip, ptToDocxPx, pxToPt } from "../../document/units";
 import { contentWidth, type BlockProps, type ObjectDescriptor, type ParagraphProps, type RunProps, type StoryDef, type Theme } from "../../document/schema";
@@ -688,6 +689,9 @@ const line = (style: ObjectDescriptor["style"], theme: Theme) => {
 const fill = (style: ObjectDescriptor["style"], theme: Theme) => (style?.fill === null ? undefined : resolveColor(style?.fill ?? undefined, theme));
 
 async function textBoxParagraphs(o: StudioObjectRef, ctx: Ctx): Promise<d.Paragraph[]> {
+  const c = o.descriptor!;
+  // Master text boxes keep their text in the descriptor; placeholders become the matching Word field.
+  if (!o.body.length && (c.text !== undefined || c.placeholder)) return [masterTextParagraph(c, ctx)];
   const kids = await blockChildren(o.body, ctx, {});
   return kids.filter((k): k is d.Paragraph => k instanceof d.Paragraph);
 }
@@ -805,6 +809,25 @@ async function singleDrawing(o: StudioObjectRef, ctx: Ctx, z: number, root: "doc
   }) as unknown as Inline;
 }
 
+/**
+ * Text of a master box. A text placeholder carries the document's own text (frontmatter field of
+ * its key; the title falls back to the document title); date, page and page count become fields.
+ */
+function masterTextParagraph(c: ObjectDescriptor, ctx: Ctx): d.Paragraph {
+  const title = ctx.opts.title ?? ctx.doc.title ?? "";
+  const fields = fieldValues(ctx);
+  const color = c.style?.color ? resolveColor(c.style.color, ctx.theme) : undefined;
+  const run: d.IRunOptions = { ...(c.style?.fontSize ? { size: c.style.fontSize * 2 } : {}), ...(color ? { color } : {}) };
+  const alignment = c.style?.align === "center" ? d.AlignmentType.CENTER : c.style?.align === "right" ? d.AlignmentType.RIGHT : c.style?.align === "justify" ? d.AlignmentType.JUSTIFIED : undefined;
+  const ph = c.placeholder && placeholderKey(c.placeholder);
+  let children: Inline[];
+  if (ph === "date") (children = [new d.SimpleField('DATE \\@ "d MMMM yyyy"', new Date().toLocaleDateString())]), count(ctx, "fields");
+  else if (ph === "page" || ph === "pages") (children = [new d.TextRun({ ...run, children: [ph === "page" ? d.PageNumber.CURRENT : d.PageNumber.TOTAL_PAGES] })]), count(ctx, "fields");
+  else if (ph) children = [new d.TextRun({ ...run, text: placeholderValue(ph, fields, title) })];
+  else children = (storyParser.parse(c.text ?? "") as any).children.flatMap((n: any) => withFields(n, title, fields, ctx, run));
+  return new d.Paragraph({ ...(alignment ? { alignment } : {}), spacing: { before: 0, after: 0 }, children });
+}
+
 /* ------------------------------------------------------------------ */
 /* Header / footer stories                                             */
 /* ------------------------------------------------------------------ */
@@ -822,12 +845,14 @@ async function storyParagraphs(story: StoryDef | undefined, ctx: Ctx, title: str
   const out: d.Paragraph[] = [];
   const paragraphs = tree.children.filter((n: any) => n.type === "paragraph" || n.type === "heading");
   if (!paragraphs.length) paragraphs.push({ type: "paragraph", children: [] });
-  paragraphs.forEach((node: any, i: number) => out.push(new d.Paragraph({ style, children: [...(i === 0 ? drawings : []), ...withFields(node, title, fields, ctx)] })));
+  // The story's own style / alignment (`blocks.<id>`, a master story's `block`) override Header / Footer.
+  const align = story?.block?.align;
+  paragraphs.forEach((node: any, i: number) => out.push(new d.Paragraph({ style: story?.block?.style ?? style, ...(align ? { alignment: ALIGN[align] } : {}), children: [...(i === 0 ? drawings : []), ...withFields(node, title, fields, ctx)] })));
   return out;
 }
 
 /** Story text with `{{page}}`, `{{pages}}`, `{{title}}`, `{{field:x}}` turned into Word fields. */
-function withFields(node: any, title: string, fields: Record<string, string>, ctx: Ctx): Inline[] {
+function withFields(node: any, title: string, fields: Record<string, string>, ctx: Ctx, base: d.IRunOptions = {}): Inline[] {
   const out: Inline[] = [];
   const visit = (n: any, env: d.IRunOptions) => {
     if (n.type === "text") {
@@ -847,7 +872,7 @@ function withFields(node: any, title: string, fields: Record<string, string>, ct
     const next = n.type === "strong" ? { ...env, bold: true } : n.type === "emphasis" ? { ...env, italics: true } : env;
     for (const c of n.children ?? []) visit(c, next);
   };
-  visit(node, {});
+  visit(node, base);
   return out;
 }
 

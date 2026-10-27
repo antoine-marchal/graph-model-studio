@@ -12,33 +12,102 @@ source; everything else is derived.
 | Document semantics (no DOM; host, webview and tests share it) | `document/schema.ts` (types, page resolution), `markers.ts` (marker grammar), `meta.ts` (frontmatter span edits), `remarkStudio.ts` (mdast grouping), `model.ts` (source → semantics), `styles.ts` (style sheet + provenance), `masters.ts` (starters, sections, story linkage), `paginate.ts` (pagination algorithm), `units.ts` |
 | Versioned edits | `../shared/edit-sync.ts` (rebase), `src/panelSync.ts` (host), `webview/studio/documentSync.ts` (webview), `webview/studio/sourceMap.ts` (block-level source reuse) |
 | Host | `src/provider.ts` (messages, flush, undo / save), `src/masterLibrary.ts`, `src/exportDocx.ts`, `src/docx/compile.ts`, `src/docx/importTemplate.ts`, `src/extension.ts` (commands) |
-| Editor | `webview/extensions/StudioNodes.ts` (nodes, marks, VS Code history keys), `webview/studio/pagination.ts`, `ObjectView.ts`, `ObjectLayer.tsx`, `PageLayer.tsx`, `Shell.tsx`, `Ribbon.tsx`, `NavPanel.tsx`, `Inspector.tsx`, `actions.ts`, `store.ts`, `bridge.ts`, `styles/studio.css` |
-| Tests | `test/studio-core.test.ts`, `panel-sync.test.ts`, `docx-compile.test.ts`, `docx-import.test.ts`, `studio.browser.ts`, `host/run.mjs` + `host/suite.cjs`, fixture `test/fixtures/report/` |
+| Editor | `webview/extensions/StudioNodes.ts` (nodes, marks, VS Code history keys), `webview/studio/pagination.ts`, `ObjectView.ts`, `ObjectLayer.tsx`, `PageLayer.tsx` (paper, master canvas, rulers), `Shell.tsx`, `Ribbon.tsx`, `galleries.tsx`, `NavPanel.tsx`, `Inspector.tsx`, `ContextMenu.tsx`, `ui.tsx` / `icons.tsx` (Slides Studio controls and icons), `hooks.ts` (`useEditorDerived`), `commands.ts`, `actions.ts`, `store.ts`, `bridge.ts`, `styles/studio.css` |
+| Tests | `test/studio-core.test.ts`, `panel-sync.test.ts`, `docx-compile.test.ts`, `docx-import.test.ts`, `studio.browser.ts`, `host/run.mjs` + `host/suite.cjs`, fixture `test/fixtures/report/`; `studio.profile.ts` (CPU profile + React commits while typing) |
 
 Reused from Slides Studio (imported, unchanged): `groups.ts` (group paths, layer tree, layer
-moves), `geometry.ts#connectorPath`, `units.ts` constants. Its chrome tokens are mirrored in
-`studio.css` (see `slides-studio/DESIGN.md`).
+moves), `geometry.ts#connectorPath`, `units.ts` constants, `i18n.ts#tr`, the icon set, and the
+chrome stylesheet itself: `esbuild.mjs` bundles `slides-studio/.../webview/src/styles.css` (minus
+Tailwind and its page-level rules) before `studio.css`, so both studios share one look
+(`slides-studio/DESIGN.md`). UI strings are French / English through `tr()`, from `<html lang>`.
 
-## Source format (schema version 1)
+## Interaction model (Slides Studio, Word flavour)
+
+* **Chrome.** Title bar (quick access, Visual / Source, Export .docx split button), ribbon tabs
+  Home / Insert / Layout / References / Design / Review / View plus the contextual *Object format*
+  (or *Master format*) tab, navigator (Outline / Pages), inspector (Format / Styles / Layers /
+  Check), status bar (page, section, words, sync dot, issues, zoom). Units shown in cm, stored in pt.
+* **No boxes on the paper.** Blocks (code, diagrams, embeds, equations) render as document content;
+  their tools appear only while selected or focused. Their settings live in the inspector and the
+  context menu.
+* **Context menus** everywhere (Slides Studio's engine: clipboard quick bar, submenus, full
+  keyboard): selected text, the block under the pointer, objects, the page, headers / footers,
+  master objects, outline headings, layer rows.
+* **Any block can float.** Position › Floating (moves with text) or Fixed (on the page) wraps the
+  block in an `msObject` with a borderless text frame at its current place; pictures become picture
+  objects. Back in line (ribbon, context menu or inspector) restores the editable block. A selected
+  block (diagram, image, table…) is its own block for the ribbon Position menu; a selected GMC
+  diagram shows its fence options (id, view, theme, size), *Edit diagram* and *Model code* in the
+  inspector — a click selects it, a double-click opens the diagram editor.
+* **Objects: select, edit, move.** A click selects the object (frame and handles). A double-click
+  (or Enter from the menu) edits its text: the caret goes into the object's own paragraphs, the
+  pointer selects text without moving the object, and ribbon / inspector formats apply there.
+  Escape leaves the text to the object, Escape again to the document. Dragging tracks paper
+  coordinates, so the page may scroll under the pointer (wheel, or auto-scroll near the canvas
+  edges) at any zoom. A drop anchors to the block at that point that *starts on the drop page* (an
+  offset from a paragraph begun on an earlier page would span a page break and move again at
+  every pagination pass); the move and its re-anchoring are one edit (one undo step), and the
+  object stays selected.
+* **Masters on the canvas.** Design › Edit master (or the page menu) dims the body and makes the
+  master's objects selectable, movable and resizable on any page (one master change on release);
+  right-click adds text boxes, shapes or placeholders where the page was clicked; a double-click
+  edits a master box's text (a placeholder's prompt) in place, one master change. Each master object
+  is Floating, Fixed (geometry locked) or a Placeholder exported as the matching Word field. A
+  placeholder is any key the documents fill in (presets: title, subtitle, author, client, reference,
+  or *Other text…*); its geometry, style and prompt belong to the master, the typed value to the
+  document (the `::: <key>` group, its key listed in `placeholders`, shared by every page that
+  shows that placeholder) — typing it never
+  changes the master. Date, page and page count are automatic fields, not placeholders to type. A
+  built-in master is saved as a library copy applied to the document. In VS Code the *Corporate
+  masters* activity-bar container shows *Presentation masters* (Slides Studio) and *Document
+  masters* (Markdown Studio) side by side.
+* **Headers and footers.** Double-click edits the story's Markdown in place; mouse selection stays
+  in it, ribbon Bold / Italic wrap the selection (other character formats do not apply to stories
+  and never fall through to the body); the paragraph style gallery and the alignment buttons apply
+  to the whole story (`blocks.header`, a master story's `block`). Ctrl+Enter saves, Escape cancels,
+  both return to the text. A document story's text is its `::: header` / `::: footer` group.
+* **Rulers.** Horizontal and vertical rulers for the current page: drag margin edges (document,
+  section or master page) and the paragraph's first-line / left / right indents; the value shows
+  while dragging, one edit on release (Alt: no snapping to 0.25 cm).
+
+**Typing performance.** Every React commit while the caret is in the contenteditable makes React
+rescan the selection across the whole document, so React work per keystroke is kept off: Tiptap's
+"position changed" node-view update (a new `getPos` for every code block, diagram and equation
+below the caret, one commit per keystroke) is absorbed without rendering
+(`extensions/nodeViewPositions.ts`); the chrome never re-renders per keystroke:
+editor-derived values go through `useEditorDerived` (recomputed per frame, compared by value,
+positions that shift while typing are left out), page sheets are memoized, the object layer
+redraws only when frames or connectors depend on the layout, and review / table-filter listeners
+are attached only while those features are visible.
+
+## Source format (schema version 2)
 
 Ordinary paragraphs, headings, lists, tables, code, math, diagrams, embeds, directives and raw HTML
-stay ordinary Markdown. Enhancements:
+stay ordinary Markdown. Everything else is described in the frontmatter, keyed by id; the body
+only holds the content of those ids in `::: id` groups (Slides Studio's syntax). Enhancements:
 
 **Frontmatter key `markdownStudio`** — written as a span edit: other keys, comments and quoting are
 never touched; inside the key, unchanged entries keep their comments.
 
 ```yaml
 markdownStudio:
-  version: 1
+  version: 2
   master: corporate            # library id (.markdown-studio/masters/<id>/master.json) or a path
   page: { size: A4, orientation: portrait, margins: { top: 72, left: 68 } }   # pt
   styles: { Lead: { run: { color: C62828 } } }   # local overrides; delete a key = reset to master
-  fields: { client: Contoso }  # {{field:client}} in stories, DOCPROPERTY in Word
-  headers: { default: { markdown: "{{title}}" } }  # document stories replacing the master's
+  placeholders: [ client ]     # master placeholders this document fills: text in `::: client`
+  fields: { reference: R-12 }  # older placeholder values / {{field:x}} values (still read)
+  headers: { default: { id: header } }   # document stories replacing the master's: text in `::: header`
+  blocks:                      # properties of the `::: id` block groups (and of stories), by id
+    intro: { style: Lead, align: center, keepWithNext: true }
+    header: { align: right }
+  breaks:                      # page / section breaks at their empty `::: id` group
+    pagebreak: { page: true }
+    landscape: { master: corporate-2, orientation: landscape, break: nextPage, headers: link }
   objects:
     fig:
       type: image            # image | textbox | shape | connector
-      placement: anchored    # anchored (follows the paragraph after its marker) | page | inline
+      placement: anchored    # anchored (follows the paragraph after its group) | page | inline
       relativeTo: margin     # page objects: margin | page frame
       box: { x: 300, y: 0, width: 160, height: 100 }   # pt; anchored: from column / anchor paragraph
       wrap: square           # square | topBottom | none (anchored only)
@@ -52,23 +121,43 @@ markdownStudio:
   export: { mode: strict }
 ```
 
-**Markers** — one HTML comment per line, invisible in every Markdown renderer. The payload is one
-JSON object; `--` is written `--`. A marker that fails to parse stays raw HTML and is
-reported; unknown `ms:` kinds are kept and reported.
+**`::: id` groups** — a fence line `::: id` opens a group, `:::` closes the innermost one (code
+blocks excepted); the content needs no blank lines around it. What the group is comes from the
+frontmatter: `objects.<id>` → that object's content (an object without content: `::: id` then
+`:::`); `breaks.<id>` → a page break (`page: true`) or a section break (its properties), an
+empty group; a story's `id` or a key of `placeholders` → that text (never in the text flow); anything else
+→ a block group whose blocks take `blocks.<id>` (style, alignment, spacing, indents, keep rules; the
+id is the Word bookmark). Styling a paragraph in the editor gives it a group (id from the style name:
+`caption`, `caption-2`…); consecutive blocks of one group share its fences.
 
 ```markdown
-<!-- ms:block {"id":"intro","style":"Lead","keepWithNext":true} -->
-Properties of the next block only (style, spacing, indents, keep rules, bookmark id).
+::: header
+ACME — {{title}}
+:::
 
-<!-- ms:object {"id":"fig"} -->
+::: client
+Contoso
+:::
+
+::: intro
+Properties of these blocks: `blocks.intro`.
+:::
+
+::: fig
 ![Architecture](assets/arch.png)
-<!-- ms:endobject -->
-(the body is the object's content, stored once; no end marker when the next marker is not
-`ms:endobject` = an object without body, e.g. a shape or connector)
+:::
 
-<!-- ms:pagebreak -->
-<!-- ms:section {"master":"corporate-2","orientation":"landscape","break":"nextPage","headers":"link"} -->
+::: pagebreak
+:::
+
+::: landscape
+:::
 ```
+
+The body has no `<!-- ms:… -->` comments. Files written by version 1 (`<!-- ms:block {…} -->`,
+`<!-- ms:object {…} -->` … `<!-- ms:endobject -->`, `<!-- ms:pagebreak -->`, `<!-- ms:section {…} -->`, stories' `markdown:`, placeholder `fields`) are
+still read; their blocks are rewritten as groups on the next save, a marker left with no block to
+style is dropped.
 
 **Inline formatting** — `<span style="color:#C62828;font-size:12pt;font-family:Georgia" data-ms-style="Emphasis">…</span>`
 (only color, background-color, font-size, font-family are kept). Highlights keep the existing
@@ -140,8 +229,9 @@ lists → numbering, tables with repeated header rows, sections (size, orientati
 title page, columns, page numbering), header / footer stories with PAGE / NUMPAGES / TITLE /
 DOCPROPERTY fields, bookmarks and internal / external hyperlinks, TOC field. Objects → anchored
 pictures / shapes / text boxes; objects joined by connectors (or grouped) → one drawing group so
-Word keeps connectors attached. Master background drawings → behind-text drawings in the header
-story. Strict mode writes nothing when content would be lost; permissive writes with documented
+Word keeps connectors attached. Master background drawings → drawings in the header story;
+master text boxes keep their text and placeholders become TITLE / DATE / PAGE / NUMPAGES /
+DOCPROPERTY fields. Strict mode writes nothing when content would be lost; permissive writes with documented
 fallbacks. Every export returns a report (native counts, fallbacks, unsupported, missing, fonts,
 fidelity limits).
 
@@ -204,7 +294,12 @@ breaks are exact.
 pnpm run test:studio            # core, panel sync, DOCX compile, template import (node --test)
 pnpm run test:rich-editor       # conversion / round-trip suite
 pnpm run build:rich-editor
-pnpm run test:studio:browser    # built webview against a stub host (pagination, edits, objects, perf)
+pnpm run test:studio:browser    # built webview against a stub host (pagination, edits, objects, context menu,
+                                # floating blocks, rulers, master canvas, perf; regressions: moves
+                                # across pages at 75 % / 150 % while scrolling, text box / shape
+                                # editing, footer formatting, GMC float round trip, H1–H6, master
+                                # placeholders, continuous view)
+node rich-editor/esbuild.mjs --dev && npx tsx rich-editor/test/studio.profile.ts   # CPU + React commits
 pnpm run test:rich-editor:browser
 pnpm run test:studio:host       # inside VS Code: import, export, no-op open, undo, flush, preflight
 npx tsx rich-editor/test/export-fixture.ts rich-editor/test/fixtures/report/report.md out.docx

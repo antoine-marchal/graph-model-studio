@@ -38,6 +38,12 @@ exports.run = async function run() {
   assert.ok(fs.existsSync(path.join(ws, '.markdown-studio/masters/contoso/import-report.json')), 'import report written');
   log('template imported');
 
+  // 1b. Corporate masters container: presentation and document masters side by side.
+  await vscode.commands.executeCommand('workbench.view.extension.corporateMasters');
+  await vscode.commands.executeCommand('corporateSlides.masters.focus');
+  await vscode.commands.executeCommand('markdownStudio.masters.focus');
+  log('masters views shown');
+
   // 2. Export from source with no editor open (no Pandoc).
   const target = vscode.Uri.file(path.join(ws, 'out.docx'));
   const exported = await vscode.commands.executeCommand('markdownStudio.exportDocx', report, { target });

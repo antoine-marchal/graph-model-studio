@@ -30,6 +30,7 @@ function markerOf(node: any) {
 
 export function groupStudioChildren(children: any[]): any[] {
   const out: any[] = [];
+  let stacked: { props: Record<string, unknown>; start: unknown } | undefined;
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     const marker = markerOf(child);
@@ -39,14 +40,22 @@ export function groupStudioChildren(children: any[]): any[] {
     }
     if (marker.kind === "block") {
       const next = children[i + 1];
-      if (!next || markerOf(next) || next.type === "html") {
-        child.data = { ...child.data, msError: "ms:block marker is not followed by a block" };
-        out.push(child);
+      // Stacked markers (left by empty blocks) all apply to the block after the last one.
+      if (markerOf(next)?.kind === "block") {
+        stacked = { props: { ...stacked?.props, ...marker.props }, start: stacked?.start ?? startOf(child) };
         continue;
       }
-      const msBlock = { ...next.data?.msBlock, ...marker.props };
+      if (!next || markerOf(next) || next.type === "html") {
+        // A marker with no block to style (left by older versions) styles nothing: dropped, so the
+        // next save removes it from the source.
+        stacked = undefined;
+        continue;
+      }
+      const msBlock = { ...next.data?.msBlock, ...stacked?.props, ...marker.props };
       next.data = { ...next.data, msBlock, hProperties: { ...next.data?.hProperties, dataMsBlock: JSON.stringify(msBlock) } };
-      if (startOf(child) && next.position) next.position = { ...next.position, start: startOf(child) };
+      const start = stacked?.start ?? startOf(child);
+      if (start && next.position) next.position = { ...next.position, start };
+      stacked = undefined;
       continue;
     }
     if (marker.kind === "object") {
@@ -142,10 +151,21 @@ export const studioRemarkRehypeHandlers: Record<string, (state: any, node: any) 
       children: state.wrap(state.all(node), true),
     };
   },
+  /** `::: id` block group: its blocks (they carry the group in `data-ms-block`), all with the group's source stamp. */
+  studioGroup(state: any, node: any) {
+    const out = state.all(node);
+    if (node.data?.msBlk !== undefined) for (const el of out) if (el.type === "element") el.properties = { ...el.properties, dataMsBlk: String(node.data.msBlk) };
+    return out;
+  },
+  /** Header / footer / placeholder text: kept as Markdown, outside the text flow. */
+  studioStory(_state: any, node: any) {
+    return { type: "element", tagName: "div", properties: { dataType: "msStory", dataId: node.id, dataMarkdown: node.markdown }, children: [] };
+  },
   studioBreak(_state: any, node: any) {
+    const id = node.id ? { dataId: node.id } : {};
     return node.kind === "page"
-      ? { type: "element", tagName: "div", properties: { dataType: "msPageBreak" }, children: [] }
-      : { type: "element", tagName: "div", properties: { dataType: "msSection", dataProps: JSON.stringify(node.props ?? {}) }, children: [] };
+      ? { type: "element", tagName: "div", properties: { dataType: "msPageBreak", ...id }, children: [] }
+      : { type: "element", tagName: "div", properties: { dataType: "msSection", dataProps: JSON.stringify(node.props ?? {}), ...id }, children: [] };
   },
   styledSpan(state: any, node: any) {
     return {

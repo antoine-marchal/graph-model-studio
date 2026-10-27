@@ -43,7 +43,7 @@ export const saveMaster = (master: MasterDef) => masterAction("save", { master }
 export async function runPreflight(): Promise<void> {
   try {
     const msg = await request("preflight");
-    studio.set({ report: { report: msg.report, kind: "preflight" }, rightTab: "review", rightOpen: true });
+    studio.set({ report: { report: msg.report, kind: "preflight" }, pane: "check", rightOpen: true });
   } catch (e) {
     notify("error", e instanceof Error ? e.message : String(e));
   }
@@ -82,7 +82,15 @@ window.addEventListener("message", (e) => {
   }
   if (msg.type === "mastersResult") applyMasters(msg);
   else if (msg.type === "mastersChanged") void refreshMasters();
-  else if (msg.type === "exportReport") studio.set({ report: { report: msg.report, target: msg.target, kind: "export" }, rightTab: "review", rightOpen: true });
+  // Explorer › Document masters: edit a master on this document's pages, or apply it.
+  else if (msg.type === "enterMasterEdit" && typeof msg.id === "string") void import("./actions").then((a) => (studio.get().masterEdit ? a.exitMasterEdit(true) : Promise.resolve()).then(() => a.enterMasterEdit(msg.id)));
+  else if (msg.type === "applyMaster" && typeof msg.id === "string") void import("./actions").then((a) => {
+    const editor = a.getEditor();
+    const section = editor && a.currentSectionBreak(editor);
+    if (section) a.setSectionProps(section.pos, { ...section.props, master: msg.id, headers: "master" });
+    else a.setDocumentMaster(msg.id);
+  });
+  else if (msg.type === "exportReport") studio.set({ report: { report: msg.report, target: msg.target, kind: "export" }, pane: "check", rightOpen: true });
   else if (msg.type === "renderMermaidPng") {
     mermaidPng(String(msg.code)).then(
       (dataUrl) => vscodeApi.postMessage({ type: "renderMermaidPngResult", requestId: msg.requestId, dataUrl }),

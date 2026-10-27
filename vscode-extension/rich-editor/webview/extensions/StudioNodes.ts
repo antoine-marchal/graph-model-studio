@@ -8,14 +8,16 @@
  *   msTextStyle    `<span style data-ms-style>` — font, size, colors, character style
  */
 import { Extension, Mark, Node, mergeAttributes } from "@tiptap/core";
+import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { sanitizeSpanStyle } from "../../document/remarkStudio";
 import type { BlockProps } from "../../document/schema";
 import { createObjectView } from "../studio/ObjectView";
+import { studio } from "../studio/store";
 
 export const TOP_LEVEL_TYPES = [
   "paragraph", "heading", "blockquote", "bulletList", "orderedList", "taskList", "codeBlock", "horizontalRule", "table", "image",
   "mermaidBlock", "gmcBlock", "deckBlock", "rawHtmlBlock", "directiveBlock", "alignBlock", "columns", "mathBlock", "githubEmbed",
-  "msObject", "msPageBreak", "msSection",
+  "msObject", "msPageBreak", "msSection", "msStory",
 ];
 const BLOCK_PROPS_TYPES = ["paragraph", "heading", "blockquote", "bulletList", "orderedList", "taskList", "codeBlock", "table", "image"];
 
@@ -47,6 +49,8 @@ function blockCss(p: BlockProps): string {
 
 export const StudioBlockAttrs = Extension.create({
   name: "studioBlockAttrs",
+  // Ahead of the core Enter keymap (below the open slash menu, see `suggesting`).
+  priority: 101,
   addGlobalAttributes() {
     return [
       {
@@ -71,21 +75,70 @@ export const StudioBlockAttrs = Extension.create({
       },
     ];
   },
+  addProseMirrorPlugins() {
+    return [groupIdPlugin()];
+  },
+  addKeyboardShortcuts() {
+    return {
+      // Enter at the end of a styled paragraph: the new one takes the style's `next` (Word), never the id.
+      Enter: () => {
+        const { state } = this.editor;
+        const { $from, empty } = state.selection;
+        const suggesting = state.plugins.some((p) => (p as any).key?.startsWith("suggestion$") && (p.getState(state) as any)?.active);
+        if (suggesting) return false;
+        const block = $from.parent;
+        if (!empty || !block.attrs.msBlock || $from.parentOffset !== block.content.size) return false;
+        if (!["paragraph", "heading"].includes(block.type.name) || /^(listItem|taskItem)$/.test($from.node(-1).type.name)) return false;
+        const props = parseBlockProps(block.attrs.msBlock);
+        delete props.id;
+        if (props.style) {
+          const next = studio.get().sections[0]?.sheet.styles.get(props.style)?.next;
+          if (next === "Normal") delete props.style;
+          else if (next) props.style = next;
+        }
+        return this.editor
+          .chain()
+          .splitBlock()
+          .command(({ tr }) => {
+            const $p = tr.selection.$from;
+            tr.setNodeMarkup($p.before(), undefined, { ...$p.parent.attrs, msBlock: Object.keys(props).length ? JSON.stringify(props) : null });
+            return true;
+          })
+          .run();
+      },
+    };
+  },
 });
+
+/** Id of a break's `::: id` group (`breaks.<id>` in the frontmatter); given when inserted. */
+const BREAK_ID = { default: "", keepOnSplit: false, parseHTML: (el: HTMLElement) => el.getAttribute("data-id") ?? "", renderHTML: (a: any) => (a.id ? { "data-id": a.id } : {}) };
 
 export const PageBreak = Node.create({
   name: "msPageBreak",
   group: "block",
   atom: true,
   selectable: true,
+  addAttributes() {
+    return { id: BREAK_ID };
+  },
   parseHTML: () => [{ tag: 'div[data-type="msPageBreak"]' }],
-  renderHTML: () => ["div", { "data-type": "msPageBreak", class: "ms-break ms-page-break", contenteditable: "false" }],
+  renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-type": "msPageBreak", class: "ms-break ms-page-break", contenteditable: "false" })],
   addCommands() {
     return {
       insertPageBreak:
         () =>
-        ({ commands }: any) =>
-          commands.insertContent({ type: this.name }),
+        ({ chain }: any) =>
+          chain()
+            .insertContent({ type: this.name })
+            // The caret goes on after the break (typing must not replace a selected break).
+            .command(({ tr }: any) => {
+              if (!(tr.selection instanceof NodeSelection)) return true;
+              const after = tr.selection.to;
+              if (!tr.doc.resolve(after).nodeAfter?.isTextblock) tr.insert(after, tr.doc.type.schema.nodes.paragraph.create());
+              tr.setSelection(TextSelection.create(tr.doc, after + 1));
+              return true;
+            })
+            .run(),
     } as any;
   },
   addKeyboardShortcuts() {
@@ -99,11 +152,84 @@ export const SectionBreak = Node.create({
   atom: true,
   selectable: true,
   addAttributes() {
-    return { props: { default: "{}", parseHTML: (el) => el.getAttribute("data-props") ?? "{}", renderHTML: (a) => ({ "data-props": a.props }) } };
+    return { id: BREAK_ID, props: { default: "{}", parseHTML: (el) => el.getAttribute("data-props") ?? "{}", renderHTML: (a) => ({ "data-props": a.props }) } };
   },
   parseHTML: () => [{ tag: 'div[data-type="msSection"]' }],
   renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-type": "msSection", class: "ms-break ms-section-break", contenteditable: "false" })],
 });
+
+/** Header / footer / placeholder text (`::: id` group): Markdown kept as is, edited on the page, never in the flow. */
+export const StudioStory = Node.create({
+  name: "msStory",
+  group: "block",
+  atom: true,
+  selectable: false,
+  addAttributes() {
+    return {
+      id: { default: "", parseHTML: (el) => el.getAttribute("data-id") ?? "", renderHTML: (a) => ({ "data-id": a.id }) },
+      markdown: { default: "", parseHTML: (el) => el.getAttribute("data-markdown") ?? "", renderHTML: (a) => ({ "data-markdown": a.markdown }) },
+    };
+  },
+  parseHTML: () => [{ tag: 'div[data-type="msStory"]' }],
+  renderHTML: ({ HTMLAttributes }) => ["div", mergeAttributes(HTMLAttributes, { "data-type": "msStory", class: "ms-story-source", contenteditable: "false" })],
+});
+
+/**
+ * Every block with properties belongs to a `::: id` group: blocks styled in the editor get a fresh
+ * id (from the style name); a copy of an id elsewhere (paste) gets its own. Consecutive siblings
+ * may share an id (one group, e.g. a paragraph split in two).
+ */
+function groupIdPlugin() {
+  return new Plugin({
+    key: new PluginKey("msGroupIds"),
+    appendTransaction(trs, _old, state) {
+      if (!trs.some((t) => t.docChanged)) return null;
+      const taken = new Set<string>([...Object.keys(studio.get().meta?.objects ?? {}), ...(studio.get().meta?.placeholders ?? [])]);
+      state.doc.descendants((n) => {
+        if (n.type.name === "msObject" || n.type.name === "msStory" || isBreak(n)) taken.add(String(n.attrs.id));
+        const id = n.attrs.msBlock ? parseBlockProps(n.attrs.msBlock).id : undefined;
+        if (id) taken.add(id);
+      });
+      const tr = state.tr;
+      const seen = new Map<string, { parent: unknown; index: number }>();
+      const breaks = new Set<string>();
+      state.doc.descendants((n, pos, parent, index) => {
+        if (isBreak(n)) {
+          // Every page / section break is a `::: id` group: a new one (or a pasted copy) gets its id.
+          if (!n.attrs.id || breaks.has(n.attrs.id)) {
+            const id = uniqueBlockId(n.type.name === "msPageBreak" ? "pagebreak" : "section", taken);
+            taken.add(id);
+            tr.setNodeMarkup(pos, undefined, { ...n.attrs, id });
+            breaks.add(id);
+          } else breaks.add(n.attrs.id);
+          return false;
+        }
+        if (!n.attrs.msBlock) return true;
+        const props = parseBlockProps(n.attrs.msBlock);
+        const last = props.id ? seen.get(props.id) : undefined;
+        const fresh = !props.id ? Object.keys(props).length > 0 : !!last && !(last.parent === parent && last.index === index - 1);
+        if (fresh) {
+          props.id = uniqueBlockId(String(props.style ?? n.type.name).toLowerCase(), taken);
+          taken.add(props.id);
+          tr.setNodeMarkup(pos, undefined, { ...n.attrs, msBlock: JSON.stringify(props) });
+        }
+        if (props.id) seen.set(props.id, { parent, index });
+        return true;
+      });
+      return tr.docChanged ? tr.setMeta("addToHistory", false) : null;
+    },
+  });
+}
+
+const isBreak = (n: { type: { name: string } }) => n.type.name === "msPageBreak" || n.type.name === "msSection";
+
+function uniqueBlockId(base: string, taken: Set<string>): string {
+  const stem = base.replace(/[^\w-]+/g, "-").replace(/^[^A-Za-z]+/, "") || "block";
+  if (!taken.has(stem)) return stem;
+  let n = 2;
+  while (taken.has(`${stem}-${n}`)) n++;
+  return `${stem}-${n}`;
+}
 
 export const StudioObject = Node.create({
   name: "msObject",

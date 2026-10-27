@@ -1,366 +1,829 @@
 /**
- * Ribbon: Home, Insert, Layout, References, Review, View, plus the contextual Object tab while an
- * object is selected. Labelled groups; toggles carry aria-pressed; double-click a tab (or the
- * chevron) collapses it.
+ * Title bar + ribbon, Slides Studio's chrome in Word's vocabulary: Accueil, Insertion, Mise en page,
+ * Références, Conception, Révision, Affichage, and the contextual Format tab while an object is
+ * selected. The ribbon re-renders only when the state it shows changes (hooks.ts).
  */
-import React, { useEffect, useReducer, useState } from "react";
+import React, { useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
+import { Icon, type IconName } from "./icons";
+import { Big, Col, Group, Menu, MenuItem, PaletteMenu, Row, Small, NumField, CmField, keepFocus, tr, hexOf } from "./ui";
+import { studio, useStudio, type RibbonTab } from "./store";
+import { useEditorDerived } from "./hooks";
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, ChevronUp, ChevronDown, Italic, List, ListOrdered, ListChecks, Strikethrough, Underline,
-  Square, Circle, Triangle, Diamond, ArrowRight, Minus, Type, Image as ImageIcon, Table, FileText, SeparatorHorizontal, Link2, Sigma, Workflow, Search,
-  BringToFront, SendToBack, Group as GroupIcon, Ungroup, Lock, Eye, Copy, Trash2, IndentIncrease, IndentDecrease, Eraser, BookMarked, ListTree, ShieldCheck, GitCompare, Ruler as RulerIcon,
-} from "lucide-react";
-import { studio, useStudio } from "./store";
-import {
-  alignObjects, applyParagraphStyle, deleteObjects, duplicateObjects, floatSelectedImage, groupObjects, inlineObject, insertObject, insertSectionBreak, reorder, setBlockProps,
-  setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps,
+  alignObjects, applyParagraphStyle, insertStyledParagraph, deleteObjects, duplicateObjects, floatBlockAt, getSync, groupObjects, inlineObject, insertObject, insertSectionBreak, reorder,
+  setBlockProps, setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps, setDocumentMaster, enterMasterEdit, exitMasterEdit, addMasterObject,
+  startConnect, currentBlock, updateMasterObjects, setMasterObjectMode, deleteMasterObjects, type NewObject,
 } from "./actions";
 import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
-import { runPreflight } from "./bridge";
-import { setZoom } from "./PageLayer";
+import type { ObjectDescriptor } from "../../document/schema";
+import { AUTO_FIELDS, AUTO_LABELS, TEXT_PRESETS, placeholderKey } from "../../document/placeholders";
+import { masterAction, runPreflight } from "./bridge";
+import { manualFit, setZoom, storyWrap } from "./PageLayer";
+import { hostRedo, hostUndo } from "./commands";
 import { groupParts } from "../../../slides-studio/packages/core/src/groups";
 import { vscodeApi } from "../vscode-api";
-import type { NewObject } from "./actions";
+import { ShapeGallery, StyleGallery, TableGrid } from "./galleries";
+import { insertGmcBlock } from "../extensions/GmcBlock";
 
-type Tab = "home" | "insert" | "layout" | "references" | "review" | "view" | "object";
+const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
+const LINE_SPACINGS = [1, 1.15, 1.5, 2, 2.5, 3];
+const MARGINS: { id: string; label: string; m: number[] }[] = [
+  { id: "normal", label: tr("Normales", "Normal"), m: [70.87, 70.87, 70.87, 70.87] },
+  { id: "narrow", label: tr("Étroites", "Narrow"), m: [36, 36, 36, 36] },
+  { id: "moderate", label: tr("Modérées", "Moderate"), m: [72, 54, 72, 54] },
+  { id: "wide", label: tr("Larges", "Wide"), m: [72, 144, 72, 144] },
+];
 
-function Btn({ icon, label, onClick, pressed, disabled, large, title }: { icon?: React.ReactNode; label: string; onClick: () => void; pressed?: boolean; disabled?: boolean; large?: boolean; title?: string }) {
+/** What the ribbon shows, derived from the editor (compared by value: no re-render while typing). */
+function derive(editor: Editor) {
+  const { state } = editor;
+  const sel = state.selection;
+  const block = currentBlock(state);
+  const top = block?.node ?? null;
+  const span = editor.getAttributes("msTextStyle") as { style?: string; msStyle?: string };
+  const css = Object.fromEntries((span.style ?? "").split(";").filter(Boolean).map((d) => d.split(":").map((x) => x.trim())));
+  const props = top ? parseBlockProps(top.attrs.msBlock) : {};
+  return {
+    bold: editor.isActive("bold"),
+    italic: editor.isActive("italic"),
+    underline: editor.isActive("underline"),
+    strike: editor.isActive("strike"),
+    bullet: editor.isActive("bulletList"),
+    ordered: editor.isActive("orderedList"),
+    task: editor.isActive("taskList"),
+    heading: editor.isActive("heading") ? (editor.getAttributes("heading").level as number) : 0,
+    props,
+    font: css["font-family"]?.replace(/"/g, ""),
+    size: css["font-size"] ? parseFloat(css["font-size"]) : undefined,
+    color: css.color?.replace("#", ""),
+    highlight: css["background-color"]?.replace("#", ""),
+    msStyle: span.msStyle,
+    node: sel instanceof NodeSelection ? sel.node.type.name : null,
+    topType: top?.type.name ?? null,
+    topPos: block?.pos ?? null,
+    canProps: !!top && "msBlock" in (top.attrs ?? {}),
+    // Props only: the break's position shifts with every keystroke before it (looked up on use).
+    section: currentSectionBreak(editor) ? { props: currentSectionBreak(editor)!.props } : null,
+  };
+}
+
+function TitleBar({ readonly, onSource }: { readonly: boolean; onSource: () => void }) {
+  const fileName = useStudio((s) => s.fileName);
+  const masterEdit = useStudio((s) => s.masterEdit);
+  const sync = useStudio((s) => s.sync);
+  const flush = () => getSync()?.flush() ?? Promise.resolve();
   return (
-    <button className={large ? "ms-rb ms-rb-large" : "ms-rb"} onMouseDown={(e) => e.preventDefault()} onClick={onClick} aria-pressed={pressed} disabled={disabled} title={title ?? label} aria-label={label}>
-      {icon}
-      {(large || !icon) && <span>{label}</span>}
-    </button>
+    <header className="titlebar" role="toolbar" aria-label={tr("Accès rapide", "Quick access")}>
+      <div className="qat">
+        <button type="button" className="ibtn" aria-label={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} title={tr("Enregistrer (Ctrl+S)", "Save (Ctrl+S)")} disabled={readonly} onClick={() => void flush().then(() => vscodeApi.postMessage({ type: "save" }))}>
+          <Icon name="save" />
+        </button>
+        <button type="button" className="ibtn" aria-label={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} title={tr("Annuler (Ctrl+Z)", "Undo (Ctrl+Z)")} data-testid="undo" disabled={readonly} onClick={hostUndo}>
+          <Icon name="undo" />
+        </button>
+        <button type="button" className="ibtn" aria-label={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} title={tr("Rétablir (Ctrl+Y)", "Redo (Ctrl+Y)")} data-testid="redo" disabled={readonly} onClick={hostRedo}>
+          <Icon name="redo" />
+        </button>
+      </div>
+      <div className="title">
+        <span className="file-name" title={fileName}>{fileName}</span>
+        {masterEdit && <span className="chip chip-new" title={tr("Les modifications s’appliquent au masque", "Changes apply to the master")}>{tr("Masque", "Master")} · {masterEdit.name}</span>}
+        {readonly && <span className="chip">{tr("Lecture seule", "Read-only")}</span>}
+        {sync === "conflict" && <span className="chip chip-old">{tr("Conflit", "Conflict")}</span>}
+      </div>
+      <div className="title-actions">
+        <div className="seg" role="group" aria-label={tr("Mode d'édition", "Editing mode")}>
+          <button type="button" className="ibtn is-active" aria-pressed>{tr("Visuel", "Visual")}</button>
+          <button type="button" className="ibtn" title={tr("Ouvrir la source Markdown dans l'éditeur de texte", "Open the Markdown source in the text editor")} data-testid="open-source" onClick={onSource}>Source</button>
+        </div>
+        <div className="split" role="group" aria-label={tr("Exporter", "Export")}>
+          <button type="button" className="ibtn is-primary has-label" data-testid="export" onClick={() => void flush().then(() => vscodeApi.postMessage({ type: "exportDocx" }))}>
+            <Icon name="download" /> <span className="ms-hide-narrow">{tr("Exporter .docx", "Export .docx")}</span>
+          </button>
+          <Menu testId="export-menu" trigger={(open) => (
+            <button type="button" className="ibtn is-primary split-caret" aria-haspopup="menu" aria-label={tr("Autres exports", "More exports")} onClick={open}>
+              <Icon name="chevronDown" size={10} />
+            </button>
+          )}>
+            {(close) => (
+              <>
+                <MenuItem close={close} icon="download" label={tr("Document Word modifiable (.docx)", "Editable Word document (.docx)")} onClick={() => void flush().then(() => vscodeApi.postMessage({ type: "exportDocx" }))} />
+                <MenuItem close={close} icon="preflight" label={tr("Contrôle avant livraison", "Preflight check")} onClick={() => void runPreflight()} />
+                <MenuItem close={close} icon="external" label={tr("HTML, PDF ou PNG…", "HTML, PDF or PNG…")} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "markdownToolkit.export" })} />
+              </>
+            )}
+          </Menu>
+        </div>
+      </div>
+    </header>
   );
 }
 
-function Group({ label, children }: { label: string; children: React.ReactNode }) {
+function HomeTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
+  const theme = useStudio((s) => s.sections[0]?.sheet.theme);
+  const chain = () => editor.chain().focus();
+  const off = ro;
+  const fonts = [...new Set([theme?.fonts.body, theme?.fonts.heading, "Calibri", "Arial", "Georgia", "Times New Roman", "Segoe UI", "Verdana", "Consolas"].filter(Boolean) as string[])];
+  const size = d.size;
+  const step = (dir: 1 | -1) => {
+    const cur = size ?? 11;
+    const next = dir > 0 ? FONT_SIZES.find((s) => s > cur) ?? cur + 2 : [...FONT_SIZES].reverse().find((s) => s < cur) ?? Math.max(1, cur - 1);
+    setSpanStyle(editor, { "font-size": `${next}pt` });
+  };
   return (
-    <div className="ms-rgroup" role="group" aria-label={label}>
-      <div className="ms-rgroup-body">{children}</div>
-      <div className="ms-rgroup-label">{label}</div>
+    <>
+      <Group label={tr("Presse-papiers", "Clipboard")}>
+        <Big icon="paste" label={tr("Coller", "Paste")} disabled={off} title={tr("Coller (Ctrl+V)", "Paste (Ctrl+V)")} onClick={() => void pasteFromClipboard(editor)} />
+        <Col>
+          <Small icon="cut" label={tr("Couper", "Cut")} disabled={off || editor.state.selection.empty} title={tr("Couper (Ctrl+X)", "Cut (Ctrl+X)")} onClick={() => (editor.commands.focus(), document.execCommand("cut"))} />
+          <Small icon="copy" label={tr("Copier", "Copy")} disabled={editor.state.selection.empty} title={tr("Copier (Ctrl+C)", "Copy (Ctrl+C)")} onClick={() => (editor.commands.focus(), document.execCommand("copy"))} />
+          <Small icon="brush" label={tr("Reproduire la mise en forme", "Format painter")} disabled={off} active={!!painter} title={tr("Copier la mise en forme du texte sélectionné, puis sélectionner le texte cible", "Copy the formatting of the selected text, then select the target text")} onClick={() => togglePainter(editor)} />
+        </Col>
+      </Group>
+      <Group label={tr("Police", "Font")}>
+        <div className="rb-col">
+          <div className="rb-row">
+            <Menu testId="font-face-menu" trigger={(open) => (
+              <button type="button" className="rb-small rb-field rb-face" disabled={off} onMouseDown={keepFocus} onClick={open} title={tr("Police", "Font")} data-testid="font-face">
+                <span>{d.font ?? tr("Police du style", "Style font")}</span> <Icon name="chevronDown" size={10} />
+              </button>
+            )}>
+              {(close) => (
+                <>
+                  <MenuItem close={close} label={tr("Police du style", "Style font")} current={!d.font} onClick={() => setSpanStyle(editor, { "font-family": null })} />
+                  {fonts.map((f) => (
+                    <button key={f} type="button" role="menuitem" className={`menu-item${d.font === f ? " is-current" : ""}`} style={{ fontFamily: f }} onMouseDown={keepFocus} onClick={() => (close(), setSpanStyle(editor, { "font-family": `"${f}"` }))}>
+                      {f}
+                    </button>
+                  ))}
+                </>
+              )}
+            </Menu>
+            <Menu testId="font-size-menu" trigger={(open) => (
+              <button type="button" className="rb-small rb-field rb-size" disabled={off} onMouseDown={keepFocus} onClick={open} title={tr("Taille de police", "Font size")} data-testid="font-size">
+                <span>{size ? `${size} pt` : "—"}</span> <Icon name="chevronDown" size={10} />
+              </button>
+            )}>
+              {(close) => (
+                <>
+                  <MenuItem close={close} label={tr("Taille du style", "Style size")} current={!size} onClick={() => setSpanStyle(editor, { "font-size": null })} />
+                  {FONT_SIZES.map((v) => <MenuItem key={v} close={close} label={`${v} pt`} current={v === size} onClick={() => setSpanStyle(editor, { "font-size": `${v}pt` })} />)}
+                </>
+              )}
+            </Menu>
+            <Small iconOnly icon="fontGrow" label={tr("Augmenter la taille de police", "Increase font size")} disabled={off} onClick={() => step(1)} />
+            <Small iconOnly icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} disabled={off} onClick={() => step(-1)} />
+          </div>
+          <div className="rb-row">
+            <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={d.bold} disabled={off} testId="bold" onClick={() => storyWrap("**") || chain().toggleBold().run()} />
+            <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={d.italic} disabled={off} testId="italic" onClick={() => storyWrap("*") || chain().toggleItalic().run()} />
+            <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={d.underline} disabled={off} onClick={() => storyWrap(null) || chain().toggleUnderline().run()} />
+            <Small iconOnly icon="eraser" label={tr("Barré", "Strikethrough")} active={d.strike} disabled={off} onClick={() => storyWrap(null) || chain().toggleStrike().run()} />
+            <PaletteMenu value={d.color} onChange={(v) => setSpanStyle(editor, { color: v ? `#${hexOf(v) ?? v}` : null })} trigger={(open) => (
+              <button type="button" className="rb-small icon-only rb-swatch" disabled={off} onMouseDown={keepFocus} onClick={open} aria-label={tr("Couleur du texte", "Text color")} title={tr("Couleur du texte", "Text color")}>
+                <Icon name="text" />
+                <span className="rb-swatch-bar" style={{ background: d.color ? `#${d.color}` : "var(--fg)" }} />
+              </button>
+            )} />
+            <PaletteMenu value={d.highlight} onChange={(v) => setSpanStyle(editor, { "background-color": v ? `#${hexOf(v) ?? v}` : null })} trigger={(open) => (
+              <button type="button" className="rb-small icon-only rb-swatch" disabled={off} onMouseDown={keepFocus} onClick={open} aria-label={tr("Surlignage", "Highlight")} title={tr("Couleur de surlignage", "Highlight color")}>
+                <Icon name="highlight" />
+                <span className="rb-swatch-bar" style={{ background: d.highlight ? `#${d.highlight}` : "#FFE24D" }} />
+              </button>
+            )} />
+            <Small iconOnly icon="clearFormat" label={tr("Effacer la mise en forme", "Clear formatting")} disabled={off} onClick={() => (chain().unsetAllMarks().run(), setBlockProps({ align: undefined, spaceBefore: undefined, spaceAfter: undefined, lineSpacing: undefined, indentLeft: undefined, indentRight: undefined, firstLine: undefined }))} />
+          </div>
+        </div>
+      </Group>
+      <Group label={tr("Paragraphe", "Paragraph")}>
+        <div className="rb-col">
+          <div className="rb-row">
+            <Small iconOnly icon="bulletList" label={tr("Puces", "Bullets")} active={d.bullet} disabled={off} onClick={() => chain().toggleBulletList().run()} />
+            <Small iconOnly icon="numberList" label={tr("Numérotation", "Numbering")} active={d.ordered} disabled={off} onClick={() => chain().toggleOrderedList().run()} />
+            <Small iconOnly icon="check" label={tr("Liste de tâches", "Checklist")} active={d.task} disabled={off} onClick={() => chain().toggleTaskList().run()} />
+            <Small iconOnly icon="outdent" label={tr("Diminuer le retrait", "Decrease indent")} disabled={off || !d.canProps} onClick={() => setBlockProps({ indentLeft: Math.max(0, (d.props.indentLeft ?? 0) - 35.4) || undefined })} />
+            <Small iconOnly icon="indent" label={tr("Augmenter le retrait", "Increase indent")} disabled={off || !d.canProps} onClick={() => setBlockProps({ indentLeft: (d.props.indentLeft ?? 0) + 35.4 })} />
+          </div>
+          <div className="rb-row">
+            {(["left", "center", "right", "justify"] as const).map((a) => (
+              <Small key={a} iconOnly icon={({ left: "alignLeft", center: "alignCenter", right: "alignRight", justify: "alignJustify" } as const)[a]} label={{ left: tr("Aligner à gauche", "Align left"), center: tr("Centrer", "Center"), right: tr("Aligner à droite", "Align right"), justify: tr("Justifier", "Justify") }[a]} active={(d.props.align ?? "left") === a} disabled={off || !d.canProps} testId={`align-${a}`} onClick={() => setBlockProps({ align: a === "left" ? undefined : a })} />
+            ))}
+            <Menu testId="line-spacing-menu" trigger={(open) => <Small iconOnly icon="lineSpacing" label={tr("Interligne", "Line spacing")} disabled={off || !d.canProps} onClick={open} />}>
+              {(close) => (
+                <>
+                  {LINE_SPACINGS.map((v) => <MenuItem key={v} close={close} label={v.toLocaleString()} current={d.props.lineSpacing === v} onClick={() => setBlockProps({ lineSpacing: v })} />)}
+                  <MenuItem close={close} label={tr("Interligne du style", "Style line spacing")} current={d.props.lineSpacing === undefined} onClick={() => setBlockProps({ lineSpacing: undefined })} />
+                  <MenuItem close={close} icon="spacing" label={tr("Ajouter un espace avant", "Add space before")} onClick={() => setBlockProps({ spaceBefore: 12 })} />
+                  <MenuItem close={close} icon="spacing" label={tr("Supprimer l’espace après", "Remove space after")} onClick={() => setBlockProps({ spaceAfter: 0 })} />
+                </>
+              )}
+            </Menu>
+          </div>
+        </div>
+      </Group>
+      <Group label={tr("Styles", "Styles")}>
+        <StyleGallery editor={editor} current={d.heading ? `Heading${d.heading}` : d.props.style ?? (d.topType === "blockquote" ? "Quote" : "Normal")} disabled={off} />
+      </Group>
+      <Group label={tr("Modification", "Editing")}>
+        <Col>
+          <Small icon="selectAll" label={tr("Tout sélectionner", "Select all")} onClick={() => editor.chain().focus().selectAll().run()} />
+          <Small icon="history" label={tr("Rechercher", "Find")} onClick={() => window.dispatchEvent(new CustomEvent("ms:find"))} />
+        </Col>
+      </Group>
+    </>
+  );
+}
+
+/** Rich paste from the system clipboard (HTML when available, else text). */
+async function pasteFromClipboard(editor: Editor): Promise<void> {
+  try {
+    const items = await navigator.clipboard.read();
+    for (const it of items) {
+      if (it.types.includes("text/html")) {
+        const html = await (await it.getType("text/html")).text();
+        editor.chain().focus().insertContent(html).run();
+        return;
+      }
+    }
+  } catch {
+    // Clipboard API refused: plain text below.
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) editor.chain().focus().insertContent(text).run();
+  } catch {
+    // Nothing readable.
+  }
+}
+
+/** Format painter: marks and paragraph properties of the selection, applied to the next selection. */
+let painter: { marks: { type: string; attrs: Record<string, unknown> }[]; props: Record<string, unknown> } | null = null;
+function togglePainter(editor: Editor): void {
+  if (painter) {
+    painter = null;
+    studio.set({ tab: "home" });
+    return;
+  }
+  const $from = editor.state.selection.$from;
+  painter = { marks: $from.marks().map((m) => ({ type: m.type.name, attrs: m.attrs })), props: ($from.depth ? parseBlockProps($from.node(1).attrs.msBlock) : {}) as Record<string, unknown> };
+  const apply = () => {
+    if (editor.state.selection.empty || !painter) return;
+    const p = painter;
+    painter = null;
+    editor.off("selectionUpdate", apply);
+    const chain = editor.chain().unsetAllMarks();
+    for (const m of p.marks) chain.setMark(m.type, m.attrs);
+    chain.run();
+    const { id: _id, ...props } = p.props as { id?: string };
+    setBlockProps(props);
+  };
+  editor.on("selectionUpdate", apply);
+}
+
+function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
+  const masterEdit = useStudio((s) => s.masterEdit);
+  const selection = useStudio((s) => s.selection);
+  const chain = () => editor.chain().focus();
+  const off = ro;
+  const add = (k: NewObject) => (masterEdit ? addMasterObject(k) : insertObject(k));
+  return (
+    <>
+      {masterEdit && (
+        <Group label={tr("Masque", "Master")}>
+          <Menu testId="placeholder-menu" trigger={(open) => <Big icon="placeholder" label={tr("Espace réservé", "Placeholder")} caret onClick={open} />}>
+            {(close) => (
+              <>
+                <PlaceholderItems close={close} onPick={(key) => addMasterObject("textbox", { placeholder: key })} />
+              </>
+            )}
+          </Menu>
+        </Group>
+      )}
+      {!masterEdit && (
+        <Group label={tr("Pages", "Pages")}>
+          <Big icon="pageBreak" label={tr("Saut de page", "Page break")} disabled={off} title={tr("Saut de page (Ctrl+Entrée)", "Page break (Ctrl+Enter)")} onClick={() => (editor.commands as any).insertPageBreak()} />
+          <Menu testId="section-menu" trigger={(open) => <Big icon="section" label={tr("Saut de section", "Section break")} caret disabled={off} onClick={open} />}>
+            {(close) => (
+              <>
+                <MenuItem close={close} icon="page" label={tr("Page suivante", "Next page")} onClick={() => insertSectionBreak({ break: "nextPage" })} />
+                <MenuItem close={close} icon="orientation" label={tr("Page suivante, paysage", "Next page, landscape")} onClick={() => insertSectionBreak({ break: "nextPage", orientation: "landscape" })} />
+                <MenuItem close={close} icon="pages" label={tr("Page impaire suivante", "Next odd page")} onClick={() => insertSectionBreak({ break: "oddPage" })} />
+                <MenuItem close={close} icon="continuous" label={tr("Continu", "Continuous")} onClick={() => insertSectionBreak({ break: "continuous" })} />
+              </>
+            )}
+          </Menu>
+        </Group>
+      )}
+      {!masterEdit && (
+        <Group label={tr("Tableaux", "Tables")}>
+          <Menu testId="table-menu" trigger={(open) => <Big icon="table" label={tr("Tableau", "Table")} caret disabled={off} onClick={open} />}>
+            {(close) => <TableGrid onPick={(rows, cols) => (close(), chain().insertTable({ rows, cols, withHeaderRow: true }).run())} />}
+          </Menu>
+        </Group>
+      )}
+      <Group label={tr("Illustrations", "Illustrations")}>
+        {!masterEdit && <Big icon="image" label="Image" disabled={off} onClick={() => window.dispatchEvent(new CustomEvent("btrmk:showImageDialog"))} />}
+        <ShapeGallery onPick={add} trigger={(open) => <Big icon="shape" label={tr("Formes", "Shapes")} caret disabled={off} onClick={open} />} />
+        <Big icon="text" label={tr("Zone de texte", "Text box")} disabled={off} onClick={() => add("textbox")} />
+        {!masterEdit && <Big icon="connector" label={tr("Relier", "Connect")} disabled={off} title={selection.length === 2 ? tr("Relier les deux objets sélectionnés", "Connect the two selected objects") : tr("Cliquez l’objet de départ puis celui d’arrivée (Échap annule)", "Click the start object, then the end object (Esc cancels)")} onClick={startConnect} />}
+        {!masterEdit && (
+          <Menu testId="diagram-menu" trigger={(open) => <Big icon="diagram" label={tr("Diagramme", "Diagram")} caret disabled={off} onClick={open} />}>
+            {(close) => (
+              <>
+                <MenuItem close={close} icon="diagram" label={tr("Diagramme Graph Model Studio", "Graph Model Studio diagram")} onClick={() => insertGmcBlock(editor)} />
+                <MenuItem close={close} icon="mermaid" label="Mermaid" onClick={() => chain().insertContent({ type: "mermaidBlock" }).run()} />
+              </>
+            )}
+          </Menu>
+        )}
+        {!masterEdit && <Big icon="equation" label={tr("Équation", "Equation")} disabled={off} onClick={() => chain().insertContent({ type: "mathBlock", attrs: { latex: "E = mc^2" } }).run()} />}
+      </Group>
+      {!masterEdit && (
+        <Group label={tr("Liens", "Links")}>
+          <Col>
+            <Small icon="link" label={tr("Lien", "Link")} disabled={off} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "betterMarkdown.insertLink" })} />
+            <Small icon="bookmark" label={tr("Signet", "Bookmark")} disabled={off || !d.canProps} onClick={() => studio.set({ pane: "format", rightOpen: true })} title={tr("Identifiant du paragraphe : panneau Format", "Paragraph identifier: Format panel")} />
+            <Small icon="crossRef" label={tr("Renvoi", "Cross-reference")} disabled={off} onClick={() => window.dispatchEvent(new CustomEvent("ms:crossref"))} />
+          </Col>
+        </Group>
+      )}
+      {!masterEdit && (
+        <Group label={tr("En-tête et pied de page", "Header & footer")}>
+          <Col>
+            <Small icon="header" label={tr("En-tête", "Header")} onClick={() => window.dispatchEvent(new CustomEvent("ms:editStory", { detail: "headers" }))} />
+            <Small icon="footer" label={tr("Pied de page", "Footer")} onClick={() => window.dispatchEvent(new CustomEvent("ms:editStory", { detail: "footers" }))} />
+            <Small icon="field" label={tr("Numéro de page", "Page number")} onClick={() => window.dispatchEvent(new CustomEvent("ms:editStory", { detail: "footers:page" }))} />
+          </Col>
+        </Group>
+      )}
+      {!masterEdit && (
+        <Group label={tr("Blocs", "Blocks")}>
+          <Col>
+            <Small icon="callout" label={tr("Encadré", "Callout")} disabled={off} onClick={() => insertStyledParagraph(tr("Encadré", "Callout"), "Callout")} />
+            <Small icon="caption" label={tr("Figure + légende", "Figure + caption")} disabled={off} onClick={() => insertStyledParagraph(tr("Figure 1 : légende", "Figure 1: caption"), "Caption")} />
+            <Small icon="signature" label={tr("Signature", "Signature")} disabled={off} onClick={() => chain().insertContent("<p>______________________</p><p>Nom, fonction</p>").run()} />
+          </Col>
+        </Group>
+      )}
+    </>
+  );
+}
+
+function LayoutTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
+  const sections = useStudio((s) => s.sections);
+  const meta = useStudio((s) => s.meta);
+  const masterEdit = useStudio((s) => s.masterEdit);
+  const selection = useStudio((s) => s.selection);
+  const section = d.section;
+  const idx = section ? sections.length - 1 : 0;
+  const page = sections[Math.min(idx, sections.length - 1)]?.page;
+  const setPage = (patch: Record<string, unknown>) => {
+    if (masterEdit) return studio.set({ masterEdit: { ...masterEdit, page: { ...masterEdit.page, ...patch, margins: { ...masterEdit.page.margins, ...(patch.margins as object) } } } }), void import("./store").then((m) => m.resolveDocument());
+    if (section) setSectionProps(currentSectionBreak(editor)!.pos, { ...section.props, ...patch });
+    else setPageSetup(patch as never);
+  };
+  const off = ro;
+  return (
+    <>
+      <Group label={tr("Mise en page", "Page setup")}>
+        <Menu testId="margins-menu" trigger={(open) => <Big icon="margins" label={tr("Marges", "Margins")} caret disabled={off} onClick={open} />}>
+          {(close) => (
+            <>
+              {MARGINS.map((m) => (
+                <MenuItem key={m.id} close={close} icon="margins" current={!!page && Math.abs(page.margins.top - m.m[0]) < 1 && Math.abs(page.margins.left - m.m[3]) < 1} label={`${m.label} · ${(m.m[0] / 28.35).toFixed(2)} × ${(m.m[1] / 28.35).toFixed(2)} cm`} onClick={() => setPage({ margins: { top: m.m[0], right: m.m[1], bottom: m.m[2], left: m.m[3] } })} />
+              ))}
+              <p className="menu-note">{tr("Ajustez aussi les marges en faisant glisser les règles.", "You can also drag the margins on the rulers.")}</p>
+            </>
+          )}
+        </Menu>
+        <Menu testId="orientation-menu" trigger={(open) => <Big icon="orientation" label={tr("Orientation", "Orientation")} caret disabled={off} onClick={open} />}>
+          {(close) => (
+            <>
+              <MenuItem close={close} icon="page" current={page?.orientation !== "landscape"} label={tr("Portrait", "Portrait")} onClick={() => setPage({ orientation: "portrait" })} />
+              <MenuItem close={close} icon="orientation" current={page?.orientation === "landscape"} label={tr("Paysage", "Landscape")} onClick={() => setPage({ orientation: "landscape" })} />
+            </>
+          )}
+        </Menu>
+        <Menu testId="size-menu" trigger={(open) => <Big icon="size" label={tr("Taille", "Size")} caret disabled={off} onClick={open} />}>
+          {(close) => (
+            <>
+              {[["A4", "21 × 29,7 cm"], ["Letter", "21,59 × 27,94 cm"], ["Legal", "21,59 × 35,56 cm"], ["A3", "29,7 × 42 cm"], ["A5", "14,8 × 21 cm"]].map(([s, dim]) => (
+                <MenuItem key={s} close={close} icon="size" label={`${s} · ${dim}`} onClick={() => setPage({ size: s })} />
+              ))}
+            </>
+          )}
+        </Menu>
+        <Menu testId="columns-menu" trigger={(open) => <Big icon="columns" label={tr("Colonnes", "Columns")} caret disabled={off || !!masterEdit} onClick={open} />}>
+          {(close) => (
+            <>
+              {[1, 2, 3].map((n) => (
+                <MenuItem key={n} close={close} icon="columns" current={(page?.columns.count ?? 1) === n} label={n === 1 ? tr("Une", "One") : n === 2 ? tr("Deux", "Two") : tr("Trois", "Three")} onClick={() => setPage({ columns: n > 1 ? { count: n } : undefined })} />
+              ))}
+              <p className="menu-note">{tr("Colonnes de section Word : exportées dans le .docx ; l’éditeur montre une colonne.", "Word section columns: exported to the .docx; the editor shows one column.")}</p>
+            </>
+          )}
+        </Menu>
+      </Group>
+      {!masterEdit && (
+        <Group label={tr("Paragraphe", "Paragraph")}>
+          <div className="rb-col ms-rb-fields">
+            <span className="rb-note">{tr("Retrait", "Indent")}</span>
+            <CmField className="compact-w" label={tr("Gauche", "Left")} pt={d.props.indentLeft ?? 0} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ indentLeft: v || undefined })} />
+            <CmField className="compact-w" label={tr("Droite", "Right")} pt={d.props.indentRight ?? 0} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ indentRight: v || undefined })} />
+          </div>
+          <div className="rb-col ms-rb-fields">
+            <span className="rb-note">{tr("Espacement", "Spacing")}</span>
+            <NumField className="compact-w" label={tr("Avant", "Before")} unit="pt" step={1} min={0} value={d.props.spaceBefore} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ spaceBefore: v })} />
+            <NumField className="compact-w" label={tr("Après", "After")} unit="pt" step={1} min={0} value={d.props.spaceAfter} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ spaceAfter: v })} />
+          </div>
+        </Group>
+      )}
+      {!masterEdit && (
+        <Group label={tr("Enchaînements", "Line and page breaks")}>
+          <Col>
+            <Small icon="keepNext" label={tr("Paragraphes solidaires", "Keep with next")} active={!!d.props.keepWithNext} disabled={off || !d.canProps} onClick={() => setBlockProps({ keepWithNext: d.props.keepWithNext ? undefined : true })} />
+            <Small icon="keepTogether" label={tr("Lignes solidaires", "Keep lines together")} active={!!d.props.keepTogether} disabled={off || !d.canProps} onClick={() => setBlockProps({ keepTogether: d.props.keepTogether ? undefined : true })} />
+            <Small icon="pageBreak" label={tr("Saut de page avant", "Page break before")} active={!!d.props.pageBreakBefore} disabled={off || !d.canProps} onClick={() => setBlockProps({ pageBreakBefore: d.props.pageBreakBefore ? undefined : true })} />
+          </Col>
+        </Group>
+      )}
+      <Group label={tr("Organiser", "Arrange")}>
+        <ArrangeTools editor={editor} d={d} ro={ro} selection={selection} />
+      </Group>
+    </>
+  );
+}
+
+/** Position, wrap, order, group, align: objects, or the block at the caret (made floating). */
+function ArrangeTools({ editor, d, ro, selection }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean; selection: string[] }) {
+  const meta = useStudio((s) => s.meta);
+  const obj = selection[0] ? meta?.objects?.[selection[0]] : undefined;
+  const off = ro;
+  const position = obj ? (obj.placement === "page" ? "page" : "anchored") : "inline";
+  return (
+    <>
+      <Menu testId="position-menu" trigger={(open) => <Big icon="anchor" label={tr("Position", "Position")} caret disabled={off || (!obj && d.topPos === null)} onClick={open} />}>
+        {(close) => (
+          <>
+            <MenuItem close={close} icon="inline" current={position === "inline"} label={tr("Aligné sur le texte", "In line with text")} onClick={() => (obj ? inlineObject(selection[0]) : undefined)} />
+            <MenuItem close={close} icon="float" current={position === "anchored"} label={tr("Flottant, se déplace avec le texte", "Floating, moves with text")} onClick={() => (obj ? setPlacement(selection[0], "anchored") : d.topPos !== null && floatBlockAt(d.topPos, "anchored"))} />
+            <MenuItem close={close} icon="pin" current={position === "page"} label={tr("Fixe sur la page", "Fixed on the page")} onClick={() => (obj ? setPlacement(selection[0], "page") : d.topPos !== null && floatBlockAt(d.topPos, "page"))} />
+          </>
+        )}
+      </Menu>
+      <Col>
+        <Menu testId="wrap-menu" trigger={(open) => <Small icon="wrapSquare" label={tr("Habillage", "Wrap text")} caret disabled={off || !obj} onClick={open} />}>
+          {(close) => obj && (
+            <>
+              {([["square", "wrapSquare", tr("Carré", "Square")], ["topBottom", "wrapTopBottom", tr("Haut et bas", "Top and bottom")], ["front", "wrapFront", tr("Devant le texte", "In front of text")], ["behind", "wrapBehind", tr("Derrière le texte", "Behind text")]] as const).map(([id, icon, label]) => (
+                <MenuItem key={id} close={close} icon={icon} disabled={obj.placement === "page" && (id === "square" || id === "topBottom")} current={(obj.plane === "behind" ? "behind" : obj.wrap === "none" ? "front" : obj.wrap ?? "square") === id} label={label}
+                  onClick={() => updateObjects({ [selection[0]]: id === "behind" ? { plane: "behind", wrap: "none" } : id === "front" ? { plane: "front", wrap: "none" } : { plane: undefined, wrap: id } })} />
+              ))}
+            </>
+          )}
+        </Menu>
+        <Menu testId="order-menu" trigger={(open) => <Small icon="layers" label={tr("Ordre", "Order")} caret disabled={off || !obj} onClick={open} />}>
+          {(close) => (
+            <>
+              <MenuItem close={close} icon="front" label={tr("Mettre au premier plan", "Bring to front")} onClick={() => selection.forEach((id) => reorder(id, "front"))} />
+              <MenuItem close={close} icon="forward" label={tr("Avancer", "Bring forward")} onClick={() => selection.forEach((id) => reorder(id, "forward"))} />
+              <MenuItem close={close} icon="backward" label={tr("Reculer", "Send backward")} onClick={() => selection.forEach((id) => reorder(id, "backward"))} />
+              <MenuItem close={close} icon="back" label={tr("Mettre à l’arrière-plan", "Send to back")} onClick={() => selection.forEach((id) => reorder(id, "back"))} />
+            </>
+          )}
+        </Menu>
+        <Menu testId="group-menu" trigger={(open) => <Small icon="group" label={tr("Grouper", "Group")} caret disabled={off || !obj} onClick={open} />}>
+          {(close) => (
+            <>
+              <MenuItem close={close} icon="group" disabled={selection.length < 2} kbd="Ctrl+G" label={tr("Grouper", "Group")} onClick={() => groupObjects(selection)} />
+              <MenuItem close={close} icon="ungroup" disabled={!obj?.group} kbd="Ctrl+Maj+G" label={tr("Dissocier", "Ungroup")} onClick={() => obj?.group && ungroup(groupParts(obj.group)[0])} />
+            </>
+          )}
+        </Menu>
+      </Col>
+      <Col>
+        <Menu testId="align-menu" trigger={(open) => <Small icon="alignCenter" label={tr("Aligner", "Align")} caret disabled={off || selection.length < 2} onClick={open} />}>
+          {(close) => (
+            <>
+              {([["left", "alignLeft", tr("Aligner à gauche", "Align left")], ["center", "alignCenter", tr("Centrer", "Center")], ["right", "alignRight", tr("Aligner à droite", "Align right")], ["top", "vTop", tr("Aligner en haut", "Align top")], ["middle", "vMiddle", tr("Aligner au milieu", "Align middle")], ["bottom", "vBottom", tr("Aligner en bas", "Align bottom")]] as const).map(([m, icon, label]) => (
+                <MenuItem key={m} close={close} icon={icon} label={label} onClick={() => alignObjects(selection, m)} />
+              ))}
+              <MenuItem close={close} icon="alignJustify" disabled={selection.length < 3} label={tr("Répartir horizontalement", "Distribute horizontally")} onClick={() => alignObjects(selection, "hdist")} />
+              <MenuItem close={close} icon="alignJustify" disabled={selection.length < 3} label={tr("Répartir verticalement", "Distribute vertically")} onClick={() => alignObjects(selection, "vdist")} />
+            </>
+          )}
+        </Menu>
+        <Small icon="duplicate" label={tr("Dupliquer", "Duplicate")} disabled={off || !obj} onClick={() => duplicateObjects(selection)} />
+        <Small icon="trash" label={tr("Supprimer", "Delete")} disabled={off || !obj} onClick={() => deleteObjects(selection)} />
+      </Col>
+    </>
+  );
+}
+
+function ReferencesTab({ editor, ro }: { editor: Editor; ro: boolean }) {
+  const chain = () => editor.chain().focus();
+  return (
+    <>
+      <Group label={tr("Table des matières", "Table of contents")}>
+        <Big icon="toc" label={tr("Table des matières", "Table of contents")} disabled={ro} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "betterMarkdown.insertToc" })} />
+        <Col>
+          <Small icon="refresh" label={tr("Mettre à jour la table", "Update table")} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "markdown-embed.update" })} />
+        </Col>
+      </Group>
+      <Group label={tr("Légendes", "Captions")}>
+        <Big icon="caption" label={tr("Insérer une légende", "Insert caption")} disabled={ro} onClick={() => insertStyledParagraph(tr("Figure 1 : ", "Figure 1: "), "Caption")} />
+      </Group>
+      <Group label={tr("Renvois", "Cross-references")}>
+        <Col>
+          <Small icon="bookmark" label={tr("Signet du paragraphe", "Paragraph bookmark")} disabled={ro} onClick={() => studio.set({ pane: "format", rightOpen: true })} />
+          <Small icon="crossRef" label={tr("Renvoi", "Cross-reference")} disabled={ro} onClick={() => window.dispatchEvent(new CustomEvent("ms:crossref"))} />
+        </Col>
+      </Group>
+    </>
+  );
+}
+
+function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnType<typeof derive> }) {
+  const masterEdit = useStudio((s) => s.masterEdit);
+  const entries = useStudio((s) => s.entries);
+  const masters = useStudio((s) => s.masters);
+  const meta = useStudio((s) => s.meta);
+  const section = d.section;
+  const active = section ? section.props.master ?? meta?.master : meta?.master;
+  const apply = (id: string) => (section ? setSectionProps(currentSectionBreak(editor)!.pos, { ...section.props, master: id, headers: "master" }) : setDocumentMaster(id));
+  return (
+    <>
+      <Group label={tr("Masque", "Master")}>
+        <Big icon="masterEdit" label={masterEdit ? tr("Fermer le masque", "Close master") : tr("Modifier le masque", "Edit master")} active={!!masterEdit} disabled={ro} testId="toggle-master-edit"
+          title={tr("Concevoir la page du masque directement sur le papier : en-têtes, pieds, formes, images, espaces réservés", "Design the master page right on the paper: headers, footers, shapes, pictures, placeholders")}
+          onClick={() => (masterEdit ? exitMasterEdit(true) : enterMasterEdit(active))} />
+        <Menu testId="masters-gallery" className="ms-masters-menu" trigger={(open) => <Big icon="layout" label={tr("Masques", "Masters")} caret disabled={ro} onClick={open} />}>
+          {(close) => (
+            <div className="ms-master-gallery">
+              <h4 className="layout-group">{tr("Appliquer à", "Apply to")} {section ? tr("la section", "the section") : tr("le document", "the document")}</h4>
+              <div className="layout-grid">
+                {entries.map((e) => {
+                  const m = masters.find((x) => x.id === e.id);
+                  return (
+                    <button key={e.id} type="button" className={`layout-card${e.id === active ? " is-selected" : ""}`} disabled={!!e.errors} title={e.description ?? e.name} onClick={() => (close(), apply(e.id))}>
+                      <MasterThumb id={e.id} />
+                      <span className="layout-name">{e.name}</span>
+                      <span className="layout-alias">{e.source === "starter" ? tr("Intégré", "Built-in") : e.source === "docx" ? m?.provenance?.file ?? "Word" : tr("Bibliothèque", "Library")}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </Menu>
+        <Col>
+          <Small icon="importDoc" label={tr("Importer un modèle Word", "Import Word template")} disabled={ro} onClick={() => void masterAction("import")} />
+          <Small icon="plus" label={tr("Nouveau masque", "New master")} disabled={ro} onClick={() => {
+            // Webviews have no prompt(): VS Code asks for the name.
+            vscodeApi.postMessage({ type: "runCommand", command: "markdownStudio.newMaster" });
+          }} />
+          <Small icon="refresh" label={tr("Rétablir le masque", "Reset to master")} disabled={ro || !meta?.styles} title={tr("Retirer les styles modifiés localement", "Remove the locally modified styles")} onClick={() => import("./actions").then((a) => a.updateMeta((m) => ({ ...m, styles: undefined })))} />
+        </Col>
+      </Group>
+      <Group label={tr("Document", "Document")}>
+        <Big icon="field" label={tr("Champs", "Fields")} onClick={() => studio.set({ pane: "format", rightOpen: true })} title={tr("Titre, client, version… : panneau Format, sans sélection", "Title, client, version…: Format panel, nothing selected")} />
+      </Group>
+    </>
+  );
+}
+
+/** Miniature of a master's page design (page proportions, margins, header / footer, accent band). */
+export function MasterThumb({ id, width = 100 }: { id: string; width?: number }) {
+  const m = useStudio((s) => s.masters.find((x) => x.id === id));
+  if (!m) return null;
+  const land = m.page.orientation === "landscape";
+  const w = width;
+  const h = land ? width * 0.7 : width * 1.41;
+  const accent = `#${m.theme?.colors.accent1 ?? "1F6BFF"}`;
+  const band = Object.values(m.background ?? {}).find((o) => o.type === "shape" && o.box.y <= 0);
+  const mt = Math.min(0.35, (m.page.margins?.top ?? 72) / 842) * h;
+  return (
+    <div className="thumb ms-master-thumb" style={{ width: w, height: h }}>
+      {band && <span style={{ position: "absolute", left: 0, right: 0, top: 0, height: h * 0.2, background: accent }} />}
+      {m.headers?.default?.markdown || m.headers?.first?.markdown ? <span className="ms-thumb-line" style={{ top: h * 0.05, width: "38%", background: "#9aa0a8" }} /> : null}
+      <span className="ms-thumb-line" style={{ top: mt, width: "55%", height: 4, background: accent }} />
+      {[0, 1, 2, 3, 4].map((i) => <span key={i} className="ms-thumb-line" style={{ top: mt + 10 + i * 7, width: `${82 - (i % 3) * 9}%` }} />)}
+      {m.footers?.default?.markdown ? <span className="ms-thumb-line" style={{ bottom: h * 0.04, width: "22%", background: "#9aa0a8" }} /> : null}
     </div>
   );
 }
 
-const SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 36, 48];
-const COLORS = ["#1B1C1F", "#44546A", "#1F6BFF", "#C62828", "#2E7D32", "#ED7D31", "#7B1FA2", "#FFFFFF"];
-const HIGHLIGHTS = ["#FFF59D", "#C8E6C9", "#BBDEFB", "#F8BBD0", "#FFE0B2"];
+function ReviewTab() {
+  return (
+    <>
+      <Group label={tr("Vérification", "Proofing")}>
+        <Big icon="preflight" label={tr("Contrôle avant livraison", "Preflight check")} title={tr("Images et polices manquantes, styles, débordements, conversions de l’export Word", "Missing pictures and fonts, styles, overflow, Word export fallbacks")} onClick={() => void runPreflight()} />
+      </Group>
+      <Group label={tr("Comparer", "Compare")}>
+        <Big icon="diff" label={tr("Modifications", "Changes")} title={tr("Comparer avec la version Git HEAD (révision Git, pas le suivi des modifications Word)", "Compare with Git HEAD (Git review, not Word track changes)")} onClick={() => window.dispatchEvent(new CustomEvent("ms:toggleDiff"))} />
+      </Group>
+    </>
+  );
+}
 
-export function Ribbon({ editor, readonly, onFind }: { editor: Editor; readonly: boolean; onFind: () => void }) {
-  const [tab, setTab] = useState<Tab>("home");
-  const collapsed = useStudio((s) => s.ribbonCollapsed);
-  const selection = useStudio((s) => s.selection);
-  const sections = useStudio((s) => s.sections);
-  const meta = useStudio((s) => s.meta);
+function ViewTab() {
   const pageView = useStudio((s) => s.pageView);
   const showRulers = useStudio((s) => s.showRulers);
-  const showGuides = useStudio((s) => s.showGuides);
+  const showBoundaries = useStudio((s) => s.showBoundaries);
+  const showBlockHandles = useStudio((s) => s.showBlockHandles);
+  const showLineNumbers = useStudio((s) => s.showLineNumbers);
   const showHidden = useStudio((s) => s.showHidden);
+  const snap = useStudio((s) => s.snap);
   const zoom = useStudio((s) => s.zoom);
-  const [, rerender] = useReducer((x) => x + 1, 0);
-  useEffect(() => {
-    // Toggle states follow the selection, at most once per frame (typing stays cheap).
-    let frame = 0;
-    const schedule = () => {
-      if (!frame) frame = requestAnimationFrame(() => ((frame = 0), rerender()));
-    };
-    editor.on("selectionUpdate", schedule);
-    editor.on("transaction", schedule);
-    return () => {
-      cancelAnimationFrame(frame);
-      editor.off("selectionUpdate", schedule);
-      editor.off("transaction", schedule);
-    };
-  }, [editor]);
-  useEffect(() => {
-    if (selection.length) setTab((t) => (t === "home" || t === "insert" ? "object" : t));
-    else setTab((t) => (t === "object" ? "home" : t));
-  }, [selection.length > 0]);
-
-  const sheet = sections[0]?.sheet;
-  const paragraphStyles = sheet ? [...sheet.styles.values()].filter((s) => s.type === "paragraph") : [];
-  const characterStyles = sheet ? [...sheet.styles.values()].filter((s) => s.type === "character") : [];
-  const $from = editor.state.selection.$from;
-  const top = $from.depth ? $from.node(1) : null;
-  const props = top ? parseBlockProps(top.attrs.msBlock) : {};
-  const currentStyle = editor.isActive("heading") ? `Heading${editor.getAttributes("heading").level}` : props.style ?? "Normal";
-  const span = editor.getAttributes("msTextStyle") as { style?: string; msStyle?: string };
-  const css = Object.fromEntries((span.style ?? "").split(";").filter(Boolean).map((d) => d.split(":").map((x) => x.trim())));
-  const chain = () => editor.chain().focus();
-  const obj = selection[0] ? meta?.objects?.[selection[0]] : undefined;
-  const disabled = readonly;
-  const shape = (kind: NewObject) => () => insertObject(kind);
-  const section = currentSectionBreak(editor);
-  const pageProps = section ? section.props : meta?.page ?? {};
-  const setPage = (patch: Record<string, unknown>) => (section ? setSectionProps(section.pos, { ...section.props, ...patch }) : setPageSetup(patch));
-
-  const tabs: [Tab, string][] = [["home", "Home"], ["insert", "Insert"], ["layout", "Layout"], ["references", "References"], ["review", "Review"], ["view", "View"]];
-  if (selection.length) tabs.push(["object", obj?.type === "image" ? "Picture" : "Object"]);
-
   return (
-    <div className={`ms-ribbon${collapsed ? " is-collapsed" : ""}`}>
-      <div className="ms-rtabs" role="tablist" onDoubleClick={() => studio.set({ ribbonCollapsed: !collapsed })}>
-        {tabs.map(([id, label]) => (
-          <button key={id} role="tab" aria-selected={tab === id} className={id === "object" ? "ms-rtab-context" : ""} onClick={() => (setTab(id), collapsed && studio.set({ ribbonCollapsed: false }))}>
-            {label}
+    <>
+      <Group label={tr("Affichages", "Views")}>
+        <Big icon="pages" label={tr("Page", "Print layout")} active={pageView} onClick={() => studio.set({ pageView: true })} />
+        <Big icon="continuous" label={tr("Continu", "Continuous")} active={!pageView} onClick={() => studio.set({ pageView: false })} />
+      </Group>
+      <Group label={tr("Afficher", "Show")}>
+        <Col>
+          <Small icon="ruler" label={tr("Règles", "Rulers")} active={showRulers} onClick={() => studio.set({ showRulers: !showRulers })} />
+          <Small icon="boundaries" label={tr("Limites du texte", "Text boundaries")} active={showBoundaries} onClick={() => studio.set({ showBoundaries: !showBoundaries })} />
+          <Small icon="magnet" label={tr("Magnétisme", "Snap")} active={snap} title={tr("Magnétisme (Alt pour ignorer)", "Snap (Alt to ignore)")} onClick={() => studio.set({ snap: !snap })} />
+        </Col>
+        <Col>
+          <Small icon="dragHandle" label={tr("Poignées de bloc", "Block handles")} active={showBlockHandles} title={tr("+ et poignée à gauche du bloc survolé", "+ and grip beside the hovered block")} onClick={() => studio.set({ showBlockHandles: !showBlockHandles })} />
+          <Small icon="lineNumbers" label={tr("Numéros de ligne", "Line numbers")} active={showLineNumbers} title={tr("Ligne de la source Markdown de chaque bloc", "Markdown source line of each block")} onClick={() => studio.set({ showLineNumbers: !showLineNumbers })} />
+          <Small icon={showHidden ? "eye" : "eyeOff"} label={tr("Objets masqués", "Hidden objects")} active={showHidden} title={tr("Montrer en transparence les objets masqués (affichage seulement)", "Show hidden objects ghosted (view only)")} onClick={() => studio.set({ showHidden: !showHidden })} />
+        </Col>
+      </Group>
+      <Group label="Zoom">
+        <Big icon="zoomIn" label="100 %" active={Math.abs(zoom - 1) < 0.005} onClick={() => setZoom(1, true)} />
+        <Col>
+          <Small icon="fitWidth" label={tr("Largeur de page", "Page width")} onClick={() => manualFit("width")} />
+          <Small icon="fitPage" label={tr("Page entière", "Whole page")} onClick={() => manualFit("page")} />
+        </Col>
+      </Group>
+      <Group label="Source">
+        <Big icon="code" label={tr("Ouvrir la source", "Open source")} onClick={() => window.dispatchEvent(new CustomEvent("ms:source"))} />
+        <Col>
+          <Small icon="panel" label={tr("Réglages", "Settings")} onClick={() => window.postMessage({ type: "openSettings" }, "*")} />
+          <Small icon="slideshow" label={tr("Mode zen", "Zen mode")} onClick={() => window.postMessage({ type: "toggleZen" }, "*")} />
+        </Col>
+      </Group>
+    </>
+  );
+}
+
+/** Placeholder kinds: text the document types (presets or a new key) and automatic fields. */
+function PlaceholderItems({ close, onPick, current }: { close: () => void; onPick: (key: string) => void; current?: string }) {
+  const cur = current && placeholderKey(current);
+  return (
+    <>
+      <div className="menu-label">{tr("Texte saisi dans chaque document", "Text typed in each document")}</div>
+      {TEXT_PRESETS().map((p) => <MenuItem key={p.key} close={close} icon="placeholder" label={p.label} current={cur === p.key} onClick={() => onPick(p.key)} />)}
+      <MenuItem close={close} icon="plus" label={tr("Autre texte…", "Other text…")} onClick={() => onPick("*")} />
+      <div className="menu-sep" role="separator" />
+      <div className="menu-label">{tr("Champ automatique", "Automatic field")}</div>
+      {AUTO_FIELDS.map((k) => <MenuItem key={k} close={close} icon="field" label={AUTO_LABELS()[k]} current={cur === k} onClick={() => onPick(k)} />)}
+    </>
+  );
+}
+
+/** Contextual Format tab of the selected object. */
+function FormatTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
+  const masterEdit = useStudio((s) => s.masterEdit);
+  if (masterEdit) return <MasterFormatTab />;
+  return <ObjectFormatTab editor={editor} d={d} ro={ro} />;
+}
+
+/** Contextual Format tab in master edit mode: role (floating / fixed / placeholder), look, order. */
+function MasterFormatTab() {
+  const master = useStudio((s) => s.masterEdit);
+  const sel = useStudio((s) => s.masterSel);
+  const o = sel.length === 1 ? master?.background?.[sel[0]] : undefined;
+  if (!o) return null;
+  const id = sel[0];
+  const set = (patch: Partial<ObjectDescriptor>) => updateMasterObjects({ [id]: patch });
+  const mode = o.placeholder ? "placeholder" : o.locked?.geometry ? "fixed" : "floating";
+  return (
+    <>
+      <Group label={tr("Rôle", "Role")}>
+        <Big icon="float" label={tr("Flottant", "Floating")} active={mode === "floating"} onClick={() => setMasterObjectMode(id, "floating")} />
+        <Big icon="pin" label={tr("Fixe", "Fixed")} active={mode === "fixed"} onClick={() => setMasterObjectMode(id, "fixed")} />
+        <Menu trigger={(open) => <Big icon="placeholder" label={tr("Espace réservé", "Placeholder")} caret active={mode === "placeholder"} onClick={open} />}>
+          {(close) => (
+            <>
+              <PlaceholderItems close={close} current={o.placeholder} onPick={(key) => setMasterObjectMode(id, "placeholder", key === "*" ? `texte-${id}` : key)} />
+            </>
+          )}
+        </Menu>
+      </Group>
+      <Group label={tr("Styles de forme", "Shape styles")}>
+        <PaletteMenu value={(o.style?.fill as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, fill: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="fillColor" label={tr("Remplissage", "Fill")} caret onClick={open} />} />
+        <PaletteMenu value={(o.style?.line as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, line: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="borders" label={tr("Contour", "Outline")} caret onClick={open} />} />
+      </Group>
+      <Group label={tr("Organiser", "Arrange")}>
+        <Col>
+          <Small icon="front" label={tr("Devant le texte", "In front of text")} active={o.plane !== "behind"} onClick={() => set({ plane: "front" })} />
+          <Small icon="back" label={tr("Derrière le texte", "Behind text")} active={o.plane === "behind"} onClick={() => set({ plane: "behind" })} />
+        </Col>
+        <Big icon="trash" label={tr("Supprimer", "Delete")} onClick={() => deleteMasterObjects([id])} />
+      </Group>
+      <Group label={tr("Taille", "Size")}>
+        <div className="rb-col ms-rb-fields">
+          <CmField className="compact-w" label="H" pt={o.box.height} min={0} onCommit={(v) => set({ box: { ...o.box, height: v } })} />
+          <CmField className="compact-w" label={tr("L", "W")} pt={o.box.width} min={0} onCommit={(v) => set({ box: { ...o.box, width: v } })} />
+        </div>
+      </Group>
+    </>
+  );
+}
+
+function ObjectFormatTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
+  const selection = useStudio((s) => s.selection);
+  const meta = useStudio((s) => s.meta);
+  const o = selection[0] ? meta?.objects?.[selection[0]] : undefined;
+  if (!o) return null;
+  const id = selection[0];
+  const set = (patch: Record<string, unknown>) => updateObjects({ [id]: patch });
+  return (
+    <>
+      {o.type !== "image" && o.type !== "connector" && (
+        <Group label={tr("Styles de forme", "Shape styles")}>
+          <PaletteMenu value={(o.style?.fill as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, fill: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="fillColor" label={tr("Remplissage", "Fill")} caret disabled={ro} onClick={open} />} />
+          <PaletteMenu value={(o.style?.line as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, line: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="borders" label={tr("Contour", "Outline")} caret disabled={ro} onClick={open} />} />
+        </Group>
+      )}
+      <Group label={tr("Organiser", "Arrange")}>
+        <ArrangeTools editor={editor} d={d} ro={ro} selection={selection} />
+      </Group>
+      <Group label={tr("Taille", "Size")}>
+        <div className="rb-col ms-rb-fields">
+          <CmField className="compact-w" label="H" pt={o.box.height} min={0} disabled={ro || !!o.locked?.geometry} onCommit={(v) => set({ box: { ...o.box, height: v } })} />
+          <CmField className="compact-w" label={tr("L", "W")} pt={o.box.width} min={0} disabled={ro || !!o.locked?.geometry} onCommit={(v) => set({ box: { ...o.box, width: v } })} />
+        </div>
+      </Group>
+      <Group label={tr("Verrous", "Locks")}>
+        <Col>
+          <Small icon={o.locked?.geometry ? "lock" : "unlock"} label={tr("Verrouiller la position", "Lock position")} active={!!o.locked?.geometry} onClick={() => set({ locked: { ...o.locked, geometry: !o.locked?.geometry || undefined } })} />
+          <Small icon={o.locked?.content ? "lock" : "unlock"} label={tr("Verrouiller le contenu", "Lock content")} active={!!o.locked?.content} onClick={() => set({ locked: { ...o.locked, content: !o.locked?.content || undefined } })} />
+          {o.type === "image" && <Small icon="inline" label={tr("Remettre dans le texte", "Back in line")} onClick={() => inlineObject(id)} />}
+        </Col>
+      </Group>
+    </>
+  );
+}
+
+export function Ribbon({ editor, readonly, onSource }: { editor: Editor; readonly: boolean; onSource: () => void }) {
+  const tab = useStudio((s) => s.tab);
+  const collapsed = useStudio((s) => s.ribbonCollapsed);
+  const selection = useStudio((s) => s.selection);
+  const masterEdit = useStudio((s) => s.masterEdit);
+  const masterSel = useStudio((s) => s.masterSel);
+  const d = useEditorDerived(editor, derive)!;
+  const contextual = masterEdit ? masterSel.length === 1 : selection.length > 0;
+  const active: RibbonTab = tab === "format" && !contextual ? "home" : tab;
+  const tabs: { id: RibbonTab; label: string }[] = [
+    { id: "home", label: tr("Accueil", "Home") },
+    { id: "insert", label: tr("Insertion", "Insert") },
+    { id: "layout", label: tr("Mise en page", "Layout") },
+    { id: "references", label: tr("Références", "References") },
+    { id: "design", label: tr("Conception", "Design") },
+    { id: "review", label: tr("Révision", "Review") },
+    { id: "view", label: tr("Affichage", "View") },
+  ];
+  const set = (patch: Record<string, unknown>) => studio.set(patch);
+  return (
+    <div className="ribbon-wrap">
+      <TitleBar readonly={readonly} onSource={onSource} />
+      <nav className="tabs" role="tablist" aria-label={tr("Ruban", "Ribbon")}>
+        {tabs.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={active === t.id} className={`tab${active === t.id ? " is-active" : ""}`} data-testid={`tab-${t.id}`}
+            onClick={() => set({ tab: t.id, ribbonCollapsed: collapsed && active === t.id ? false : collapsed })} onDoubleClick={() => set({ ribbonCollapsed: !collapsed })}>
+            {t.label}
           </button>
         ))}
-        <span className="ms-spacer" />
-        <button className="ms-icon" aria-label={collapsed ? "Expand ribbon" : "Collapse ribbon"} onClick={() => studio.set({ ribbonCollapsed: !collapsed })}>
-          {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+        {contextual && (
+          <button type="button" role="tab" aria-selected={active === "format"} className={`tab tab-contextual${active === "format" ? " is-active" : ""}`} data-testid="tab-format" onClick={() => set({ tab: "format" })} onDoubleClick={() => set({ ribbonCollapsed: !collapsed })}>
+            {masterEdit ? tr("Format du masque", "Master format") : tr("Format de l’objet", "Object format")}
+          </button>
+        )}
+        <span className="grow" />
+        <button type="button" className="ibtn tabs-collapse" aria-label={collapsed ? tr("Afficher le ruban", "Show the ribbon") : tr("Réduire le ruban", "Collapse the ribbon")} title={collapsed ? tr("Afficher le ruban", "Show the ribbon") : tr("Réduire le ruban", "Collapse the ribbon")} onClick={() => set({ ribbonCollapsed: !collapsed })}>
+          <Icon name="chevronDown" style={{ transform: collapsed ? undefined : "rotate(180deg)" }} />
         </button>
-      </div>
+      </nav>
       {!collapsed && (
-        <div className="ms-rbody" role="tabpanel">
-          {tab === "home" && (
-            <>
-              <Group label="Style">
-                <select aria-label="Paragraph style" value={currentStyle} disabled={disabled} onChange={(e) => applyParagraphStyle(e.target.value)}>
-                  {paragraphStyles.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-                <select aria-label="Character style" value={span.msStyle ?? ""} disabled={disabled} onChange={(e) => setSpanStyle(editor, {}, e.target.value || null)}>
-                  <option value="">Character style…</option>
-                  {characterStyles.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </Group>
-              <Group label="Font">
-                <div className="ms-row">
-                  <input aria-label="Font" placeholder="Font" list="ms-fonts" defaultValue={css["font-family"]?.replace(/"/g, "") ?? ""} key={css["font-family"] ?? "none"} disabled={disabled} onKeyDown={(e) => e.key === "Enter" && setSpanStyle(editor, { "font-family": (e.target as HTMLInputElement).value ? `"${(e.target as HTMLInputElement).value}"` : null })} />
-                  <datalist id="ms-fonts">{[sheet?.theme.fonts.body, sheet?.theme.fonts.heading, "Calibri", "Arial", "Georgia", "Times New Roman", "Segoe UI", "Consolas"].filter(Boolean).map((f) => <option key={f} value={f!} />)}</datalist>
-                  <select aria-label="Size" value={css["font-size"]?.replace("pt", "") ?? ""} disabled={disabled} onChange={(e) => setSpanStyle(editor, { "font-size": e.target.value ? `${e.target.value}pt` : null })}>
-                    <option value="">Size</option>
-                    {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
-                <div className="ms-row">
-                  <Btn icon={<Bold size={15} />} label="Bold" pressed={editor.isActive("bold")} disabled={disabled} onClick={() => chain().toggleBold().run()} />
-                  <Btn icon={<Italic size={15} />} label="Italic" pressed={editor.isActive("italic")} disabled={disabled} onClick={() => chain().toggleItalic().run()} />
-                  <Btn icon={<Underline size={15} />} label="Underline" pressed={editor.isActive("underline")} disabled={disabled} onClick={() => chain().toggleUnderline().run()} />
-                  <Btn icon={<Strikethrough size={15} />} label="Strikethrough" pressed={editor.isActive("strike")} disabled={disabled} onClick={() => chain().toggleStrike().run()} />
-                  <span className="ms-swatches" role="group" aria-label="Text color">
-                    {COLORS.map((c) => <button key={c} className="ms-swatch" style={{ background: c }} aria-label={`Text color ${c}`} onMouseDown={(e) => e.preventDefault()} onClick={() => setSpanStyle(editor, { color: c })} />)}
-                  </span>
-                  <span className="ms-swatches" role="group" aria-label="Highlight">
-                    {HIGHLIGHTS.map((c) => <button key={c} className="ms-swatch ms-swatch-hl" style={{ background: c }} aria-label={`Highlight ${c}`} onMouseDown={(e) => e.preventDefault()} onClick={() => setSpanStyle(editor, { "background-color": c })} />)}
-                  </span>
-                  <Btn icon={<Eraser size={15} />} label="Clear formatting" disabled={disabled} onClick={() => (chain().unsetAllMarks().run(), setBlockProps({ align: undefined, spaceBefore: undefined, spaceAfter: undefined, lineSpacing: undefined, indentLeft: undefined, firstLine: undefined }))} />
-                </div>
-              </Group>
-              <Group label="Paragraph">
-                <div className="ms-row">
-                  <Btn icon={<List size={15} />} label="Bullets" pressed={editor.isActive("bulletList")} disabled={disabled} onClick={() => chain().toggleBulletList().run()} />
-                  <Btn icon={<ListOrdered size={15} />} label="Numbering" pressed={editor.isActive("orderedList")} disabled={disabled} onClick={() => chain().toggleOrderedList().run()} />
-                  <Btn icon={<ListChecks size={15} />} label="Checklist" pressed={editor.isActive("taskList")} disabled={disabled} onClick={() => chain().toggleTaskList().run()} />
-                  <Btn icon={<IndentDecrease size={15} />} label="Decrease indent" disabled={disabled} onClick={() => setBlockProps({ indentLeft: Math.max(0, (props.indentLeft ?? 0) - 18) || undefined })} />
-                  <Btn icon={<IndentIncrease size={15} />} label="Increase indent" disabled={disabled} onClick={() => setBlockProps({ indentLeft: (props.indentLeft ?? 0) + 18 })} />
-                </div>
-                <div className="ms-row">
-                  {([["left", AlignLeft], ["center", AlignCenter], ["right", AlignRight], ["justify", AlignJustify]] as const).map(([a, Icon]) => (
-                    <Btn key={a} icon={<Icon size={15} />} label={`Align ${a}`} pressed={(props.align ?? "left") === a} disabled={disabled} onClick={() => setBlockProps({ align: a === "left" ? undefined : a })} />
-                  ))}
-                  <select aria-label="Line spacing" value={props.lineSpacing ?? ""} disabled={disabled} onChange={(e) => setBlockProps({ lineSpacing: e.target.value ? Number(e.target.value) : undefined })}>
-                    <option value="">Spacing</option>
-                    {[1, 1.15, 1.5, 2, 2.5, 3].map((v) => <option key={v} value={v}>{v}</option>)}
-                  </select>
-                </div>
-              </Group>
-              <Group label="Editing">
-                <Btn large icon={<Search size={18} />} label="Find" onClick={onFind} />
-              </Group>
-            </>
-          )}
-          {tab === "insert" && (
-            <>
-              <Group label="Pages">
-                <Btn large icon={<FileText size={18} />} label="Page break" disabled={disabled} onClick={() => (editor.commands as any).insertPageBreak()} title="Page break (Ctrl+Enter)" />
-                <Btn large icon={<SeparatorHorizontal size={18} />} label="Section" disabled={disabled} onClick={() => insertSectionBreak({ break: "nextPage" })} title="New section (next page)" />
-              </Group>
-              <Group label="Tables & media">
-                <Btn large icon={<Table size={18} />} label="Table" disabled={disabled} onClick={() => chain().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()} />
-                <Btn large icon={<ImageIcon size={18} />} label="Picture" disabled={disabled} onClick={() => window.dispatchEvent(new CustomEvent("btrmk:showImageDialog"))} />
-                <Btn large icon={<Sigma size={18} />} label="Equation" disabled={disabled} onClick={() => chain().insertContent({ type: "mathBlock", attrs: { latex: "E = mc^2" } }).run()} />
-                <Btn large icon={<Workflow size={18} />} label="Diagram" disabled={disabled} onClick={() => chain().insertContent({ type: "mermaidBlock", attrs: { code: "graph LR\n  A --> B" } }).run()} />
-              </Group>
-              <Group label="Objects">
-                <Btn large icon={<Type size={18} />} label="Text box" disabled={disabled} onClick={shape("textbox")} />
-                <div className="ms-grid">
-                  <Btn icon={<Square size={15} />} label="Rectangle" disabled={disabled} onClick={shape("rect")} />
-                  <Btn icon={<Square size={15} style={{ borderRadius: 4 }} />} label="Rounded rectangle" disabled={disabled} onClick={shape("roundRect")} />
-                  <Btn icon={<Circle size={15} />} label="Ellipse" disabled={disabled} onClick={shape("ellipse")} />
-                  <Btn icon={<Triangle size={15} />} label="Triangle" disabled={disabled} onClick={shape("triangle")} />
-                  <Btn icon={<Diamond size={15} />} label="Diamond" disabled={disabled} onClick={shape("diamond")} />
-                  <Btn icon={<ArrowRight size={15} />} label="Arrow" disabled={disabled} onClick={shape("rightArrow")} />
-                  <Btn icon={<Minus size={15} />} label="Line" disabled={disabled} onClick={shape("line")} />
-                  <Btn icon={<Workflow size={15} />} label="Connector (select two objects)" disabled={disabled} onClick={shape("connector")} />
-                </div>
-              </Group>
-              <Group label="Links">
-                <Btn large icon={<Link2 size={18} />} label="Link" disabled={disabled} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "betterMarkdown.insertLink" })} />
-              </Group>
-              <Group label="Building blocks">
-                <Btn label="Callout" disabled={disabled} onClick={() => (chain().insertContent("<p>Callout text</p>").run(), applyParagraphStyle(sheet?.styles.has("Callout") ? "Callout" : "Quote"))} />
-                <Btn label="Figure + caption" disabled={disabled} onClick={() => (chain().insertContent("<p>Figure: caption</p>").run(), applyParagraphStyle("Caption"))} />
-                <Btn label="Signature" disabled={disabled} onClick={() => chain().insertContent("<p>______________________</p><p>Name, title</p>").run()} />
-              </Group>
-            </>
-          )}
-          {tab === "layout" && (
-            <>
-              <Group label={section ? "Section page setup" : "Page setup"}>
-                <select aria-label="Page size" value={pageProps.size ?? "A4"} disabled={disabled} onChange={(e) => setPage({ size: e.target.value })}>
-                  {["A4", "Letter", "Legal", "A3", "A5"].map((s) => <option key={s}>{s}</option>)}
-                </select>
-                <select aria-label="Orientation" value={pageProps.orientation ?? "portrait"} disabled={disabled} onChange={(e) => setPage({ orientation: e.target.value })}>
-                  <option value="portrait">Portrait</option>
-                  <option value="landscape">Landscape</option>
-                </select>
-                <select aria-label="Margins" value="" disabled={disabled} onChange={(e) => {
-                  const m = { normal: 72, narrow: 36, wide: 108 }[e.target.value as "normal"];
-                  if (m) setPage({ margins: { top: m, bottom: m, left: m, right: m } });
-                }}>
-                  <option value="">Margins…</option>
-                  <option value="normal">Normal (2.54 cm)</option>
-                  <option value="narrow">Narrow (1.27 cm)</option>
-                  <option value="wide">Wide (3.81 cm)</option>
-                </select>
-                <select aria-label="Newspaper columns" title="Word section columns (exported to DOCX; the editor previews one column)" value={String((pageProps as any).columns?.count ?? 1)} disabled={disabled} onChange={(e) => setPage({ columns: Number(e.target.value) > 1 ? { count: Number(e.target.value) } : undefined })}>
-                  {[1, 2, 3].map((n) => <option key={n} value={n}>{n === 1 ? "One column" : `${n} columns (DOCX)`}</option>)}
-                </select>
-              </Group>
-              <Group label="Breaks">
-                <Btn label="Page break" disabled={disabled} onClick={() => (editor.commands as any).insertPageBreak()} />
-                <Btn label="Section: next page" disabled={disabled} onClick={() => insertSectionBreak({ break: "nextPage" })} />
-                <Btn label="Section: landscape" disabled={disabled} onClick={() => insertSectionBreak({ break: "nextPage", orientation: "landscape" })} />
-                <Btn label="Keep with next" pressed={!!props.keepWithNext} disabled={disabled} onClick={() => setBlockProps({ keepWithNext: props.keepWithNext ? undefined : true })} />
-                <Btn label="Keep lines together" pressed={!!props.keepTogether} disabled={disabled} onClick={() => setBlockProps({ keepTogether: props.keepTogether ? undefined : true })} />
-                <Btn label="Page break before" pressed={!!props.pageBreakBefore} disabled={disabled} onClick={() => setBlockProps({ pageBreakBefore: props.pageBreakBefore ? undefined : true })} />
-              </Group>
-              <Group label="Arrange">
-                <Btn icon={<BringToFront size={15} />} label="Bring to front" disabled={!selection.length || disabled} onClick={() => selection.forEach((id) => reorder(id, "front"))} />
-                <Btn icon={<SendToBack size={15} />} label="Send to back" disabled={!selection.length || disabled} onClick={() => selection.forEach((id) => reorder(id, "back"))} />
-                <Btn icon={<GroupIcon size={15} />} label="Group (Ctrl+G)" disabled={selection.length < 2 || disabled} onClick={() => groupObjects(selection)} />
-              </Group>
-            </>
-          )}
-          {tab === "references" && (
-            <>
-              <Group label="Contents">
-                <Btn large icon={<ListTree size={18} />} label="Table of contents" disabled={disabled} onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "betterMarkdown.insertToc" })} />
-              </Group>
-              <Group label="Captions & bookmarks">
-                <Btn label="Insert caption" disabled={disabled} onClick={() => (chain().insertContent("<p>Figure 1: </p>").run(), applyParagraphStyle("Caption"))} />
-                <Btn icon={<BookMarked size={15} />} label="Bookmark paragraph" disabled={disabled} onClick={() => {
-                  const id = window.prompt("Bookmark id (letters, digits, -)", props.id ?? "");
-                  if (id !== null) setBlockProps({ id: /^[A-Za-z][\w-]*$/.test(id) ? id : undefined });
-                }} />
-                <Btn label="Cross-reference" disabled={disabled} onClick={() => {
-                  const ids: string[] = [];
-                  editor.state.doc.descendants((n) => {
-                    const p = parseBlockProps(n.attrs?.msBlock);
-                    if (p.id) ids.push(p.id);
-                    return true;
-                  });
-                  const id = window.prompt(`Link to bookmark (${ids.join(", ") || "none yet"})`, ids[0] ?? "");
-                  if (id) chain().insertContent(`<a href="#${id}">see ${id}</a>`).run();
-                }} />
-              </Group>
-            </>
-          )}
-          {tab === "review" && (
-            <>
-              <Group label="Delivery">
-                <Btn large icon={<ShieldCheck size={18} />} label="Preflight" onClick={() => void runPreflight()} title="Check missing assets, fonts, styles, overflow and export fallbacks" />
-              </Group>
-              <Group label="Other formats">
-                <Btn label="HTML / PDF / PNG…" onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "markdownToolkit.export" })} />
-                <Btn label="Refresh embeds" onClick={() => vscodeApi.postMessage({ type: "runCommand", command: "markdown-embed.update" })} />
-              </Group>
-              <Group label="Changes">
-                <Btn large icon={<GitCompare size={18} />} label="Diff vs HEAD" onClick={() => window.dispatchEvent(new CustomEvent("ms:toggleDiff"))} title="Git review (not Word track changes)" />
-              </Group>
-            </>
-          )}
-          {tab === "view" && (
-            <>
-              <Group label="Views">
-                <Btn label="Page view" pressed={pageView} onClick={() => studio.set({ pageView: !pageView })} />
-                <Btn icon={<RulerIcon size={15} />} label="Rulers" pressed={showRulers} onClick={() => studio.set({ showRulers: !showRulers })} />
-                <Btn label="Margin guides" pressed={showGuides} onClick={() => studio.set({ showGuides: !showGuides })} />
-                <Btn icon={<Eye size={15} />} label="Show hidden objects" pressed={showHidden} onClick={() => studio.set({ showHidden: !showHidden })} title="View only: hidden objects stay hidden in the document" />
-              </Group>
-              <Group label="Zoom">
-                <Btn label="100%" onClick={() => setZoom(1, true)} pressed={zoom === 1} />
-                <Btn label="Fit width" onClick={() => window.dispatchEvent(new CustomEvent("ms:fit"))} />
-              </Group>
-              <Group label="Panels">
-                <Btn label="Navigation" onClick={() => studio.set((s) => ({ leftOpen: !s.leftOpen }))} />
-                <Btn label="Inspector" onClick={() => studio.set((s) => ({ rightOpen: !s.rightOpen }))} />
-                <Btn label="Zen" onClick={() => window.postMessage({ type: "toggleZen" }, "*")} />
-                <Btn label="Frontmatter" onClick={() => window.dispatchEvent(new CustomEvent("btrmk:addFrontmatter"))} title="Add a YAML frontmatter block" />
-                <Btn label="Settings" onClick={() => window.postMessage({ type: "openSettings" }, "*")} />
-              </Group>
-            </>
-          )}
-          {tab === "object" && obj && (
-            <>
-              <Group label="Position">
-                <select aria-label="Placement" value={obj.placement === "page" ? `page-${obj.relativeTo ?? "margin"}` : "anchored"} disabled={disabled} onChange={(e) => {
-                  const v = e.target.value;
-                  setPlacement(selection[0], v === "anchored" ? "anchored" : "page", v === "page-page" ? "page" : "margin");
-                }}>
-                  <option value="anchored">Move with text</option>
-                  <option value="page-margin">Fix on page (margins)</option>
-                  <option value="page-page">Fix on page (edges)</option>
-                </select>
-                <select aria-label="Wrap" value={obj.plane === "behind" ? "behind" : obj.wrap ?? "square"} disabled={disabled || obj.placement === "page"} title={obj.placement === "page" ? "Objects fixed on the page do not wrap text" : "Text wrapping"} onChange={(e) => {
-                  const v = e.target.value;
-                  updateObjects({ [selection[0]]: v === "behind" ? { plane: "behind", wrap: "none" } : v === "front" ? { plane: "front", wrap: "none" } : { plane: undefined, wrap: v as "square" } });
-                }}>
-                  <option value="square">Square wrap</option>
-                  <option value="topBottom">Top and bottom</option>
-                  <option value="none">In front of text</option>
-                  <option value="behind">Behind text</option>
-                </select>
-                {obj.type === "image" && <Btn label="In line with text" disabled={disabled} onClick={() => inlineObject(selection[0])} />}
-              </Group>
-              <Group label="Arrange">
-                <div className="ms-row">
-                  <Btn icon={<BringToFront size={15} />} label="Bring to front" onClick={() => selection.forEach((id) => reorder(id, "front"))} />
-                  <Btn icon={<SendToBack size={15} />} label="Send to back" onClick={() => selection.forEach((id) => reorder(id, "back"))} />
-                  <Btn label="Forward" onClick={() => selection.forEach((id) => reorder(id, "forward"))} />
-                  <Btn label="Backward" onClick={() => selection.forEach((id) => reorder(id, "backward"))} />
-                </div>
-                <div className="ms-row">
-                  <Btn icon={<GroupIcon size={15} />} label="Group" disabled={selection.length < 2} onClick={() => groupObjects(selection)} />
-                  <Btn icon={<Ungroup size={15} />} label="Ungroup" disabled={!obj.group} onClick={() => ungroup(groupParts(obj.group)[0])} />
-                  <Btn icon={<Copy size={15} />} label="Duplicate (Ctrl+D)" onClick={() => duplicateObjects(selection)} />
-                  <Btn icon={<Trash2 size={15} />} label="Delete" onClick={() => deleteObjects(selection)} />
-                </div>
-              </Group>
-              <Group label="Align">
-                <div className="ms-row">
-                  {(["left", "center", "right"] as const).map((m) => <Btn key={m} label={m} disabled={selection.length < 2} onClick={() => alignObjects(selection, m)} />)}
-                  <Btn label="Distribute H" disabled={selection.length < 3} onClick={() => alignObjects(selection, "hdist")} />
-                </div>
-                <div className="ms-row">
-                  {(["top", "middle", "bottom"] as const).map((m) => <Btn key={m} label={m} disabled={selection.length < 2} onClick={() => alignObjects(selection, m)} />)}
-                  <Btn label="Distribute V" disabled={selection.length < 3} onClick={() => alignObjects(selection, "vdist")} />
-                </div>
-              </Group>
-              <Group label="Lock">
-                <Btn icon={<Lock size={15} />} label="Lock position" pressed={!!obj.locked?.geometry} onClick={() => updateObjects({ [selection[0]]: { locked: { ...obj.locked, geometry: !obj.locked?.geometry } } })} />
-                <Btn label="Lock content" pressed={!!obj.locked?.content} onClick={() => updateObjects({ [selection[0]]: { locked: { ...obj.locked, content: !obj.locked?.content } } })} />
-              </Group>
-            </>
-          )}
-          {tab === "home" && editor.state.selection instanceof NodeSelection && editor.state.selection.node.type.name === "image" && (
-            <Group label="Picture">
-              <Btn label="Float (wrap text)" disabled={disabled} onClick={floatSelectedImage} />
-            </Group>
-          )}
+        <div className="ribbon" role="tabpanel" aria-label={tabs.find((t) => t.id === active)?.label ?? "Format"}>
+          {active === "home" && <HomeTab editor={editor} d={d} ro={readonly} />}
+          {active === "insert" && <InsertTab editor={editor} d={d} ro={readonly} />}
+          {active === "layout" && <LayoutTab editor={editor} d={d} ro={readonly} />}
+          {active === "references" && <ReferencesTab editor={editor} ro={readonly} />}
+          {active === "design" && <DesignTab editor={editor} ro={readonly} d={d} />}
+          {active === "review" && <ReviewTab />}
+          {active === "view" && <ViewTab />}
+          {active === "format" && <FormatTab editor={editor} d={d} ro={readonly} />}
         </div>
       )}
     </div>
   );
 }
+

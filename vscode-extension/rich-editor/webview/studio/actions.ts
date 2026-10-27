@@ -2,17 +2,22 @@
  * Studio commands. Each one is a single source edit (editor transaction and / or frontmatter meta
  * change, sent together), so it is one VS Code undo step.
  */
+// `tr` names transactions here: the French / English string helper is `loc`.
+import { tr as loc } from "../../../slides-studio/packages/core/src/i18n";
 import type { Editor } from "@tiptap/core";
 import { Extension } from "@tiptap/core";
-import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
 import { Mapping } from "@tiptap/pm/transform";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { uniqueId } from "../../document/markers";
-import type { BlockProps, ObjectDescriptor, SectionProps, StudioMeta, StyleDef } from "../../document/schema";
+import { storyGroupId } from "../../document/groups";
+import { TEXT_PRESETS, isAutoField, placeholderKey, placeholderPrompt } from "../../document/placeholders";
+import type { BlockProps, MasterDef, ObjectDescriptor, SectionProps, StorySet, StudioMeta, StyleDef } from "../../document/schema";
 import { pxToPt } from "../../document/units";
 import { groupParts, inGroup } from "../../../slides-studio/packages/core/src/groups";
 import type { DocumentSync } from "./documentSync";
-import { notify, objectOf, studio } from "./store";
+import { lookupMaster, notify, objectOf, resolveDocument, studio } from "./store";
+import { saveMaster } from "./bridge";
 import { parseBlockProps } from "../extensions/StudioNodes";
 
 let editorRef: Editor | null = null;
@@ -20,6 +25,8 @@ let syncRef: DocumentSync | null = null;
 export const bindActions = (editor: Editor, sync: DocumentSync) => {
   editorRef = editor;
   syncRef = sync;
+  editor.on("transaction", ({ transaction }) => transaction.docChanged && refreshGroupTexts(editor));
+  refreshGroupTexts(editor);
 };
 export const getEditor = () => editorRef;
 export const getSync = () => syncRef;
@@ -33,11 +40,12 @@ function takenIds(): Set<string> {
   return ids;
 }
 
-export function updateMeta(change: (meta: StudioMeta) => StudioMeta | null): void {
-  syncRef?.updateMeta(change);
+export function updateMeta(change: (meta: StudioMeta) => StudioMeta | null, delay = 0): void {
+  syncRef?.updateMeta(change, delay);
 }
 
-export function updateObjects(patches: Record<string, Partial<ObjectDescriptor> | null>): void {
+/** `delay`: the edit waits for the rest of its gesture (see DocumentSync.updateMeta). */
+export function updateObjects(patches: Record<string, Partial<ObjectDescriptor> | null>, delay = 0): void {
   updateMeta((meta) => {
     const objs = { ...meta.objects };
     for (const [id, patch] of Object.entries(patches)) {
@@ -46,7 +54,7 @@ export function updateObjects(patches: Record<string, Partial<ObjectDescriptor> 
       else objs[id] = patch as ObjectDescriptor;
     }
     return { ...meta, version: meta.version ?? 1, objects: Object.keys(objs).length ? objs : undefined };
-  });
+  }, delay);
 }
 
 /** Position before the top-level block holding the selection. */
@@ -63,7 +71,7 @@ export function insertObject(kind: NewObject, extra: Partial<ObjectDescriptor> =
   if (!editor || !syncRef) return undefined;
   const sel = studio.get().selection;
   if (kind === "connector" && sel.length !== 2) {
-    notify("info", "Select two objects (Shift+click) to connect them.");
+    notify("info", loc("Sélectionnez deux objets (Maj+clic) pour les relier.", "Select two objects (Shift+click) to connect them."));
     return undefined;
   }
   const id = uniqueId(kind === "textbox" ? "textbox" : kind === "connector" ? "connector" : "shape", takenIds());
@@ -87,7 +95,7 @@ export function insertObject(kind: NewObject, extra: Partial<ObjectDescriptor> =
   updateObjects({ [id]: descriptor });
   const tr = editor.state.tr.insert(at, node);
   editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, at)));
-  studio.set({ selection: [id], rightTab: "format" });
+  studio.set({ selection: [id], pane: "format" });
   return id;
 }
 
@@ -99,13 +107,31 @@ function anchorPosOf(id: string): number | undefined {
   return found;
 }
 
+/** New id for an object: its marker, descriptor and the connectors attached to it follow (one edit). */
+export function renameObject(id: string, next: string): void {
+  const editor = editorRef;
+  const pos = anchorPosOf(id);
+  if (!editor || !syncRef || pos === undefined || next === id) return;
+  if (takenIds().has(next)) return notify("warning", loc(`L’identifiant « ${next} » est déjà utilisé.`, `The id "${next}" is already used.`));
+  const d = objectOf(id);
+  const ends: Record<string, Partial<ObjectDescriptor>> = {};
+  for (const [cid, c] of Object.entries(objects())) {
+    if (c.from?.id === id) ends[cid] = { ...ends[cid], from: { ...c.from, id: next } };
+    if (c.to?.id === id) ends[cid] = { ...ends[cid], to: { ...c.to, id: next } };
+  }
+  syncRef.touched = true;
+  updateObjects({ ...ends, [id]: null, ...(d ? { [next]: { ...d, ...ends[id], name: d.name === id ? undefined : d.name } } : {}) });
+  editor.view.dispatch(editor.state.tr.setNodeAttribute(pos, "id", next));
+  studio.set((s) => ({ selection: s.selection.map((x) => (x === id ? next : x)) }));
+}
+
 /** Image in the text flow → anchored object (and back with `inlineObject`). */
 export function floatSelectedImage(): void {
   const editor = editorRef;
   if (!editor || !syncRef) return;
   const sel = editor.state.selection;
   if (!(sel instanceof NodeSelection) || sel.node.type.name !== "image") {
-    notify("info", "Select an image in the text first.");
+    notify("info", loc("Sélectionnez d’abord une image dans le texte.", "Select an image in the text first."));
     return;
   }
   const dom = editor.view.nodeDOM(sel.from) as HTMLElement | null;
@@ -145,7 +171,7 @@ export function deleteObjects(ids: string[]): void {
   const editor = editorRef;
   if (!editor || !syncRef) return;
   const locked = ids.filter((id) => objectOf(id)?.locked?.geometry);
-  if (locked.length) notify("info", `Locked: ${locked.join(", ")} (unlock in Layers to delete).`);
+  if (locked.length) notify("info", loc(`Verrouillé : ${locked.join(", ")} (déverrouillez dans Calques pour supprimer).`, `Locked: ${locked.join(", ")} (unlock in Layers to delete).`));
   const targets = ids.filter((id) => !locked.includes(id));
   // Connectors attached to deleted objects go with them.
   for (const [cid, c] of Object.entries(objects())) if (c.type === "connector" && (targets.includes(c.from?.id ?? "") || targets.includes(c.to?.id ?? ""))) targets.push(cid);
@@ -185,7 +211,7 @@ export function duplicateObjects(ids: string[]): void {
 
 export function alignObjects(ids: string[], mode: "left" | "center" | "right" | "top" | "middle" | "bottom" | "hdist" | "vdist"): void {
   const ds = ids.map((id) => [id, objectOf(id)] as const).filter((x): x is [string, ObjectDescriptor] => !!x[1] && !x[1].locked?.geometry);
-  if (ds.length < 2) return notify("info", "Select at least two unlocked objects.");
+  if (ds.length < 2) return notify("info", loc("Sélectionnez au moins deux objets déverrouillés.", "Select at least two unlocked objects."));
   const patches: Record<string, Partial<ObjectDescriptor>> = {};
   const L = Math.min(...ds.map(([, d]) => d.box.x)), R = Math.max(...ds.map(([, d]) => d.box.x + d.box.width));
   const T = Math.min(...ds.map(([, d]) => d.box.y)), B = Math.max(...ds.map(([, d]) => d.box.y + d.box.height));
@@ -215,7 +241,7 @@ export function alignObjects(ids: string[], mode: "left" | "center" | "right" | 
 }
 
 export function groupObjects(ids: string[]): void {
-  if (ids.length < 2) return notify("info", "Select at least two objects to group.");
+  if (ids.length < 2) return notify("info", loc("Sélectionnez au moins deux objets à grouper.", "Select at least two objects to group."));
   const taken = new Set(Object.values(objects()).flatMap((d) => groupParts(d.group)));
   const name = uniqueId("group", taken);
   updateObjects(Object.fromEntries(ids.map((id) => [id, { group: objectOf(id)?.group ? `${name}/${objectOf(id)!.group}` : name }])));
@@ -279,28 +305,52 @@ export function setPlacement(id: string, placement: "anchored" | "page", relativ
 }
 
 /** Move an object's marker before another top-level block (re-anchor), keeping its page position. */
-export function reanchor(id: string, beforePos: number, box: ObjectDescriptor["box"]): void {
+export function reanchor(id: string, beforePos: number, box: ObjectDescriptor["box"], delay = 0): void {
   const editor = editorRef;
   const pos = anchorPosOf(id);
   if (!editor || pos === undefined || !syncRef) return;
   const node = editor.state.doc.nodeAt(pos)!;
+  const selected = editor.state.selection instanceof NodeSelection && editor.state.selection.from === pos;
   const tr = editor.state.tr.delete(pos, pos + node.nodeSize);
-  tr.insert(tr.mapping.map(beforePos), node);
+  const at = tr.mapping.map(beforePos);
+  tr.insert(at, node);
+  // The moved object stays selected (copy, delete and nudges keep acting on it).
+  if (selected) tr.setSelection(NodeSelection.create(tr.doc, at));
   syncRef.touched = true;
   editor.view.dispatch(tr);
-  updateObjects({ [id]: { box } });
+  updateObjects({ [id]: { box } }, delay);
 }
 
 /* Paragraph / character formatting ----------------------------------- */
 
-/** Merge `patch` into the `ms:block` properties of the top-level blocks in the selection. */
+/** Containers whose child blocks are formatted on their own (objects, columns, alignment, `:::` groups). */
+const BLOCK_CONTAINERS = new Set(["msObject", "columns", "column", "alignBlock", "directiveBlock"]);
+
+/**
+ * Block holding the caret: a top-level block, or a block of a container (object body, column,
+ * `:::` group) — paragraph formatting reaches inside them. A selected object stands for its first block.
+ */
+export function currentBlock(state: EditorState): { node: PMNode; pos: number } | null {
+  const sel = state.selection;
+  if (sel instanceof NodeSelection && sel.node.type.name === "msObject") return sel.node.firstChild ? { node: sel.node.firstChild, pos: sel.from + 1 } : null;
+  const $from = sel.$from;
+  // A selected block (diagram, image, table…) is its own block; its selection starts outside it.
+  if (sel instanceof NodeSelection && ($from.depth === 0 || BLOCK_CONTAINERS.has($from.parent.type.name))) return { node: sel.node, pos: sel.from };
+  for (let d = $from.depth; d > 0; d--) if (d === 1 || BLOCK_CONTAINERS.has($from.node(d - 1).type.name)) return { node: $from.node(d), pos: $from.before(d) };
+  return null;
+}
+
+/** Merge `patch` into the `ms:block` properties of the blocks in the selection (container bodies included). */
 export function setBlockProps(patch: Partial<BlockProps>): void {
+  const story = activeStory();
+  if (story) return styleStory(story, patch);
   const editor = editorRef;
   if (!editor || !syncRef) return;
   const { from, to } = editor.state.selection;
   const tr = editor.state.tr;
   editor.state.doc.nodesBetween(from, to, (node, pos, parent) => {
-    if (parent !== editor.state.doc) return false;
+    if (BLOCK_CONTAINERS.has(node.type.name)) return true;
+    if (parent !== editor.state.doc && !BLOCK_CONTAINERS.has(parent?.type.name ?? "")) return false;
     if (!("msBlock" in node.attrs)) return false;
     const props = { ...parseBlockProps(node.attrs.msBlock), ...patch };
     for (const k of Object.keys(props) as (keyof BlockProps)[]) if (props[k] === undefined || props[k] === null || (props[k] as unknown) === "") delete props[k];
@@ -311,8 +361,88 @@ export function setBlockProps(patch: Partial<BlockProps>): void {
   editor.view.dispatch(tr);
 }
 
+/** New paragraph in `style` after the block holding the selection (never merged into it); caret at its end. */
+export function insertStyledParagraph(text: string, style: string): void {
+  const editor = editorRef;
+  if (!editor) return;
+  const sel = editor.state.selection;
+  const $p = sel.$to;
+  let d = $p.depth;
+  while (d > 1 && !/^(doc|msObject|column)$/.test($p.node(d - 1).type.name)) d--;
+  const at = sel instanceof NodeSelection ? sel.to : d ? $p.after(d) : $p.pos;
+  const node = { type: "paragraph", attrs: { msBlock: JSON.stringify({ style }) }, content: text ? [{ type: "text", text }] : [] };
+  editor.chain().focus().insertContentAt(at, node).setTextSelection(at + 1 + text.length).run();
+}
+
+/**
+ * Text of the `::: id` group `id` (header, footer, placeholder): updated, or added at the start of the
+ * text; `change` registers the id in the frontmatter in the same edit. Empty `markdown` with
+ * `dropEmpty` removes the group.
+ */
+export function setGroupText(id: string, markdown: string, change?: (meta: StudioMeta) => StudioMeta, dropEmpty = false): void {
+  const editor = editorRef;
+  if (!editor || !syncRef) return;
+  if (change) updateMeta(change);
+  let found: { pos: number; node: PMNode } | undefined;
+  editor.state.doc.forEach((node, pos) => {
+    if (node.type.name === "msStory" && node.attrs.id === id) found = { pos, node };
+  });
+  const tr = editor.state.tr;
+  if (found && !markdown && dropEmpty) tr.delete(found.pos, found.pos + found.node.nodeSize);
+  else if (found) {
+    if (found.node.attrs.markdown === markdown) return;
+    tr.setNodeMarkup(found.pos, undefined, { id, markdown });
+  } else if (markdown || !dropEmpty) tr.insert(0, editor.schema.nodes.msStory.create({ id, markdown }));
+  else return;
+  syncRef.touched = true;
+  editor.view.dispatch(tr);
+}
+
+/** Texts of the header / footer / placeholder groups, kept in the store for the page layout. */
+function refreshGroupTexts(editor: Editor): void {
+  const texts: Record<string, string> = {};
+  editor.state.doc.forEach((n) => {
+    if (n.type.name === "msStory") texts[String(n.attrs.id)] = String(n.attrs.markdown);
+  });
+  if (JSON.stringify(texts) === JSON.stringify(studio.get().groupTexts)) return;
+  studio.set({ groupTexts: texts });
+  resolveDocument();
+}
+
+/** The header / footer text area being edited, if any (`data-kind`, `data-variant`). */
+function activeStory(): HTMLTextAreaElement | null {
+  const el = document.activeElement;
+  return el instanceof HTMLTextAreaElement && el.classList.contains("ms-story-input") ? el : null;
+}
+
+/** Style / alignment of the header or footer being edited: the whole story (document `blocks.<id>`, a master's `block`). */
+function styleStory(ta: HTMLTextAreaElement, patch: Partial<BlockProps>): void {
+  const kind = ta.dataset.kind as "headers" | "footers";
+  const variant = (ta.dataset.variant ?? "default") as keyof StorySet;
+  const clean = (p: BlockProps): BlockProps | undefined => {
+    const out = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== undefined && v !== null && v !== "")) as BlockProps;
+    return Object.keys(out).length ? out : undefined;
+  };
+  const m = studio.get().masterEdit;
+  if (m) {
+    const s = m[kind]?.[variant] ?? {};
+    updateMaster({ [kind]: { ...m[kind], [variant]: { ...s, block: clean({ ...s.block, ...patch }) } } } as Partial<MasterDef>);
+    return;
+  }
+  const id = storyGroupId(kind, variant);
+  setGroupText(id, ta.value, (meta) => {
+    const blocks = { ...meta.blocks, [id]: clean({ ...meta.blocks?.[id], ...patch })! };
+    if (!blocks[id]) delete blocks[id];
+    const story = { ...meta[kind]?.[variant], id };
+    delete story.markdown;
+    return { ...meta, [kind]: { ...meta[kind], [variant]: story }, blocks: Object.keys(blocks).length ? blocks : undefined };
+  });
+}
+
 /** Named paragraph style (headings keep their level; style stored in ms:block). */
 export function applyParagraphStyle(styleId: string | null): void {
+  const story = activeStory();
+  if (story) return styleStory(story, { style: styleId && styleId !== "Normal" ? styleId : undefined });
   const sheet = studio.get().sections[0].sheet;
   const s = styleId ? sheet.styles.get(styleId) : undefined;
   const editor = editorRef;
@@ -450,7 +580,7 @@ export const StudioIntegrity = Extension.create({
             if (!next || next.type.name === "msObject") return;
             const after = pos + n.nodeSize;
             if (mapping.mapResult(after + 1).deleted && mapping.mapResult(after + next.nodeSize - 1).deleted) {
-              queueMicrotask(() => notify("info", `"${objectOf(String(n.attrs.id))?.name ?? n.attrs.id}" lost its paragraph: it now follows the next one.`));
+              queueMicrotask(() => notify("info", loc(`« ${objectOf(String(n.attrs.id))?.name ?? n.attrs.id} » a perdu son paragraphe : il suit maintenant le suivant.`, `"${objectOf(String(n.attrs.id))?.name ?? n.attrs.id}" lost its paragraph: it now follows the next one.`)));
             }
           });
           return tr.docChanged ? tr : null;
@@ -461,3 +591,196 @@ export const StudioIntegrity = Extension.create({
 });
 
 export { TextSelection };
+
+/* Any block becomes a floating object ----------------------------------- */
+
+/**
+ * The top-level block at `pos` becomes a positioned object, kept where it is on screen: "anchored"
+ * follows the next paragraph, "page" stays on its page. Pictures become picture objects; anything
+ * else (paragraphs, tables, lists, code, diagrams…) a borderless text frame around the block.
+ */
+export function floatBlockAt(pos: number, placement: "anchored" | "page"): string | undefined {
+  const editor = editorRef;
+  if (!editor || !syncRef) return undefined;
+  const node = editor.state.doc.nodeAt(pos);
+  if (!node || ["msObject", "msPageBreak", "msSection"].includes(node.type.name)) return undefined;
+  const dom = editor.view.nodeDOM(pos) as HTMLElement | null;
+  if (!dom) return undefined;
+  const zoom = studio.get().zoom || 1;
+  const root = editor.view.dom.getBoundingClientRect();
+  const r = dom.getBoundingClientRect();
+  const x = (r.left - root.left) / zoom;
+  const y = (r.top - root.top) / zoom;
+  const width = pxToPt(r.width / zoom);
+  const height = pxToPt(r.height / zoom);
+  const image = node.type.name === "image" || (node.childCount === 1 && node.firstChild?.type.name === "image");
+  const base = image ? String((node.type.name === "image" ? node : node.firstChild!).attrs.alt || "image").toLowerCase() : node.type.name === "table" ? "table" : "frame";
+  const id = uniqueId(base, takenIds());
+  let box = { x: 0, y: 0, width, height };
+  if (placement === "page") {
+    const pages = studio.get().layout?.pages ?? [];
+    const page = pages.find((p) => y >= p.top && y < p.top + p.height) ?? pages[0];
+    if (page) box = { x: pxToPt(x - page.left - page.margins.left), y: pxToPt(y - page.top - page.margins.top), width, height };
+  }
+  const where = placement === "page" ? { relativeTo: "margin" as const, wrap: "none" as const } : { wrap: "topBottom" as const };
+  const descriptor: ObjectDescriptor = image
+    ? { type: "image", placement, box, ...where }
+    : { type: "textbox", placement, box, ...where, style: { fill: null, line: null, padding: 0 } };
+  syncRef.touched = true;
+  updateObjects({ [id]: descriptor });
+  const tr = editor.state.tr;
+  // The object anchors to the block after it: a document that ends here gets an empty paragraph.
+  if (pos + node.nodeSize >= tr.doc.content.size) tr.insert(pos + node.nodeSize, editor.schema.nodes.paragraph.create());
+  tr.replaceWith(pos, pos + node.nodeSize, editor.schema.nodes.msObject.create({ id }, [node]));
+  editor.view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, pos)));
+  studio.set({ selection: [id], tab: "format" });
+  return id;
+}
+
+/* Connector tool ---------------------------------------------------------- */
+
+export function startConnect(): void {
+  const { selection, connectFrom } = studio.get();
+  if (connectFrom !== null) return studio.set({ connectFrom: null });
+  if (selection.length === 2) {
+    insertObject("connector");
+    return;
+  }
+  studio.set({ connectFrom: selection.length === 1 ? selection[0] : "" });
+}
+
+/** Connector tool click on an object; false when the tool is off. */
+export function connectClick(id: string): boolean {
+  const { connectFrom } = studio.get();
+  if (connectFrom === null) return false;
+  if (!connectFrom) {
+    studio.set({ connectFrom: id, selection: [id] });
+    return true;
+  }
+  if (connectFrom !== id) {
+    studio.set({ selection: [connectFrom, id], connectFrom: null });
+    insertObject("connector");
+  }
+  return true;
+}
+
+/* Master editing on the canvas ------------------------------------------ */
+
+/** The master being edited came from a built-in starter: saving creates a library copy. */
+let masterOrigin: { id: string; starter: boolean } | null = null;
+
+export function enterMasterEdit(ref?: string): void {
+  const s = studio.get();
+  const m = (ref && lookupMaster(ref)) || lookupMaster("studio-body");
+  if (!m) return notify("warning", loc("Aucun masque à modifier.", "No master to edit."));
+  const starter = !!s.entries.find((e) => e.id === m.id)?.readonly;
+  masterOrigin = { id: m.id, starter };
+  const copy: MasterDef = structuredClone(m);
+  if (starter) {
+    copy.id = uniqueId(`${m.id.replace(/^studio-/, "")}-custom`, new Set(s.entries.map((e) => e.id)));
+    copy.name = `${m.name} (${loc("personnalisé", "custom")})`;
+    copy.provenance = { source: "user" };
+  }
+  editorRef?.commands.blur();
+  studio.set({ masterEdit: copy, masterEditOf: m.id, masterSel: [], selection: [], tab: "insert", pane: "format", rightOpen: true });
+  resolveDocument();
+}
+
+/** Close master edit mode; `save` writes the master (a starter becomes a library copy applied here). */
+export async function exitMasterEdit(save: boolean): Promise<void> {
+  const m = studio.get().masterEdit;
+  if (!m) return;
+  if (save) {
+    await saveMaster(m);
+    if (masterOrigin?.starter) {
+      const current = studio.get().meta?.master;
+      if (!current || current === masterOrigin.id) setDocumentMaster(m.id);
+    }
+  }
+  masterOrigin = null;
+  studio.set({ masterEdit: null, masterEditOf: null, masterSel: [], tab: "home" });
+  resolveDocument();
+}
+
+function setMaster(change: (m: MasterDef) => MasterDef): void {
+  const m = studio.get().masterEdit;
+  if (!m) return;
+  studio.set({ masterEdit: change(structuredClone(m)) });
+  resolveDocument();
+}
+
+export function updateMaster(patch: Partial<MasterDef>): void {
+  setMaster((m) => ({ ...m, ...patch }));
+}
+
+export function updateMasterObjects(patches: Record<string, Partial<ObjectDescriptor> | null>): void {
+  setMaster((m) => {
+    const bg = { ...m.background };
+    for (const [id, patch] of Object.entries(patches)) {
+      if (patch === null) delete bg[id];
+      else if (bg[id]) bg[id] = { ...bg[id], ...patch, box: { ...bg[id].box, ...patch.box } };
+    }
+    return { ...m, background: bg };
+  });
+}
+
+/** New id for a master object (placeholder keys stay as they are). */
+export function renameMasterObject(id: string, next: string): void {
+  const d = studio.get().masterEdit?.background?.[id];
+  if (!d || next === id) return;
+  if (studio.get().masterEdit?.background?.[next]) return notify("warning", loc(`L’identifiant « ${next} » est déjà utilisé.`, `The id "${next}" is already used.`));
+  setMaster((m) => ({ ...m, background: Object.fromEntries(Object.entries(m.background ?? {}).map(([k, v]) => (k === id ? [next, { ...v, name: v.name === id ? undefined : v.name }] : [k, v]))) }));
+  studio.set((s) => ({ masterSel: s.masterSel.map((x) => (x === id ? next : x)) }));
+}
+
+/**
+ * New master object at the page's upper third. `placeholder`: a text placeholder (key: the document
+ * types its text) or an automatic field (date, page, pages); `"*"` makes a new text key.
+ */
+/** `at`: top-left from the page's top-left corner, pt (where the page was right-clicked). */
+export function addMasterObject(kind: NewObject, extra: Partial<ObjectDescriptor> = {}, at?: { x: number; y: number }): void {
+  const m = studio.get().masterEdit;
+  if (!m) return;
+  const taken = new Set(Object.keys(m.background ?? {}));
+  const ph = extra.placeholder === "*" ? uniqueId("texte", new Set([...taken, ...TEXT_PRESETS().map((p) => p.key)])) : extra.placeholder && placeholderKey(extra.placeholder);
+  const id = uniqueId(ph ?? (kind === "textbox" ? "texte" : "forme"), taken);
+  const preset = TEXT_PRESETS().find((p) => p.key === ph);
+  const page = studio.get().sections[0]?.page;
+  const w = kind === "textbox" ? (ph && isAutoField(ph) ? 140 : 300) : kind === "line" ? 200 : 120;
+  const h = kind === "textbox" ? Math.max(28, (preset?.fontSize ?? 12) * 1.9) : kind === "line" ? 0 : 80;
+  const d: ObjectDescriptor = {
+    type: kind === "textbox" ? "textbox" : "shape",
+    ...(kind !== "textbox" ? { shape: kind as ObjectDescriptor["shape"] } : {}),
+    placement: "page",
+    relativeTo: "page",
+    box: at && page
+      ? { x: Math.round(Math.min(Math.max(0, at.x), page.width - w) * 100) / 100, y: Math.round(Math.min(Math.max(0, at.y), page.height - h) * 100) / 100, width: w, height: h }
+      : { x: page ? (page.width - w) / 2 : 100, y: page ? page.height / 3 : 200, width: w, height: h },
+    plane: "front",
+    ...(kind === "textbox" ? { text: ph ? (isAutoField(ph) ? undefined : placeholderPrompt(ph)) : loc("Texte", "Text"), style: { fill: null, line: null, fontSize: preset?.fontSize ?? 12 } } : {}),
+    ...extra,
+    ...(ph ? { placeholder: ph } : {}),
+  };
+  setMaster((x) => ({ ...x, background: { ...x.background, [id]: d } }));
+  studio.set({ masterSel: [id], tab: "format", pane: "format" });
+}
+
+/**
+ * Master object role: floating (movable), fixed (locked in place) or a placeholder — a box each
+ * document fills with its own text (`key`), or an automatic field (date, page, pages).
+ */
+export function setMasterObjectMode(id: string, mode: "floating" | "fixed" | "placeholder", placeholder?: string): void {
+  const d = studio.get().masterEdit?.background?.[id];
+  if (!d) return;
+  if (mode === "placeholder") {
+    const key = placeholderKey(placeholder ?? d.placeholder ?? (TEXT_PRESETS().some((p) => p.key === id) ? id : "title"));
+    updateMasterObjects({ [id]: { type: "textbox", shape: undefined, placeholder: key, text: isAutoField(key) ? undefined : d.placeholder && placeholderKey(d.placeholder) === key ? d.text : placeholderPrompt(key), style: { ...d.style, fill: d.style?.fill ?? null, line: d.style?.line ?? null } } });
+  } else {
+    updateMasterObjects({ [id]: { placeholder: undefined, ...(d.placeholder ? { text: d.text ?? loc("Texte", "Text") } : {}), locked: { ...d.locked, geometry: mode === "fixed" || undefined } } });
+  }
+}
+
+export function deleteMasterObjects(ids: string[]): void {
+  updateMasterObjects(Object.fromEntries(ids.map((id) => [id, null])));
+  studio.set({ masterSel: [] });
+}

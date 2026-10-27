@@ -331,6 +331,53 @@
           "light": "./media/preview-slides-light.svg",
           "dark": "./media/preview-slides-dark.svg"
         }
+      },
+      {
+        "command": "markdownStudio.editMaster",
+        "title": "%s261.edit.master.on.the.page%",
+        "category": "Markdown Studio",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "markdownStudio.applyMaster",
+        "title": "%s262.apply.master.to.document%",
+        "category": "Markdown Studio",
+        "icon": "$(check)"
+      },
+      {
+        "command": "markdownStudio.newMaster",
+        "title": "%s263.new.master%",
+        "category": "Markdown Studio",
+        "icon": "$(add)"
+      },
+      {
+        "command": "markdownStudio.duplicateMaster",
+        "title": "%s268.duplicate.master%",
+        "category": "Markdown Studio",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "markdownStudio.renameMaster",
+        "title": "%s264.rename.master%",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "markdownStudio.deleteMaster",
+        "title": "%s265.delete.master%",
+        "category": "Markdown Studio",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "markdownStudio.openMasterJson",
+        "title": "%s266.open.master.json%",
+        "category": "Markdown Studio",
+        "icon": "$(json)"
+      },
+      {
+        "command": "markdownStudio.mastersRefresh",
+        "title": "%s267.refresh.masters%",
+        "category": "Markdown Studio",
+        "icon": "$(refresh)"
       }
     ],
     "keybindings": [
@@ -370,6 +417,34 @@
         {
           "command": "betterMarkdown.openDiff",
           "when": "resourceExtname == .md || isInDiffEditor"
+        },
+        {
+          "command": "markdownStudio.editMaster",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.applyMaster",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.duplicateMaster",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.renameMaster",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.deleteMaster",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.openMasterJson",
+          "when": "false"
+        },
+        {
+          "command": "markdownStudio.mastersRefresh",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -490,6 +565,65 @@
           "command": "betterMarkdown.toggleZen",
           "when": "webviewId == 'betterMarkdown.editor'",
           "group": "3_view@1"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "markdownStudio.importTemplate",
+          "when": "view == markdownStudio.masters",
+          "group": "navigation@1"
+        },
+        {
+          "command": "markdownStudio.newMaster",
+          "when": "view == markdownStudio.masters",
+          "group": "navigation@2"
+        },
+        {
+          "command": "markdownStudio.mastersRefresh",
+          "when": "view == markdownStudio.masters",
+          "group": "navigation@3"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "markdownStudio.editMaster",
+          "when": "view == markdownStudio.masters && viewItem =~ /^msMaster/",
+          "group": "inline@1"
+        },
+        {
+          "command": "markdownStudio.applyMaster",
+          "when": "view == markdownStudio.masters && viewItem =~ /^msMaster/",
+          "group": "inline@2"
+        },
+        {
+          "command": "markdownStudio.editMaster",
+          "when": "view == markdownStudio.masters && viewItem =~ /^msMaster/",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "markdownStudio.applyMaster",
+          "when": "view == markdownStudio.masters && viewItem =~ /^msMaster/",
+          "group": "1_edit@2"
+        },
+        {
+          "command": "markdownStudio.duplicateMaster",
+          "when": "view == markdownStudio.masters && viewItem =~ /^msMaster/",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "markdownStudio.renameMaster",
+          "when": "view == markdownStudio.masters && viewItem == msMaster",
+          "group": "2_manage@2"
+        },
+        {
+          "command": "markdownStudio.openMasterJson",
+          "when": "view == markdownStudio.masters && viewItem == msMaster",
+          "group": "2_manage@3"
+        },
+        {
+          "command": "markdownStudio.deleteMaster",
+          "when": "view == markdownStudio.masters && viewItem == msMaster",
+          "group": "3_danger@1"
         }
       ]
     },
@@ -1011,11 +1145,24 @@
         "path": "./media/markdown-embed-snippets.json"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "corporateMasters",
+          "title": "%masters.container%",
+          "icon": "media/masters.svg"
+        }
+      ]
+    },
     "views": {
-      "explorer": [
+      "corporateMasters": [
         {
           "id": "corporateSlides.masters",
-          "name": "Masques corporate"
+          "name": "%masters.slides%"
+        },
+        {
+          "id": "markdownStudio.masters",
+          "name": "%s260.document.masters%"
         }
       ]
     },
@@ -1023,6 +1170,10 @@
       {
         "view": "corporateSlides.masters",
         "contents": "%s130.no.template.imported.yet.import%"
+      },
+      {
+        "view": "markdownStudio.masters",
+        "contents": "%s269.no.document.master%"
       }
     ]
   },

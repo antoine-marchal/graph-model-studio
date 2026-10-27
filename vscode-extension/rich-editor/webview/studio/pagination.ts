@@ -79,6 +79,8 @@ function staticDecorations(state: EditorState, g: Geometry, paged: boolean): Dec
     const page = g.pages[Math.min(sec[i], g.pages.length - 1)];
     decos.push(Decoration.node(pos, pos + node.nodeSize, { style: `margin-left:${pageLeft(g, page) + px(page.margins.left)}px;width:${px(contentWidth(page))}px`, "data-ms-section": String(sec[i]) }));
   });
+  // Continuous view shows objects in the text flow: no wrap areas.
+  if (!paged) return decos;
   tops.forEach(({ node }, i) => {
     if (node.type.name !== "msObject") return;
     const d = objectOf(String(node.attrs.id));
@@ -97,9 +99,11 @@ function staticDecorations(state: EditorState, g: Geometry, paged: boolean): Dec
     const page = g.pages[Math.min(sec[a], g.pages.length - 1)];
     const col = px(contentWidth(page));
     const x = Math.max(0, px(d.box.x));
+    // An object above its anchor's top (dropped over the end of a paragraph continued from the
+    // previous page) reserves only its part below the anchor.
     const y = Math.max(0, px(d.box.y));
     const w = px(d.box.width);
-    const h = px(d.box.height);
+    const h = Math.max(0, px(d.box.height) + Math.min(0, px(d.box.y)));
     const dist = 6;
     const wrap = d.wrap ?? "square";
     let css: string;
@@ -328,8 +332,10 @@ class Paginator {
       const h = Math.max(0, Math.round((desired - (padTop + b.at + shift)) * 100) / 100);
       const headerH = b.repeatHeader?.height ?? 0;
       shift += h + headerH;
-      const key = `sp-${b.page}-${b.kind}-${b.pos}-${h}`;
-      keys.push(key);
+      // The widget key leaves the position out: typing before a break only shifts it (mapped), so
+      // the spacer — and the node view holding it — is not redrawn. The pass key keeps it.
+      const key = `sp-${b.page}-${b.kind}-${h}`;
+      keys.push(`${key}@${b.pos}`);
       if (b.kind === "row") {
         const tableDom = tops[b.block]?.dom;
         const headers = [...(tableDom?.querySelectorAll<HTMLElement>("tr") ?? [])].filter((tr) => !tr.dataset.msSpacer && !tr.classList.contains("ms-repeat-header")).slice(0, b.repeatHeader?.rows ?? 0);
