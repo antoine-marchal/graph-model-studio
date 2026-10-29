@@ -6,6 +6,7 @@
  * master files (`.markdown-studio/masters/<id>/master.json`). Geometry is in pt (units.ts).
  */
 import { PAGE_SIZES, parseLength, type PageSizeName } from "./units";
+import type { CellLook } from "./tableLook";
 
 export const STUDIO_VERSION = 2;
 
@@ -237,6 +238,12 @@ export interface SectionProps {
 export interface BlockProps extends ParagraphProps {
   id?: string;
   style?: string;
+  /** Table column widths / row heights (px, null = auto). */
+  cols?: (number | null)[];
+  rows?: (number | null)[];
+  /** Table look: the whole table, and cell ranges (`"A1:D1"`) applied in order (tableLook.ts). */
+  table?: CellLook;
+  cells?: Record<string, CellLook>;
 }
 
 export interface StudioMeta {

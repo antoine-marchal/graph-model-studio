@@ -225,12 +225,6 @@ function HomeTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof deriv
       <Group label={tr("Styles", "Styles")}>
         <StyleGallery editor={editor} current={d.heading ? `Heading${d.heading}` : d.props.style ?? (d.topType === "blockquote" ? "Quote" : "Normal")} disabled={off} />
       </Group>
-      <Group label={tr("Modification", "Editing")}>
-        <Col>
-          <Small icon="selectAll" label={tr("Tout sélectionner", "Select all")} onClick={() => editor.chain().focus().selectAll().run()} />
-          <Small icon="history" label={tr("Rechercher", "Find")} onClick={() => window.dispatchEvent(new CustomEvent("ms:find"))} />
-        </Col>
-      </Group>
     </>
   );
 }
@@ -372,9 +366,7 @@ function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
 
 function LayoutTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
   const sections = useStudio((s) => s.sections);
-  const meta = useStudio((s) => s.meta);
   const masterEdit = useStudio((s) => s.masterEdit);
-  const selection = useStudio((s) => s.selection);
   const section = d.section;
   const idx = section ? sections.length - 1 : 0;
   const page = sections[Math.min(idx, sections.length - 1)]?.page;
@@ -424,32 +416,6 @@ function LayoutTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
             </>
           )}
         </Menu>
-      </Group>
-      {!masterEdit && (
-        <Group label={tr("Paragraphe", "Paragraph")}>
-          <div className="rb-col ms-rb-fields">
-            <span className="rb-note">{tr("Retrait", "Indent")}</span>
-            <CmField className="compact-w" label={tr("Gauche", "Left")} pt={d.props.indentLeft ?? 0} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ indentLeft: v || undefined })} />
-            <CmField className="compact-w" label={tr("Droite", "Right")} pt={d.props.indentRight ?? 0} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ indentRight: v || undefined })} />
-          </div>
-          <div className="rb-col ms-rb-fields">
-            <span className="rb-note">{tr("Espacement", "Spacing")}</span>
-            <NumField className="compact-w" label={tr("Avant", "Before")} unit="pt" step={1} min={0} value={d.props.spaceBefore} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ spaceBefore: v })} />
-            <NumField className="compact-w" label={tr("Après", "After")} unit="pt" step={1} min={0} value={d.props.spaceAfter} disabled={off || !d.canProps} onCommit={(v) => setBlockProps({ spaceAfter: v })} />
-          </div>
-        </Group>
-      )}
-      {!masterEdit && (
-        <Group label={tr("Enchaînements", "Line and page breaks")}>
-          <Col>
-            <Small icon="keepNext" label={tr("Paragraphes solidaires", "Keep with next")} active={!!d.props.keepWithNext} disabled={off || !d.canProps} onClick={() => setBlockProps({ keepWithNext: d.props.keepWithNext ? undefined : true })} />
-            <Small icon="keepTogether" label={tr("Lignes solidaires", "Keep lines together")} active={!!d.props.keepTogether} disabled={off || !d.canProps} onClick={() => setBlockProps({ keepTogether: d.props.keepTogether ? undefined : true })} />
-            <Small icon="pageBreak" label={tr("Saut de page avant", "Page break before")} active={!!d.props.pageBreakBefore} disabled={off || !d.canProps} onClick={() => setBlockProps({ pageBreakBefore: d.props.pageBreakBefore ? undefined : true })} />
-          </Col>
-        </Group>
-      )}
-      <Group label={tr("Organiser", "Arrange")}>
-        <ArrangeTools editor={editor} d={d} ro={ro} selection={selection} />
       </Group>
     </>
   );
@@ -587,7 +553,7 @@ function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnTy
         </Col>
       </Group>
       <Group label={tr("Document", "Document")}>
-        <Big icon="field" label={tr("Champs", "Fields")} onClick={() => studio.set({ pane: "format", rightOpen: true })} title={tr("Titre, client, version… : panneau Format, sans sélection", "Title, client, version…: Format panel, nothing selected")} />
+        <Big icon="field" label={tr("Champs", "Fields")} onClick={() => studio.set({ pane: "document", rightOpen: true })} title={tr("Titre, client, version… : panneau Document", "Title, client, version…: Document panel")} />
       </Group>
     </>
   );
@@ -628,7 +594,6 @@ function ReviewTab() {
 }
 
 function ViewTab() {
-  const pageView = useStudio((s) => s.pageView);
   const showRulers = useStudio((s) => s.showRulers);
   const showBoundaries = useStudio((s) => s.showBoundaries);
   const showBlockHandles = useStudio((s) => s.showBlockHandles);
@@ -638,10 +603,6 @@ function ViewTab() {
   const zoom = useStudio((s) => s.zoom);
   return (
     <>
-      <Group label={tr("Affichages", "Views")}>
-        <Big icon="pages" label={tr("Page", "Print layout")} active={pageView} onClick={() => studio.set({ pageView: true })} />
-        <Big icon="continuous" label={tr("Continu", "Continuous")} active={!pageView} onClick={() => studio.set({ pageView: false })} />
-      </Group>
       <Group label={tr("Afficher", "Show")}>
         <Col>
           <Small icon="ruler" label={tr("Règles", "Rulers")} active={showRulers} onClick={() => studio.set({ showRulers: !showRulers })} />
@@ -741,7 +702,7 @@ function ObjectFormatTab({ editor, d, ro }: { editor: Editor; d: ReturnType<type
   const selection = useStudio((s) => s.selection);
   const meta = useStudio((s) => s.meta);
   const o = selection[0] ? meta?.objects?.[selection[0]] : undefined;
-  if (!o) return null;
+  if (!o) return <Group label={tr("Organiser", "Arrange")}><ArrangeTools editor={editor} d={d} ro={ro} selection={selection} /></Group>;
   const id = selection[0];
   const set = (patch: Record<string, unknown>) => updateObjects({ [id]: patch });
   return (
@@ -779,7 +740,9 @@ export function Ribbon({ editor, readonly, onSource }: { editor: Editor; readonl
   const masterEdit = useStudio((s) => s.masterEdit);
   const masterSel = useStudio((s) => s.masterSel);
   const d = useEditorDerived(editor, derive)!;
-  const contextual = masterEdit ? masterSel.length === 1 : selection.length > 0;
+  // A selected object, or a selected block (picture, diagram, table…): its contextual Format tab.
+  const blockSelected = !!d.node && !["msPageBreak", "msSection", "paragraph", "heading", "bulletList", "orderedList", "taskList", "blockquote"].includes(d.node);
+  const contextual = masterEdit ? masterSel.length === 1 : selection.length > 0 || blockSelected;
   const active: RibbonTab = tab === "format" && !contextual ? "home" : tab;
   const tabs: { id: RibbonTab; label: string }[] = [
     { id: "home", label: tr("Accueil", "Home") },
@@ -803,7 +766,7 @@ export function Ribbon({ editor, readonly, onSource }: { editor: Editor; readonl
         ))}
         {contextual && (
           <button type="button" role="tab" aria-selected={active === "format"} className={`tab tab-contextual${active === "format" ? " is-active" : ""}`} data-testid="tab-format" onClick={() => set({ tab: "format" })} onDoubleClick={() => set({ ribbonCollapsed: !collapsed })}>
-            {masterEdit ? tr("Format du masque", "Master format") : tr("Format de l’objet", "Object format")}
+            {masterEdit ? tr("Format du masque", "Master format") : selection.length ? tr("Format de l’objet", "Object format") : tr("Format", "Format")}
           </button>
         )}
         <span className="grow" />

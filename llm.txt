@@ -282,6 +282,11 @@ between participants, drawn top-to-bottom in declaration order:
 `a -> b : message "label"` (solid, filled arrow), `: asyncMessage` (solid, open
 arrow), `: replyMessage` (dashed). The frame draws lifelines and ordered arrows
 automatically. Use one `seqGraph` per diagram.
+Activation bars are automatic: a `message` opens one on its receiver, the
+receiver's `replyMessage` closes it (asyncMessage opens none); turn them off with
+`activations "off"` on the `seqGraph`, or draw explicit `activityBar`s nested in
+a participant. `autonumber "on"` numbers the messages. Long labels wrap between
+their lifelines; resizing the frame spreads the columns and rows.
 
 ### Mindmap
 `mindmapGraph` (the movable frame) with a single `mindmapRoot` nested inside,

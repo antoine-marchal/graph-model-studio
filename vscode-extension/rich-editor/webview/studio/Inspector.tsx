@@ -18,6 +18,7 @@ import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
 import { masterAction } from "./bridge";
 import { AUTO_FIELDS, AUTO_LABELS, TEXT_PRESETS, isAutoField, placeholderKey, placeholderPrompt } from "../../document/placeholders";
 import { useEditorDerived } from "./hooks";
+import { TableLookSection } from "./TableLook";
 import { revealSource } from "./commands";
 import { GmcOptions } from "../extensions/GmcBlock";
 import { gmcViewNames } from "../conversion-utils";
@@ -28,6 +29,7 @@ const PANES: { id: Pane; icon: IconName; label: string }[] = [
   { id: "format", icon: "brush", label: tr("Format", "Format") },
   { id: "styles", icon: "styles", label: tr("Styles", "Styles") },
   { id: "layers", icon: "layers", label: tr("Calques", "Layers") },
+  { id: "document", icon: "page", label: tr("Document", "Document") },
   { id: "check", icon: "preflight", label: tr("Contrôle", "Check") },
 ];
 
@@ -38,14 +40,15 @@ export function Inspector({ editor, readonly }: { editor: Editor; readonly: bool
     <aside className="inspector" aria-label={tr("Inspecteur", "Inspector")} data-testid="inspector">
       <div className="insp-tabs" role="tablist" aria-label={tr("Panneau", "Panel")}>
         {PANES.map((t) => (
-          <button key={t.id} type="button" role="tab" aria-selected={pane === t.id} className={`insp-tab${pane === t.id ? " is-active" : ""}`} onClick={() => studio.set({ pane: t.id })} data-testid={`pane-${t.id}`}>
-            <Icon name={t.icon} size={14} /> {t.label}
+          <button key={t.id} type="button" role="tab" aria-selected={pane === t.id} className={`insp-tab${pane === t.id ? " is-active" : ""}`} onClick={() => studio.set({ pane: t.id })} data-testid={`pane-${t.id}`} title={t.label} aria-label={t.label}>
+            <Icon name={t.icon} size={14} />{pane === t.id && <span>{t.label}</span>}
           </button>
         ))}
       </div>
       {pane === "format" && (masterEdit ? <MasterFormat master={masterEdit} /> : <FormatPane editor={editor} readonly={readonly} />)}
       {pane === "styles" && <StylesPane editor={editor} readonly={readonly} />}
       {pane === "layers" && <LayersPane />}
+      {pane === "document" && <DocumentPane editor={editor} readonly={readonly} />}
       {pane === "check" && <CheckPane />}
     </aside>
   );
@@ -201,34 +204,38 @@ function caretOf(editor: Editor): Caret {
   };
 }
 
+const TEXT_BLOCKS = new Set(["paragraph", "heading", "bulletList", "orderedList", "taskList", "blockquote"]);
+
 const BLOCK_KIND: Record<string, string> = {
   paragraph: tr("Paragraphe", "Paragraph"), heading: tr("Titre", "Heading"), table: tr("Tableau", "Table"), image: "Image", codeBlock: tr("Code", "Code"), gmcBlock: tr("Diagramme GMC", "GMC diagram"),
   mermaidBlock: "Mermaid", mathBlock: tr("Équation", "Equation"), bulletList: tr("Liste à puces", "Bulleted list"), orderedList: tr("Liste numérotée", "Numbered list"), taskList: tr("Liste de tâches", "Checklist"),
   blockquote: tr("Citation", "Quote"), directiveBlock: tr("Contenu intégré", "Embedded content"), deckBlock: tr("Présentation", "Slide deck"), msPageBreak: tr("Saut de page", "Page break"), msSection: tr("Saut de section", "Section break"), horizontalRule: tr("Trait", "Rule"),
 };
 
+/**
+ * The Format pane shows one context, the selection's (Slides Studio): text → its paragraph; a
+ * table → table layout and design; a selected picture / diagram → its position and options.
+ * Character formatting lives in Home › Font, page setup in the Document pane.
+ */
 function BlockFormat({ editor, readonly }: { editor: Editor; readonly: boolean }) {
   const c = useEditorDerived(editor, caretOf);
   const sections = useStudio((s) => s.sections);
-  const meta = useStudio((s) => s.meta);
-  const entries = useStudio((s) => s.entries);
   if (!c) return null;
   const p = c.props;
   const ro = readonly || !c.canProps;
-  const sec = sections[c.sectionIndex];
-  const page = sec?.page;
-  const sectionSet = (patch: Record<string, unknown>) => {
-    const live = currentSectionBreak(editor);
-    if (live) setSectionProps(live.pos, { ...live.props, ...patch });
-    else setPageSetup(patch as never);
-  };
-  const margins = (k: string) => (v: number) => sectionSet({ margins: { ...(c.section?.props.margins ?? meta?.page?.margins), [k]: v } });
-  const floatable = !["msPageBreak", "msSection", "msObject", "doc"].includes(c.name);
+  const table = c.name === "table";
+  // A selected text block (block frame click) keeps its paragraph settings; pictures and diagrams get position.
+  const textual = TEXT_BLOCKS.has(c.name);
+  const text = c.canProps && !table && (textual || !c.selected);
+  const floatable = c.selected && !textual && !["msPageBreak", "msSection", "msObject", "doc"].includes(c.name);
   const line = () => {
     const node = editor.state.doc.nodeAt(c.pos);
     const l = node && getSync()?.lineOf(node);
     if (l) revealSource(l);
   };
+  const toggle = (key: "keepWithNext" | "keepTogether" | "pageBreakBefore", label: string) => (
+    <label className="check"><input type="checkbox" checked={!!p[key]} disabled={ro} onChange={(e) => setBlockProps({ [key]: e.target.checked || undefined })} /> {label}</label>
+  );
   return (
     <>
       <div className="insp-head">
@@ -257,44 +264,61 @@ function BlockFormat({ editor, readonly }: { editor: Editor; readonly: boolean }
           </div>
         </Section>
       )}
-      {c.canProps && (
-        <>
-          <Section title={tr("Paragraphe", "Paragraph")}>
-            <Seg label={tr("Alignement", "Alignment")} value={p.align ?? "left"} disabled={ro} onChange={(v) => setBlockProps({ align: v })} options={[{ id: "left", icon: "alignLeft", title: tr("Gauche", "Left") }, { id: "center", icon: "alignCenter", title: tr("Centre", "Center") }, { id: "right", icon: "alignRight", title: tr("Droite", "Right") }, { id: "justify", icon: "alignJustify", title: tr("Justifié", "Justify") }]} />
+      {table && <TableLookSection editor={editor} readonly={readonly} align={p.align} />}
+      {c.name === "msSection" && (
+        <p className="hint insp-hint">
+          {tr("Mise en page de la section : panneau ", "Section page setup: ")}
+          <button type="button" className="link-btn" onClick={() => studio.set({ pane: "document" })}>{tr("Document", "Document panel")}</button>.
+        </p>
+      )}
+      {text && (
+        <Section title={tr("Paragraphe", "Paragraph")}>
+          <div className="grid2">
+            <NumField label={tr("Avant", "Before")} unit="pt" step={2} min={0} value={p.spaceBefore} disabled={ro} onCommit={(v) => setBlockProps({ spaceBefore: v })} />
+            <NumField label={tr("Après", "After")} unit="pt" step={2} min={0} value={p.spaceAfter} disabled={ro} onCommit={(v) => setBlockProps({ spaceAfter: v })} />
+            <CmField label={tr("Retrait", "Indent")} pt={p.indentLeft ?? 0} min={0} disabled={ro} onCommit={(v) => setBlockProps({ indentLeft: v || undefined })} />
+            <NumField label={tr("Interl.", "Line")} unit="×" step={0.05} min={0.5} value={p.lineSpacing} disabled={ro} onCommit={(v) => setBlockProps({ lineSpacing: v })} />
+          </div>
+          <details className="insp-more">
+            <summary>{tr("Plus d’options", "More options")}</summary>
             <div className="grid2">
-              <CmField label={tr("Gauche", "Left")} pt={p.indentLeft ?? 0} min={0} disabled={ro} onCommit={(v) => setBlockProps({ indentLeft: v || undefined })} />
               <CmField label={tr("Droite", "Right")} pt={p.indentRight ?? 0} min={0} disabled={ro} onCommit={(v) => setBlockProps({ indentRight: v || undefined })} />
               <CmField label={tr("1re ligne", "First")} pt={p.firstLine ?? 0} disabled={ro} onCommit={(v) => setBlockProps({ firstLine: v || undefined })} />
-              <NumField label={tr("Interl.", "Line")} unit="×" step={0.05} min={0.5} value={p.lineSpacing} disabled={ro} onCommit={(v) => setBlockProps({ lineSpacing: v })} />
-              <NumField label={tr("Avant", "Before")} unit="pt" step={2} min={0} value={p.spaceBefore} disabled={ro} onCommit={(v) => setBlockProps({ spaceBefore: v })} />
-              <NumField label={tr("Après", "After")} unit="pt" step={2} min={0} value={p.spaceAfter} disabled={ro} onCommit={(v) => setBlockProps({ spaceAfter: v })} />
             </div>
-          </Section>
-          <Section title={tr("Enchaînements", "Line and page breaks")}>
-            <label className="check"><input type="checkbox" checked={!!p.keepWithNext} disabled={ro} onChange={(e) => setBlockProps({ keepWithNext: e.target.checked || undefined })} /> {tr("Paragraphes solidaires", "Keep with next")}</label>
-            <label className="check"><input type="checkbox" checked={!!p.keepTogether} disabled={ro} onChange={(e) => setBlockProps({ keepTogether: e.target.checked || undefined })} /> {tr("Lignes solidaires", "Keep lines together")}</label>
-            <label className="check"><input type="checkbox" checked={!!p.pageBreakBefore} disabled={ro} onChange={(e) => setBlockProps({ pageBreakBefore: e.target.checked || undefined })} /> {tr("Saut de page avant", "Page break before")}</label>
+            {toggle("keepWithNext", tr("Paragraphes solidaires", "Keep with next"))}
+            {toggle("keepTogether", tr("Lignes solidaires", "Keep lines together"))}
+            {toggle("pageBreakBefore", tr("Saut de page avant", "Page break before"))}
             <label className="check"><input type="checkbox" checked={p.widowControl !== false} disabled={ro} onChange={(e) => setBlockProps({ widowControl: e.target.checked ? undefined : false })} /> {tr("Éviter veuves et orphelines", "Widow / orphan control")}</label>
-          </Section>
-          <Section title={tr("Caractère", "Character")}>
-            <div className="grid2">
-              <NumField label={tr("Taille", "Size")} unit="pt" step={1} min={1} value={c.css["font-size"] ? parseFloat(c.css["font-size"]) : undefined} disabled={readonly} onCommit={(v) => setSpanStyle(editor, { "font-size": v ? `${v}pt` : null })} />
-            </div>
-            <ColorPicker label={tr("Couleur", "Color")} value={c.css.color?.replace("#", "") || undefined} onChange={(v) => setSpanStyle(editor, { color: v ? `#${hexOf(v) ?? v}` : null })} />
-            <ColorPicker label={tr("Surlignage", "Highlight")} value={c.css["background-color"]?.replace("#", "") || undefined} allowNone onChange={(v) => setSpanStyle(editor, { "background-color": v && v !== "none" ? `#${hexOf(v) ?? v}` : null })} />
-          </Section>
-          <Section title={tr("Signet", "Bookmark")}>
-            <input className="select" key={`${c.pos}:${p.id ?? ""}`} defaultValue={p.id ?? ""} disabled={ro} placeholder={tr("ex. annexe", "e.g. appendix")} aria-label={tr("Identifiant de signet", "Bookmark id")} onBlur={(e) => {
+            <input className="select" key={`${c.pos}:${p.id ?? ""}`} defaultValue={p.id ?? ""} disabled={ro} placeholder={tr("Signet (ex. annexe)", "Bookmark (e.g. appendix)")} aria-label={tr("Identifiant de signet", "Bookmark id")} onBlur={(e) => {
               const v = e.target.value.trim();
               if (v === (p.id ?? "")) return;
               if (v && !/^[A-Za-z][\w-]{0,63}$/.test(v)) return notify("warning", tr("Un identifiant commence par une lettre (lettres, chiffres, - et _).", "Ids start with a letter and use letters, digits, - and _."));
               setBlockProps({ id: v || undefined });
             }} />
-          </Section>
-        </>
+          </details>
+        </Section>
       )}
-      {/* A selected block shows its own settings only (as a selected element in Slides Studio). */}
-      {!c.selected && <><Section title={c.section ? tr(`Section ${c.sectionIndex + 1}`, `Section ${c.sectionIndex + 1}`) : tr("Mise en page", "Page setup")} aside={page && <span className="hint">{page.orientation === "landscape" ? tr("paysage", "landscape") : tr("portrait", "portrait")}</span>}>
+    </>
+  );
+}
+
+/** Document pane: master, page setup of the caret's section, document fields. */
+function DocumentPane({ editor, readonly }: { editor: Editor; readonly: boolean }) {
+  const c = useEditorDerived(editor, caretOf);
+  const sections = useStudio((s) => s.sections);
+  const meta = useStudio((s) => s.meta);
+  const entries = useStudio((s) => s.entries);
+  if (!c) return null;
+  const page = sections[c.sectionIndex]?.page;
+  const sectionSet = (patch: Record<string, unknown>) => {
+    const live = currentSectionBreak(editor);
+    if (live) setSectionProps(live.pos, { ...live.props, ...patch });
+    else setPageSetup(patch as never);
+  };
+  const margins = (k: string) => (v: number) => sectionSet({ margins: { ...(c.section?.props.margins ?? meta?.page?.margins), [k]: v } });
+  return (
+    <>
+      <Section title={c.section ? tr(`Section ${c.sectionIndex + 1}`, `Section ${c.sectionIndex + 1}`) : tr("Mise en page", "Page setup")} aside={page && <span className="hint">{page.orientation === "landscape" ? tr("paysage", "landscape") : tr("portrait", "portrait")}</span>}>
         <select className="select" aria-label={tr("Masque", "Master")} value={(c.section ? c.section.props.master : meta?.master) ?? ""} disabled={readonly} onChange={(e) => sectionSet({ master: e.target.value || undefined, ...(c.section ? { headers: e.target.value ? "master" : "link" } : {}) })}>
           <option value="">{c.section ? tr("Comme la section précédente", "Same as previous section") : tr("Aucun (par défaut)", "None (defaults)")}</option>
           {entries.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -321,7 +345,7 @@ function BlockFormat({ editor, readonly }: { editor: Editor; readonly: boolean }
       </Section>
       <Section title={tr("Champs du document", "Document fields")}>
         <FieldsEditor readonly={readonly} />
-      </Section></>}
+      </Section>
     </>
   );
 }

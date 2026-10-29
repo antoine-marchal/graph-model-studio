@@ -11,6 +11,7 @@ import { fenceMetaAttribute } from "./CodeBlockView";
 import { vscodeApi } from "../vscode-api";
 import { setImageOverride } from "./ImageView";
 import { GraphEditorModal } from "./GraphEditorModal";
+import { ResizeFrame } from "./ResizeFrame";
 
 /**
  * ```gmc / ```graphmodel fences rendered as Graph Model Studio diagrams.
@@ -184,7 +185,7 @@ export function GmcOptions({ meta, views, editable, onChange }: {
   );
 }
 
-function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
+function GmcBlockView({ node, editor, getPos, updateAttributes, selected }: any) {
   const source = node.textContent as string;
   const meta = (node.attrs.meta as string) || "";
   const options = parseFenceOptions(meta);
@@ -192,6 +193,8 @@ function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
   const [sourceOpen, setSourceOpen] = useState(!source.trim());
   const [error, setError] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
+  const [liveSize, setLiveSize] = useState<{ width: number; height: number } | null>(null);
+  const sized = Number(options.width) > 0;
 
   useEffect(() => {
     const host = previewRef.current;
@@ -346,7 +349,20 @@ function GmcBlockView({ node, editor, getPos, updateAttributes }: any) {
         ) : error ? (
           <div className="mermaid-block-error">{error}</div>
         ) : null}
-        <div ref={previewRef} className="gmc-block-rendered" hidden={!source.trim() || !!error} />
+        <ResizeFrame
+          active={!!selected && editor.isEditable && !!source.trim() && !error}
+          minWidth={160}
+          className={"gmc-resize" + (sized ? " is-sized" : "")}
+          style={liveSize ? { width: liveSize.width, height: liveSize.height } : sized ? { width: Number(options.width) } : undefined}
+          onResize={setLiveSize}
+          // The diagram is laid out again for the new box (fence width= / height=, px).
+          onCommit={(s) => {
+            setLiveSize(null);
+            updateAttributes({ meta: setFenceOption(setFenceOption(meta, "width", String(s.width)), "height", String(s.height)) });
+          }}
+        >
+          <div ref={previewRef} className="gmc-block-rendered" hidden={!source.trim() || !!error} />
+        </ResizeFrame>
       </div>
       {modalOpen && (
         <GraphEditorModal

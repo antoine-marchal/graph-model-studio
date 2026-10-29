@@ -10,6 +10,12 @@ import { resolveSections, type ResolvedSection } from "../../document/masters";
 import { setGroupMeta, withGroupTexts } from "../../document/groups";
 import type { ExportReport } from "../../src/docx/compile";
 
+/**
+ * `.paper` documents open in the paginated document studio (always print layout); `.md` files keep
+ * the continuous editor. The host marks the webview body (`data-studio="paper"`).
+ */
+export const PAPER = typeof document !== "undefined" && document.body?.dataset.studio === "paper";
+
 export interface MasterEntry {
   id: string;
   name: string;
@@ -51,7 +57,7 @@ export interface Notice {
 }
 
 export type RibbonTab = "home" | "insert" | "layout" | "references" | "design" | "review" | "view" | "format";
-export type Pane = "format" | "styles" | "layers" | "check";
+export type Pane = "format" | "styles" | "layers" | "document" | "check";
 
 /** What a right-click hit (context menu target). */
 export type MenuTarget =
@@ -130,7 +136,7 @@ let state: StudioState = {
   selection: [],
   groupScope: null,
   zoom: 1,
-  pageView: true,
+  pageView: PAPER,
   showHidden: false,
   showGuides: true,
   showRulers: true,

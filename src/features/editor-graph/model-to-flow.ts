@@ -221,7 +221,10 @@ export function computeNestedLayout(
       const kids = hostedChildren(el.id)
       let layout: ChartLayout
       if (el.type === 'seqGraph') {
-        layout = layoutSequenceGraph(kids, relations, view.nodeSizes ?? {})
+        // A resized frame is filled (columns / rows spread); `activations off` drops the automatic bars.
+        layout = layoutSequenceGraph(kids, relations, view.nodeSizes ?? {}, (view.nodeSizes ?? {})[el.id], {
+          activations: el.properties?.['activations'] !== 'off',
+        })
         seqMessagesByHost[el.id] = layout.messages
         for (const rid of layout.suppressed) suppressedRelations.add(rid)
       } else if (el.type === 'gitGraph') {
@@ -1074,7 +1077,9 @@ export function modelToFlow(
   // sequence messages: straight edges between the lifeline points, keyed by the
   // relation id so selection/deletion still hit the model
   for (const [hostId, msgs] of Object.entries(seqMessagesByHost)) {
-    for (const msg of msgs) {
+    // `autonumber on` numbers the messages in order (UML / Mermaid).
+    const numbered = ['on', 'true', 'yes'].includes(String(model.elements[hostId]?.properties?.['autonumber'] ?? '').toLowerCase())
+    for (const [order, msg] of msgs.entries()) {
       const rel = model.relations[msg.relId]
       if (!rel) continue
       const rdef = notationRegistry.getRelationDef(rel.type)
@@ -1086,10 +1091,11 @@ export function modelToFlow(
         target: `__seqpt_${msg.relId}_t`,
         type: 'floating',
         data: {
-          label: rel.label,
+          label: numbered ? `${order + 1}. ${rel.label ?? ''}`.trim() : rel.label,
           selectedStroke: relationColors?.secondary,
-          chartRelation: msg.selfLoop ? 'sequenceLoop' : undefined,
+          chartRelation: msg.selfLoop ? 'sequenceLoop' : 'sequence',
           sequenceHostId: hostId,
+          sequenceLabelWidth: msg.labelWidth,
         },
         markerEnd: rdef?.markerEnd ?? 'gms-arrow-filled',
         markerStart: rdef?.markerStart,

@@ -19,6 +19,8 @@ import { ptToEmu, ptToHalfPt, ptToTwip, ptToDocxPx, pxToPt } from "../../documen
 import { contentWidth, type BlockProps, type ObjectDescriptor, type ParagraphProps, type RunProps, type StoryDef, type Theme } from "../../document/schema";
 import { groupParts } from "../../../slides-studio/packages/core/src/groups";
 import { imageSize } from "./imageSize";
+import { attachImageWidths, resolveImageWidth } from "../../document/imageSize";
+import { resolveTableLook, type Border } from "../../document/tableLook";
 
 export interface ReportItem {
   kind: string;
@@ -468,34 +470,47 @@ async function table(node: any, ctx: Ctx, env: BlockEnv): Promise<d.Table> {
   const border = { style: d.BorderStyle.SINGLE, size: Math.max(2, Math.round((style.borderWidth ?? 0.5) * 8)), color: (style.borderColor ?? "BFBFBF").replace("#", "") };
   const width = contentWidth(ctx.section.page);
   const colCount = Math.max(...node.children.map((r: any) => r.children.length));
-  const pxWidths = (node.children[0]?.children ?? []).map((c: any) => Number(String(c.data?.hProperties?.colwidth ?? "").split(",")[0]) || 0);
+  // Column widths: the table group's `blocks.<id>.cols` (px), else cell colwidth from the HTML pipeline.
+  const pxWidths = (node.children[0]?.children ?? []).map((c: any, i: number) => Number(node.data?.msBlock?.cols?.[i]) || Number(String(c.data?.hProperties?.colwidth ?? "").split(",")[0]) || 0);
   const fixed = pxWidths.reduce((a: number, b: number) => a + b, 0);
   const columnWidths = Array.from({ length: colCount }, (_, c) => (fixed ? ptToTwip((pxToPt(pxWidths[c] || fixed / colCount) / pxToPt(fixed)) * width) : ptToTwip(width / colCount)));
+  // The table look (`blocks.<id>.table` / `cells`) overrides the table style per cell.
+  const look = resolveTableLook(node.children.length, colCount, node.data?.msBlock?.table, node.data?.msBlock?.cells);
   const rows: d.TableRow[] = [];
   for (const [r, row] of node.children.entries()) {
     const header = r === 0;
     const cells: d.TableCell[] = [];
     for (const [c, cell] of row.children.entries()) {
       const align = node.align?.[c];
-      const runs = await inlines(cell.children, ctx, header ? { bold: true, color: style.headerColor } : {});
+      const own = look?.[r]?.[c];
+      const runEnv: RunEnv = { ...(header ? { bold: true, color: style.headerColor } : {}), ...(own?.color ? { color: own.color.replace("#", "") } : {}), ...(own?.bold !== undefined ? { bold: own.bold } : {}) };
+      const runs = await inlines(cell.children, ctx, runEnv);
+      const fill = own?.fill && own.fill !== "none" ? own.fill : own?.fill === "none" ? undefined : header ? style.headerFill : undefined;
+      const sides = own && Object.fromEntries(((["top", "right", "bottom", "left"] as const).filter((s) => own[s]).map((s) => [s, docxBorder(own[s]!)])));
       cells.push(new d.TableCell({
         width: { size: columnWidths[c] ?? columnWidths[0], type: d.WidthType.DXA },
         margins: { top: ptToTwip(style.cellPadding ?? 4), bottom: ptToTwip(style.cellPadding ?? 4), left: ptToTwip(style.cellPadding ?? 4), right: ptToTwip(style.cellPadding ?? 4) },
-        ...(header && style.headerFill ? { shading: { type: d.ShadingType.CLEAR, fill: style.headerFill.replace("#", ""), color: "auto" } } : {}),
+        ...(fill ? { shading: { type: d.ShadingType.CLEAR, fill: fill.replace("#", ""), color: "auto" } } : {}),
+        ...(sides && Object.keys(sides).length ? { borders: sides } : {}),
         children: [new d.Paragraph({ style: "Normal", spacing: { after: 0 }, ...(align ? { alignment: ALIGN[align] } : {}), children: runs })],
       }));
     }
     rows.push(new d.TableRow({ tableHeader: header, cantSplit: true, children: cells }));
   }
   count(ctx, "tables");
+  // the table group's alignment (Inspector › Table), else an enclosing <div align>
+  const tableAlign = node.data?.msBlock?.align ?? env.align;
   return new d.Table({
     rows,
     columnWidths,
     width: { size: columnWidths.reduce((a, b) => a + b, 0), type: d.WidthType.DXA },
     borders: { top: border, bottom: border, left: border, right: border, insideHorizontal: border, insideVertical: border },
-    ...(env.align === "center" ? { alignment: d.AlignmentType.CENTER } : {}),
+    ...(tableAlign === "center" ? { alignment: d.AlignmentType.CENTER } : tableAlign === "right" ? { alignment: d.AlignmentType.RIGHT } : {}),
   });
 }
+
+const BORDER_STYLE = { solid: d.BorderStyle.SINGLE, dashed: d.BorderStyle.DASHED, dotted: d.BorderStyle.DOTTED, double: d.BorderStyle.DOUBLE, none: d.BorderStyle.NONE } as const;
+const docxBorder = (b: Border) => ({ style: BORDER_STYLE[b.style], size: b.style === "none" ? 0 : Math.max(2, Math.round(b.width * 8)), color: b.color.replace("#", "") });
 
 /** Side-by-side Markdown column containers: a borderless one-row layout table (not Word section columns). */
 async function columns(node: any, ctx: Ctx, env: BlockEnv): Promise<d.Table> {
@@ -523,7 +538,7 @@ interface RunEnv extends d.IRunOptions {
 async function inlines(nodes: any[], ctx: Ctx, env: RunEnv): Promise<Inline[]> {
   const out: Inline[] = [];
   const htmlStack: string[] = [];
-  for (const node of nodes) {
+  for (const node of attachImageWidths(nodes)) {
     const tagEnv: RunEnv = { ...env, ...(htmlStack.includes("sub") ? { subScript: true } : {}), ...(htmlStack.includes("sup") ? { superScript: true } : {}), ...(htmlStack.includes("u") ? { underline: {} } : {}) };
     switch (node.type) {
       case "text":
@@ -633,7 +648,11 @@ async function markdownImage(node: any, ctx: Ctx, maxWidth: number): Promise<Inl
     ctx.report.unsupported.push({ kind: "image", message: `Image ${url}: only PNG, JPEG, GIF and BMP are exported`, line: lineOf(node), lossy: true });
     return new d.TextRun({ text: alt ? `[${alt}]` : "[image]", italics: true });
   }
-  return imageRun(data, type, ctx, alt, maxWidth);
+  // `{width=60%}` after the image: percent of the text width (or px); the height keeps the ratio.
+  const width = resolveImageWidth(node.data?.width, maxWidth, pxToPt);
+  const size = width ? imageSize(data) : undefined;
+  const box = width && size ? { width, height: (width * size.height) / size.width } : undefined;
+  return imageRun(data, type, ctx, alt, maxWidth, undefined, box);
 }
 
 function imageType(data: Uint8Array): "png" | "jpg" | "gif" | "bmp" | undefined {

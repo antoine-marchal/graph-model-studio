@@ -348,7 +348,7 @@ export const GraphNodeComponent = memo(({ id, data, selected }: NodeProps) => {
             <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke={l.color ?? 'var(--edge)'} strokeWidth={l.width ?? 1.2} strokeDasharray={l.dash} strokeLinecap="round" />
           ))}
           {cf.paths?.map((p, i) => (
-            <path key={`p${i}`} d={p.d} fill="none" stroke={p.color ?? 'var(--edge)'} strokeWidth={p.width ?? 1.2} strokeDasharray={p.dash} strokeOpacity={p.opacity} strokeLinecap="round" strokeLinejoin="round" />
+            <path key={`p${i}`} d={p.d} fill={p.fill ?? 'none'} stroke={p.color ?? 'var(--edge)'} strokeWidth={p.width ?? 1.2} strokeDasharray={p.dash} strokeOpacity={p.opacity} strokeLinecap="round" strokeLinejoin="round" />
           ))}
           {cf.arrows?.map((arrow, i) => {
             const size = arrow.size ?? 9

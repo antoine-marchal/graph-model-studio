@@ -1,6 +1,7 @@
 import { groupSpans, groupStudioChildren, sanitizeSpanStyle, studioRemarkRehypeHandlers } from "../document/remarkStudio";
 import { commentJson } from "../document/markers";
 import { fenced, groupMeta, maskGroups, wrapGroups } from "../document/groups";
+import { attachImageWidths, imageWidthAttr } from "../document/imageSize";
 
 /**
  * Shared conversion utilities used by both the production pipeline
@@ -255,7 +256,10 @@ function groupMarks(children: any[]): any[] {
   return out;
 }
 
-/** Table geometry ↔ the hidden `<!-- ms-table:cols=120,,80;rows=,40 -->` comment. */
+/**
+ * Legacy table geometry comment `<!-- ms-table:cols=120,,80;rows=,40 -->`: read, never written (a
+ * `.paper` keeps column widths / row heights in its group's `blocks.<id>.cols` / `rows`).
+ */
 export function parseTableLayout(value: string): { cols: (number | null)[]; rows: (number | null)[] } | null {
   const m = /^<!--\s*ms-table:(\S+)\s*-->$/.exec(value.trim());
   if (!m) return null;
@@ -267,49 +271,28 @@ export function parseTableLayout(value: string): { cols: (number | null)[]; rows
   return out;
 }
 
-export function formatTableLayout(cols: (number | null)[], rows: (number | null)[]): string | null {
-  const list = (xs: (number | null)[]) => (xs.some((x) => x) ? xs.map((x) => x ?? "").join(",") : "");
-  const parts = [["cols", list(cols)], ["rows", list(rows)]].filter(([, v]) => v).map(([k, v]) => `${k}=${v}`);
-  return parts.length ? `<!-- ms-table:${parts.join(";")} -->` : null;
-}
-
-/** Apply a table's layout comment (next sibling) to its rows/cells; drop the comment. */
+/** Table geometry (group props `cols` / `rows`, or a legacy comment, dropped) → its rows / cells. */
 function attachTableLayouts(children: any[]): any[] {
   const out: any[] = [];
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     const next = children[i + 1];
-    const layout = child.type === "table" && next?.type === "html" ? parseTableLayout(String(next.value)) : null;
+    const legacy = child.type === "table" && next?.type === "html" ? parseTableLayout(String(next.value)) : null;
+    const props = child.type === "table" ? child.data?.msBlock : null;
+    const layout = legacy ?? (props?.cols || props?.rows ? { cols: props.cols ?? [], rows: props.rows ?? [] } : null);
     out.push(child);
     if (!layout) continue;
     // The comment belongs to the table's source span (block splitting).
-    if (child.position && next.position) child.position = { start: child.position.start, end: next.position.end };
+    if (legacy && child.position && next.position) child.position = { start: child.position.start, end: next.position.end };
     child.children.forEach((row: any, r: number) => {
       if (layout.rows[r]) row.data = { ...row.data, hProperties: { ...row.data?.hProperties, dataHeight: String(layout.rows[r]) } };
       row.children.forEach((cell: any, c: number) => {
         if (layout.cols[c]) cell.data = { ...cell.data, hProperties: { ...cell.data?.hProperties, colwidth: String(layout.cols[c]) } };
       });
     });
-    i++;
+    if (legacy) i++;
   }
   return out;
-}
-
-/** hast `<table>` → its layout comment, read from Tiptap's colwidth / data-height. */
-function tableLayoutComment(table: any): string | null {
-  const rows: any[] = [];
-  const collect = (n: any) => {
-    for (const c of n.children ?? []) {
-      if (c.type !== "element") continue;
-      if (c.tagName === "tr") rows.push(c);
-      else if (c.tagName !== "table") collect(c);
-    }
-  };
-  collect(table);
-  const cells = (rows[0]?.children ?? []).filter((c: any) => c.type === "element" && (c.tagName === "td" || c.tagName === "th"));
-  const cols = cells.map((c: any) => Number(String(c.properties?.colwidth ?? c.properties?.colWidth ?? "").split(",")[0]) || null);
-  const heights = rows.map((r) => Number(r.properties?.dataHeight) || null);
-  return formatTableLayout(cols, heights);
 }
 
 export function remarkGroupDirectives(this: any) {
@@ -328,7 +311,7 @@ export function remarkGroupDirectives(this: any) {
     if (!Array.isArray(node.children)) return;
     node.children.forEach(walk);
     node.children = PHRASING_PARENTS.has(node.type)
-      ? groupSpans(groupMarks(node.children))
+      ? groupSpans(groupMarks(attachImageWidths(node.children)))
       : groupStudioChildren(groupDirectiveChildren(attachTableLayouts(node.children)));
   };
   return (tree: any) => {
@@ -368,10 +351,6 @@ export function rehypeUnwrapDirectives() {
     const groupIds: (string | undefined)[] = node.children.map(blockGroupId);
     node.children = node.children.flatMap((child: any, idx: number) => {
       walk(child);
-      if (child.type === "element" && child.tagName === "table") {
-        const layout = tableLayoutComment(child);
-        return layout ? [child, rawHtmlPre(layout)] : [child];
-      }
       if (child.type === "element" && (child.properties?.dataType === "columns" || child.properties?.dataType === "column")) {
         const open = child.properties.dataType === "columns"
           ? COLUMNS_OPEN
@@ -510,6 +489,14 @@ export const rehypeRemarkHandlers: Record<string, (state: any, node: any) => any
     if (!style && !msStyle) return children;
     const attrs = `${msStyle ? ` data-ms-style="${msStyle}"` : ""}${style ? ` style="${style}"` : ""}`;
     return [{ type: "html", value: `<span${attrs}>` }, ...children, { type: "html", value: "</span>" }];
+  },
+  /** A resized picture keeps its width as a Pandoc attribute: `![alt](src){width=60%}`. */
+  img(state: any, node: any): any {
+    const p = node.properties ?? {};
+    const image = { type: "image", url: state.resolve(String(p.src || "") || null), title: p.title ? String(p.title) : null, alt: p.alt ? String(p.alt) : "" };
+    state.patch(node, image);
+    const width = imageWidthAttr(p.width);
+    return width ? [image, { type: "text", value: `{width=${width}}` }] : image;
   },
   mark(state: any, node: any): any {
     const color = node.properties?.dataColor;

@@ -32,7 +32,7 @@ import { DEFAULT_SETTINGS, SETTING_KEYS, THEMES, mergeSettings } from "../webvie
 import packageJson from "../../package.json";
 import { sourceBlockLines } from "../webview/sourceLines";
 import { splitBlocks, diffBlocks, similarity } from "../webview/renderedDiff";
-import { parseDirective, setDirectiveAttr, gmcEmbedDirective, gmcViewNames, setFenceOption, parseTableLayout, formatTableLayout, COLUMNS_OPEN, COLUMN_OPEN, columnOpen } from "../webview/conversion-utils";
+import { parseDirective, setDirectiveAttr, gmcEmbedDirective, gmcViewNames, setFenceOption, parseTableLayout, COLUMNS_OPEN, COLUMN_OPEN, columnOpen } from "../webview/conversion-utils";
 import { AlignBlock, Highlight, HASHTAG_RE, highlightBlockTr, setBlockAlignTr } from "../webview/extensions/BlockStyle";
 import { isMetaComment } from "../webview/extensions/RawHtmlBlock";
 import { getSchema } from "@tiptap/core";
@@ -1044,16 +1044,20 @@ async function run() {
     eq("fillTr: drag B1 left copies text", grid(right), "x|x;2|;|;|");
     eq("fillTr: diagonal target refused", String(fillTr(s0, 0, { left: 0, top: 0, right: 1, bottom: 1 }, { left: 0, top: 0, right: 2, bottom: 2 })), "null");
   }
-  eq("parseTableLayout / formatTableLayout",
-    JSON.stringify(parseTableLayout(formatTableLayout([120, null, 80], [null, 40])!)),
+  eq("parseTableLayout (legacy comment)",
+    JSON.stringify(parseTableLayout("<!-- ms-table:cols=120,,80;rows=,40 -->")),
     JSON.stringify({ cols: [120, null, 80], rows: [null, 40] }));
-  eq("formatTableLayout: nothing to save", String(formatTableLayout([null], [null])), "null");
   {
     const html = await mdToHtml("| a | b |\n| - | - |\n| 1 | 2 |\n\n<!-- ms-table:cols=120,;rows=,40 -->\n\nafter");
     assert("table layout comment applied to cells/rows and removed",
       /<th colwidth="120">a<\/th>/.test(html) && /<tr data-height="40">/.test(html) && !/ms-table/.test(html), html);
-    eq("table layout comment round-trips", await htmlToMd(html),
-      "| a   | b   |\n| --- | --- |\n| 1   | 2   |\n\n<!-- ms-table:cols=120,;rows=,40 -->\n\nafter\n");
+    eq("legacy table layout comment is not written back", await htmlToMd(html),
+      "| a   | b   |\n| --- | --- |\n| 1   | 2   |\n\nafter\n");
+  }
+  {
+    const html = await mdToHtml("![Chart](c.png){width=60%}\n\n![Logo](l.png)");
+    assert("image {width=…} attribute → img width", /<img[^>]*width="60%"/.test(html) && !/\{width/.test(html), html);
+    eq("image width round-trips as a Pandoc attribute", await htmlToMd(html), "![Chart](c.png){width=60%}\n\n![Logo](l.png)\n");
   }
   await roundtripCase("table column alignment survives",
     "| a | b | c |\n| :- | :-: | -: |\n| 1 | 2 | 3 |",

@@ -279,7 +279,7 @@ async function regressions(browser: any) {
     assert.equal(await fences(), 1, "/gmc inserts one diagram");
     await p.locator(".gmc-block-preview").first().click();
     await p.locator(".inspector").getByText("Edit diagram").waitFor();
-    await p.getByRole("tab", { name: "Layout" }).click();
+    await p.getByTestId("tab-format").click();
     const position = p.locator(".ribbon").getByRole("button", { name: "Position", exact: true });
     assert.equal(await position.isEnabled(), true, "Position available for a selected diagram");
     await position.click();
@@ -402,28 +402,172 @@ async function regressions(browser: any) {
     await p.close();
   }
 
-  // Continuous view shows every positioned object in line, in order, without overlap; back to
-  // pages, placements are unchanged and nothing was written.
+  // A `.md` opens in the continuous editor: no ribbon, no pages, no view switch; positioned objects
+  // show in line. Tables stay plain GFM: a legacy `<!-- ms-table -->` comment is dropped by the next
+  // edit and no `<!-- ms… -->` comment is written.
   {
     const doc = ["---", "markdownStudio:", "  version: 1", "  objects:",
       "    box1: { type: textbox, placement: anchored, box: { x: 200, y: 10, width: 150, height: 60 }, wrap: square }",
       "    stamp: { type: shape, shape: roundRect, placement: page, relativeTo: margin, box: { x: 300, y: 500, width: 120, height: 50 }, wrap: none }",
-      "---", "# Report", "", para(0), "", "::: box1", "Boxed", ":::", "", para(1), "", "::: stamp", "Stamp", ":::", "", para(2), ""].join("\n");
-    const { p } = await open(browser, doc, { width: 1500, height: 1000 });
-    const places = () => p.evaluate(() => [...document.querySelectorAll<HTMLElement>(".ms-object")].map((e) => `${e.dataset.id}@${e.style.left},${e.style.top}`).join("|"));
-    const paged = await places();
-    await p.getByTestId("tab-view").click();
-    await p.getByRole("button", { name: "Continuous" }).click();
-    await p.waitForTimeout(800);
+      "---", "# Report", "", para(0), "", "::: box1", "Boxed", ":::", "", para(1), "", "::: stamp", "Stamp", ":::", "", para(2), "",
+      "| a | b |", "| - | - |", "| 1 | 2 |", "", "<!-- ms-table:cols=120,80 -->", "", "Tail", ""].join("\n");
+    const { p, errors } = await open(browser, doc, { width: 1500, height: 1000, paper: false });
+    assert.equal(await p.locator("[data-testid=tab-view]").count(), 0, ".md: no ribbon");
+    assert.equal(await p.locator(".ms-paged, .ms-page").count(), 0, ".md: no pages");
+    assert.equal(await p.locator(".editor-toolbar").count(), 1, ".md: continuous editor toolbar");
     const flow = await p.evaluate(() => {
       const blocks = [...document.querySelectorAll<HTMLElement>(".ProseMirror > *")].map((e) => e.getBoundingClientRect());
       return { inline: document.querySelectorAll(".ms-object.ms-object-inline").length, overlaps: blocks.filter((r, i) => i && r.top < blocks[i - 1].bottom - 1).length };
     });
     assert.deepEqual(flow, { inline: 2, overlaps: 0 }, "continuous: objects in line, no overlap");
-    await p.getByRole("button", { name: "Print layout" }).click();
-    await p.waitForTimeout(1200);
-    assert.equal(await places(), paged, "placements restored");
-    assert.equal(await editsOf(p), 0, "switching views writes nothing");
+    assert.equal(await editsOf(p), 0, "opening a .md writes nothing");
+    await p.locator(".ProseMirror p", { hasText: "Tail" }).click();
+    await p.keyboard.press("End");
+    await p.keyboard.type(" end.");
+    await p.locator(".ProseMirror table td").first().click();
+    await p.keyboard.type("0");
+    await p.waitForFunction(() => /\| 10 /.test((window as any).__doc.text) && (window as any).__doc.text.includes("Tail end."), null, { timeout: 5000 });
+    const text: string = await p.evaluate(() => (window as any).__doc.text);
+    assert.ok(!/<!-- ?ms[-:]/.test(text), `.md: no ms comment written\n${text}`);
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // `.paper`: resized table columns live in the table's group (`blocks.<id>.cols`), an inline picture's
+  // width in a Pandoc attribute, a GMC diagram's size in its fence; never in a comment.
+  {
+    const pic = `${origin()}/fixture/assets/architecture.png`;
+    const doc = ["# Sizes", "", "| a | b |", "| - | - |", "| 1 | 2 |", "", `![Pic](${pic})`, "", "After", ""].join("\n");
+    const { p, errors } = await open(browser, doc, { width: 1500, height: 1000 });
+    // Column widths as prosemirror-tables' column resizing sets them (after a user gesture).
+    await p.locator(".ProseMirror td").first().click();
+    await p.evaluate(() => {
+      const editor = (document.querySelector(".ProseMirror") as any).editor;
+      const { state: st } = editor;
+      const tr = st.tr;
+      st.doc.descendants((n: any, pos: number) => {
+        if (n.type.name === "tableCell" || n.type.name === "tableHeader") {
+          const row = st.doc.resolve(pos).index();
+          tr.setNodeMarkup(pos, undefined, { ...n.attrs, colwidth: [row === 0 ? 140 : 90] });
+        }
+        return true;
+      });
+      editor.view.dispatch(tr);
+    });
+    await p.waitForFunction(() => /cols:/.test((window as any).__doc.text), null, { timeout: 5000 });
+    let text: string = await p.evaluate(() => (window as any).__doc.text);
+    assert.match(text, /blocks:[\s\S]*table:[\s\S]*cols:/, `table cols in the frontmatter\n${text}`);
+    assert.match(text, /^::: table\n\| a/m, "table in its group");
+    // Inline picture: select it, drag the right handle.
+    await p.locator(".image-block img").click();
+    const handle = p.locator(".image-block .ms-resize-e");
+    await handle.waitFor();
+    const box = await handle.boundingBox();
+    await p.mouse.move(box!.x + 4, box!.y + 4);
+    await p.mouse.down();
+    await p.mouse.move(box!.x + 120, box!.y + 4, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForFunction(() => /\)\{width=\d+%\}/.test((window as any).__doc.text), null, { timeout: 5000 });
+    text = await p.evaluate(() => (window as any).__doc.text);
+    assert.ok(!/<!-- ?ms[-:]/.test(text), `.paper: no ms comment\n${text}`);
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // `.paper` table look: rendered from the group's frontmatter; the Inspector writes ranges there.
+  {
+    const doc = ["---", "markdownStudio:", "  version: 2", "  blocks:", "    sales:", "      table: { borderColor: \"#FF0000\", borderStyle: dashed, borderWidth: 1.5 }", "---",
+      "# Look", "", "::: sales", "| Region | Total |", "| - | - |", "| North | 10 |", "| South | 12 |", ":::", "", "After", ""].join("\n");
+    const { p, errors } = await open(browser, doc, { width: 1500, height: 1000 });
+    const cellStyle = (i: number) => p.evaluate((n: number) => { const c = getComputedStyle(document.querySelectorAll(".ProseMirror td, .ProseMirror th")[n]); return { top: c.borderTopStyle, color: c.borderTopColor, bg: c.backgroundColor, weight: c.fontWeight }; }, i);
+    assert.deepEqual({ top: (await cellStyle(3)).top, color: (await cellStyle(3)).color }, { top: "dashed", color: "rgb(255, 0, 0)" }, "whole-table border look");
+    await p.locator(".ProseMirror td", { hasText: "North" }).click();
+    await p.getByRole("button", { name: "Header row" }).click();
+    await p.waitForFunction(() => /"?A1:B1"?:/.test((window as any).__doc.text), null, { timeout: 5000 });
+    const text: string = await p.evaluate(() => (window as any).__doc.text);
+    assert.match(text, /cells:[\s\S]*A1:B1[\s\S]*1F4E79/, `header range in the frontmatter\n${text}`);
+    assert.ok(!/<!--/.test(text), "no comment in the body");
+    const header = await cellStyle(0);
+    assert.equal(header.bg, "rgb(31, 78, 121)", "header range shading in the editor");
+    await p.locator(".ProseMirror td", { hasText: "North" }).click();
+    await p.getByRole("radio", { name: "Centered table" }).click();
+    await p.waitForFunction(() => /sales:[\s\S]*align: center/.test((window as any).__doc.text), null, { timeout: 5000 });
+    const centered = await p.evaluate(() => {
+      const t = document.querySelector(".ProseMirror table")!.getBoundingClientRect();
+      const page = document.querySelector(".ProseMirror")!.getBoundingClientRect();
+      return Math.abs((t.left + t.right) / 2 - (page.left + page.right) / 2) < 4;
+    });
+    assert.ok(centered, "table centered on the page");
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // Block frame: the hovered block is framed (dashed); clicking the frame selects the block (blue),
+  // then a style reaches the whole block.
+  {
+    const { p, errors } = await open(browser, "# Doc\n\nFirst words and more words.\n\nSecond.\n", { width: 1500, height: 1000 });
+    const para = p.locator(".ProseMirror p", { hasText: "First words" });
+    const box = (await para.boundingBox())!;
+    await p.mouse.move(box.x + 20, box.y + box.height / 2);
+    await p.waitForTimeout(100);
+    assert.equal(await para.evaluate((e: Element) => e.classList.contains("ms-block-hover") && getComputedStyle(e).outlineStyle), "dashed", "hovered block framed dashed");
+    await p.mouse.move(box.x + box.width / 2, box.y - 4);
+    assert.ok(await p.evaluate(() => document.querySelector(".ProseMirror")!.classList.contains("ms-frame-hot")), "frame hot on hover");
+    await p.mouse.down();
+    await p.mouse.up();
+    await p.waitForTimeout(150);
+    assert.equal(await para.evaluate((e: Element) => e.classList.contains("ProseMirror-selectednode") && getComputedStyle(e).outlineStyle), "solid", "frame click selects the block");
+    await p.keyboard.press("Control+b");
+    await p.waitForFunction(() => /\*\*First words and more words\.\*\*/.test((window as any).__doc.text), null, { timeout: 5000 });
+    await p.locator(".ProseMirror p", { hasText: "Second." }).click();
+    await p.waitForTimeout(100);
+    assert.equal(await para.evaluate((e: Element) => e.classList.contains("ms-block-hover")), false, "frame follows the pointer");
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // Block in a block: hovering the grouped block frames it; clicking its frame again selects the group.
+  {
+    const { p, errors } = await open(browser, '# Doc\n\n<!-- embed:file="notes.md" -->\n\nInner words here.\n\n<!-- embed:end -->\n\nAfter.\n', { width: 1500, height: 1000 });
+    const inner = p.locator(".ProseMirror p", { hasText: "Inner words" });
+    const box = (await inner.boundingBox())!;
+    await p.mouse.move(box.x + 20, box.y + box.height / 2);
+    await p.waitForTimeout(100);
+    assert.ok(await inner.evaluate((e: Element) => e.classList.contains("ms-block-hover")), "grouped block framed");
+    await p.mouse.move(box.x + box.width / 2, box.y - 4);
+    await p.mouse.down();
+    await p.mouse.up();
+    await p.waitForTimeout(100);
+    const sel = () => p.evaluate(() => (document.querySelector(".ProseMirror") as any).editor.state.selection.node?.type.name);
+    assert.equal(await sel(), "paragraph", "frame click selects the grouped block");
+    await p.mouse.move(box.x + box.width / 2 + 1, box.y - 4);
+    await p.mouse.down();
+    await p.mouse.up();
+    await p.waitForTimeout(100);
+    assert.equal(await sel(), "directiveBlock", "second click selects the group");
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // An embed refreshed for the first time (opener only → content + end marker) keeps its content
+  // inside the embed block, in a .paper and in a .md.
+  for (const paper of [true, false]) {
+    const opener = '<!-- embed:file="notes.md" -->';
+    const { p, errors } = await open(browser, ["# Embeds", "", opener, "", "After", ""].join("\n"), { paper });
+    // VS Code may deliver the embed as two changes: the content, then the end marker.
+    await p.evaluate((o: string) => (window as any).__external((window as any).__doc.text.replace(o, `${o}\n## Embedded title\n\nEmbedded text.\n`)), opener);
+    await p.waitForTimeout(800);
+    await p.evaluate(() => (window as any).__external((window as any).__doc.text.replace("Embedded text.\n", "Embedded text.\n<!-- embed:end -->\n")));
+    await p.waitForFunction(() => document.querySelector(".directive-block")?.textContent?.includes("Embedded text."), null, { timeout: 5000 });
+    const outside = await p.evaluate(() => {
+      let n = 0;
+      (document.querySelector(".ProseMirror") as any).editor.state.doc.forEach((node: any) => {
+        if (node.type.name !== "directiveBlock" && /Embedded/.test(node.textContent)) n++;
+      });
+      return n;
+    });
+    assert.equal(outside, 0, `${paper ? ".paper" : ".md"}: embedded content stays in its block`);
+    assert.deepEqual(errors, []);
     await p.close();
   }
 }

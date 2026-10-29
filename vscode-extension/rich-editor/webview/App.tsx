@@ -34,12 +34,14 @@ import { vscodeApi } from "./vscode-api";
 import { HostHistory } from "./extensions/StudioNodes";
 import { Pagination } from "./studio/pagination";
 import { StudioIntegrity, bindActions } from "./studio/actions";
+import { BlockFrame } from "./studio/blockFrame";
 import { Shell, hostRedo, hostUndo } from "./studio/Shell";
 import { PageLayer, Ruler, StyleSheetCss, setZoom, manualZoom } from "./studio/PageLayer";
 import { openContextMenu } from "./studio/ContextMenu";
 import { BlockHandles, LineNumberGutter } from "./studio/Gutter";
 import { ObjectLayer } from "./studio/ObjectLayer";
-import { studio, useStudio } from "./studio/store";
+import { PAPER, studio, useStudio } from "./studio/store";
+import { ToolkitMenu } from "./components/ToolkitMenu";
 import type { DocumentSync } from "./studio/documentSync";
 import "./studio/bridge";
 
@@ -74,7 +76,7 @@ export function App() {
       DiffMarks,
       ReviewThreads,
       HostHistory.configure({ onUndo: hostUndo, onRedo: hostRedo }),
-      Pagination,
+      ...(PAPER ? [Pagination, BlockFrame] : []),
       StudioIntegrity,
     ],
     editorProps: {
@@ -243,7 +245,7 @@ export function App() {
         editor.state.doc.forEach((n) => {
           if (!title && n.type.name === "heading") title = n.textContent;
         });
-        studio.set({ words: (text.match(/\S+/g) ?? []).length, title: title || studio.get().fileName.replace(/\.md$/i, "") });
+        studio.set({ words: (text.match(/\S+/g) ?? []).length, title: title || studio.get().fileName.replace(/\.(md|paper)$/i, "") });
       }, 400);
     };
     const page = () => {
@@ -307,7 +309,7 @@ export function App() {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey || !PAPER) return;
       e.preventDefault();
       setZoom(studio.get().zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1), true);
     };
@@ -329,43 +331,135 @@ export function App() {
   if (!editor) return null;
   const paged = pageView && !diffVisible;
 
+  const searchBar = (
+    <SearchBar
+      visible={searchVisible}
+      onClose={(activeRange) => {
+        setSearchVisible(false);
+        if (activeRange && editor) {
+          try {
+            const pos = editor.view.posAtDOM(activeRange.startContainer, activeRange.startOffset);
+            editor.commands.focus();
+            editor.commands.setTextSelection(pos);
+          } catch {
+            editor.commands.focus();
+          }
+        }
+      }}
+    />
+  );
+  const diffView = diffVisible && diffData && (
+    <DiffView
+      oldContent={diffData.headContent}
+      newContent={currentMarkdown}
+      fileName={diffData.fileName}
+      baseUri={baseUri.current}
+      layout={settings.diffLayout}
+      mode={settings.diffMode}
+      onClose={() => setDiffVisible(false)}
+      onLayoutChange={(layout) => updateSettings({ ...settings, diffLayout: layout })}
+      onModeChange={(diffMode) => updateSettings({ ...settings, diffMode })}
+    />
+  );
+  const zenBar = zen && (
+    <div className="zen-bar">
+      <button onClick={() => setZen(false)}>Exit Zen Mode (Esc)</button>
+    </div>
+  );
+  const imageDialog = (
+    <ImageInsertDialog
+      visible={imageDialogVisible}
+      onClose={() => setImageDialogVisible(false)}
+      onUploadFile={uploadImage}
+      onInsert={(src) => {
+        setImageDialogVisible(false);
+        editor?.chain().focus().setImage({ src }).run();
+      }}
+    />
+  );
+  const tableTools = (
+    <>
+      {!diffVisible && <TableFillHandle editor={editor} />}
+      <TableControls editor={editor} containerRef={editorContainerRef} verticalAlign={settings.tableVerticalAlign} onVerticalAlign={(tableVerticalAlign) => updateSettings({ ...settings, tableVerticalAlign })} />
+      {!zen && <TableFilterMenu editor={editor} containerRef={editorContainerRef} />}
+    </>
+  );
+  const outline = (
+    <>
+      {settings.outlineStyle === "panel" && (
+        <div className="toc-wrapper">
+          <TableOfContents />
+        </div>
+      )}
+      {settings.outlineStyle === "rail" && <OutlineRail />}
+    </>
+  );
+
+  // .md: the continuous Markdown editor (toolbar, sticky headings, outline) — no ribbon, no pages.
+  if (!PAPER) {
+    return (
+      <div className={"editor-layout ms-continuous ms-plain" + (review.enabled ? " has-review" : "")}>
+        <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef}>
+          {searchBar}
+          {status && <div className="status-bar">{status}</div>}
+          <div className="editor-toolbar">
+            {review.enabled && <ReviewBar review={review} />}
+            {readonly && <div className="readonly-badge">Read-only</div>}
+            {!readonly && (
+              <button className={"diff-button" + (diffVisible ? " active" : "")} onClick={toggleDiff} title="Diff against HEAD" aria-label="Toggle git diff view">
+                Diff
+              </button>
+            )}
+            {!readonly && <ToolkitMenu />}
+            <button className="diff-button" onClick={() => setZen(true)} title="Zen mode (Ctrl+. / ⌘.)" aria-label="Enter zen mode">
+              Zen
+            </button>
+            <button className="settings-button" onClick={() => setSettingsVisible(true)} title="Markdown settings" aria-label="Open markdown settings">
+              ⚙
+            </button>
+          </div>
+          <SettingsPanel visible={settingsVisible} settings={settings} onChange={updateSettings} onClose={() => setSettingsVisible(false)} />
+          <SetupPrompt visible={setupPromptVisible} onChoice={handleSetupChoice} onDismiss={dismissSetupPrompt} />
+          {diffView}
+          {!diffVisible && <StickyHeadings />}
+          <div className="toggle-source-row">
+            <span className="toggle-source" onClick={switchToSource} role="button" tabIndex={0}>
+              Open in Default Editor
+            </span>
+            {frontmatter === null && !readonly && (
+              <span className="toggle-source" onClick={() => window.dispatchEvent(new Event("btrmk:addFrontmatter"))} role="button" tabIndex={0} title="Add a YAML frontmatter block at the top of the file">
+                Add Frontmatter
+              </span>
+            )}
+          </div>
+          <FrontmatterPanel value={frontmatter} readonly={readonly} onChange={setFrontmatter} />
+          {(settings.lineNumbers || review.enabled) && (
+            <LineNumbers editor={editor} markdown={review.enabled ? review.source : undefined} review={review.enabled ? review : undefined} />
+          )}
+          <EditorContent editor={editor} />
+          {review.enabled && <ReviewLayer editor={editor} review={review} />}
+          {!readonly && <EditorBubbleMenu editor={editor} />}
+          {!readonly && !zen && <BlockHandle editor={editor} containerRef={editorContainerRef} gutter={settings.lineNumbers ? 40 : 0} />}
+          {tableTools}
+        </div>
+        {outline}
+        {zenBar}
+        {imageDialog}
+      </div>
+    );
+  }
+
   return (
     <Shell editor={editor} readonly={readonly} onSource={switchToSource}>
       <StyleSheetCss />
       <div className={"editor-layout" + (review.enabled ? " has-review" : "") + (paged ? " ms-paged" : " ms-continuous")}>
         <div className={"editor-container" + (dragOver ? " drag-over" : "")} ref={editorContainerRef} onContextMenu={paged ? (e) => openContextMenu(editor, e.nativeEvent) : undefined}>
-          <SearchBar
-            visible={searchVisible}
-            onClose={(activeRange) => {
-              setSearchVisible(false);
-              if (activeRange && editor) {
-                try {
-                  const pos = editor.view.posAtDOM(activeRange.startContainer, activeRange.startOffset);
-                  editor.commands.focus();
-                  editor.commands.setTextSelection(pos);
-                } catch {
-                  editor.commands.focus();
-                }
-              }
-            }}
-          />
+          {searchBar}
           {status && <div className="status-bar">{status}</div>}
           {review.enabled && <div className="ms-review-strip"><ReviewBar review={review} /></div>}
           <SettingsPanel visible={settingsVisible} settings={settings} onChange={updateSettings} onClose={() => setSettingsVisible(false)} />
           <SetupPrompt visible={setupPromptVisible} onChoice={handleSetupChoice} onDismiss={dismissSetupPrompt} />
-          {diffVisible && diffData && (
-            <DiffView
-              oldContent={diffData.headContent}
-              newContent={currentMarkdown}
-              fileName={diffData.fileName}
-              baseUri={baseUri.current}
-              layout={settings.diffLayout}
-              mode={settings.diffMode}
-              onClose={() => setDiffVisible(false)}
-              onLayoutChange={(layout) => updateSettings({ ...settings, diffLayout: layout })}
-              onModeChange={(diffMode) => updateSettings({ ...settings, diffMode })}
-            />
-          )}
+          {diffView}
           {!diffVisible && !paged && <StickyHeadings />}
           <FrontmatterPanel value={frontmatter} readonly={readonly} onChange={setFrontmatter} />
           {paged && showRulers && <Ruler editor={editor} />}
@@ -385,30 +479,11 @@ export function App() {
             </div>
           {!readonly && <EditorBubbleMenu editor={editor} />}
           {!readonly && !zen && !paged && zoom === 1 && <BlockHandle editor={editor} containerRef={editorContainerRef} gutter={settings.lineNumbers && !paged ? 40 : 0} />}
-          {!diffVisible && <TableFillHandle editor={editor} />}
-          <TableControls editor={editor} containerRef={editorContainerRef} verticalAlign={settings.tableVerticalAlign} onVerticalAlign={(tableVerticalAlign) => updateSettings({ ...settings, tableVerticalAlign })} />
-          {!zen && <TableFilterMenu editor={editor} containerRef={editorContainerRef} />}
+          {tableTools}
         </div>
-        {!paged && settings.outlineStyle === "panel" && (
-          <div className="toc-wrapper">
-            <TableOfContents />
-          </div>
-        )}
-        {!paged && settings.outlineStyle === "rail" && <OutlineRail />}
-        {zen && (
-          <div className="zen-bar">
-            <button onClick={() => setZen(false)}>Exit Zen Mode (Esc)</button>
-          </div>
-        )}
-        <ImageInsertDialog
-          visible={imageDialogVisible}
-          onClose={() => setImageDialogVisible(false)}
-          onUploadFile={uploadImage}
-          onInsert={(src) => {
-            setImageDialogVisible(false);
-            editor?.chain().focus().setImage({ src }).run();
-          }}
-        />
+        {!paged && outline}
+        {zenBar}
+        {imageDialog}
       </div>
     </Shell>
   );

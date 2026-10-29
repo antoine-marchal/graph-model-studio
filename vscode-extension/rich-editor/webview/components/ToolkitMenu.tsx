@@ -7,6 +7,7 @@ import { vscodeApi } from "../vscode-api";
  * src/provider.ts), since the rich editor has no active text editor.
  */
 const ACTIONS: { label: string; command: string }[] = [
+  { label: "Create a .paper document (Word-like layout)", command: "markdownStudio.createPaper" },
   { label: "Update embeds & TOC", command: "markdown-embed.update" },
   { label: "Update embeds in workspace", command: "markdown-embed.updateWorkspace" },
   { label: "Export as HTML", command: "markdownToolkit.exportHtml" },

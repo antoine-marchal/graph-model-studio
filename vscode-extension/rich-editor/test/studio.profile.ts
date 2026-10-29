@@ -12,7 +12,7 @@ const pageView = !process.argv.includes("--continuous");
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
 const extra = "\n\n```mermaid\ngraph LR\n  A[Plan] --> B[Build] --> C[Ship]\n```\n\n$$\n\\int_0^1 x^2 dx = \\frac13\n$$\n\n| A | B | C |\n|---|---|---|\n" + Array.from({ length: 30 }, (_, i) => `| ${i} | value ${i} | **bold** \`code\` |`).join("\n") + "\n\n```ts\n" + Array.from({ length: 60 }, (_, i) => `const v${i} = compute(${i}, "text");`).join("\n") + "\n```\n";
 const doc = `---\ntitle: Heavy\n---\n\n${Array.from({ length: 4 }, () => readme + extra).join("\n\n")}`;
-const page = `<!doctype html><html><head><link href="/dist/rich-editor/editor.css" rel="stylesheet"></head><body class="vscode-light"><div id="root"></div><script>
+const page = `<!doctype html><html><head><link href="/dist/rich-editor/editor.css" rel="stylesheet"></head><body class="vscode-light" data-studio="paper"><div id="root"></div><script>
 window.__doc={text:${JSON.stringify(doc)},version:1};window.__edits=0;
 const ap=(t,cs)=>{let o='',a=0;for(const c of cs){o+=t.slice(a,c.start)+c.text;a=c.end}return o+t.slice(a)};
 window.acquireVsCodeApi=()=>({postMessage(m){ if(m.type==='ready') setTimeout(()=>window.postMessage({type:'init',content:window.__doc.text,version:1,baseUri:'',docFolderPath:'',filePath:'c:/heavy.md',settings:{pageView:${pageView}}},'*'));

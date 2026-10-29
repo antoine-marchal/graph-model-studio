@@ -3737,3 +3737,42 @@ body.col-resizing { user-select: none; }
 body.indent-headings .tiptap-editor > [style*="--ms-hdepth"] {
   margin-left: calc(var(--ms-hdepth) * 2em);
 }
+
+
+/* ---------- Inline resize (pictures, GMC diagrams) ---------- */
+/* Word-like: selecting the visual shows a thin frame and square handles; side handles grow it on both sides. */
+.ms-resize-frame { position: relative; max-width: 100%; }
+.image-block .ms-resize-frame { display: inline-block; }
+.image-block .ms-resize-frame[style*="width"] img { width: 100%; }
+.image-block.selected figure { outline: none; }
+.ms-resize-frame.is-active { outline: 1.5px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
+.gmc-resize { display: block; width: 100%; margin: 0 auto; }
+.gmc-resize.is-sized .gmc-markdown-png,
+.gmc-resize.is-resizing .gmc-markdown-png { width: 100%; height: auto; display: block; }
+.gmc-resize.is-resizing .gmc-block-rendered,
+.gmc-resize.is-resizing .gmc-markdown-diagram { height: 100%; }
+.gmc-resize.is-resizing .gmc-markdown-png { height: 100%; object-fit: contain; }
+.ms-resize-handle {
+  position: absolute; z-index: 3; width: 9px; height: 9px; box-sizing: border-box;
+  background: var(--vscode-editor-background, #fff); border: 1.5px solid var(--vscode-focusBorder, #007fd4); border-radius: 2px;
+  touch-action: none;
+}
+.ms-resize-handle:hover { background: var(--vscode-focusBorder, #007fd4); }
+.ms-resize-e, .ms-resize-w { top: 50%; margin-top: -4.5px; cursor: ew-resize; }
+.ms-resize-e { right: -5px; }
+.ms-resize-w { left: -5px; }
+.ms-resize-s { bottom: -5px; left: 50%; margin-left: -4.5px; cursor: ns-resize; }
+.ms-resize-se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.ms-resize-sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.ms-resize-badge {
+  position: absolute; right: 6px; bottom: 6px; z-index: 3; padding: 1px 6px; border-radius: 3px; pointer-events: none;
+  font: 11px/16px var(--vscode-font-family, system-ui); font-variant-numeric: tabular-nums;
+  color: var(--vscode-badge-foreground, #fff); background: var(--vscode-badge-background, #4d4d4d);
+}
+/* Floating pictures are sized by their object frame (ObjectLayer), not inline. */
+.ms-object .ms-resize-handle, .ms-object .ms-resize-badge { display: none; }
+.ms-object .ms-resize-frame { outline: none; }
+.ms-object[data-type="image"] .ms-resize-frame { display: block; width: 100% !important; height: 100%; }
+
+/* The editing surface itself never shows the chrome focus ring (Slides stylesheet :focus-visible). */
+.tiptap-editor:focus-visible { outline: none; }

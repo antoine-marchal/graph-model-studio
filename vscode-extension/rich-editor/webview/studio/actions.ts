@@ -324,7 +324,7 @@ export function reanchor(id: string, beforePos: number, box: ObjectDescriptor["b
 /* Paragraph / character formatting ----------------------------------- */
 
 /** Containers whose child blocks are formatted on their own (objects, columns, alignment, `:::` groups). */
-const BLOCK_CONTAINERS = new Set(["msObject", "columns", "column", "alignBlock", "directiveBlock"]);
+export const BLOCK_CONTAINERS = new Set(["msObject", "columns", "column", "alignBlock", "directiveBlock"]);
 
 /**
  * Block holding the caret: a top-level block, or a block of a container (object body, column,

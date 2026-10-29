@@ -150,6 +150,24 @@ export function activate(context: vscode.ExtensionContext): void {
       if (result) vscode.window.showInformationMessage(`Imported master(s): ${result.ids.join(", ")}. The import report is next to master.json.`);
       return result;
     })),
+    // A `.paper` laid out from a `.md`: one embed block of the Markdown (refresh it to follow the
+    // source), so the `.md` stays the text and the `.paper` adds the page design.
+    vscode.commands.registerCommand("markdownStudio.createPaper", guarded(async (arg?: unknown) => {
+      const uri = targetDocument(arg);
+      if (!uri || !/\.md$/i.test(uri.path)) return vscode.window.showInformationMessage("Select a Markdown (.md) file to lay out as a .paper document.");
+      await provider.flush(uri);
+      const target = uri.with({ path: uri.path.replace(/\.md$/i, ".paper") });
+      const exists = await vscode.workspace.fs.stat(target).then(() => true, () => false);
+      if (!exists) {
+        const name = uri.path.split("/").pop()!;
+        await vscode.workspace.fs.writeFile(target, Buffer.from(`<!-- embed:file="./${name}" -->\n<!-- embed:end -->\n`, "utf8"));
+        const doc = await vscode.workspace.openTextDocument(target);
+        await provider.refreshEmbeds(doc);
+        await doc.save();
+      }
+      await vscode.commands.executeCommand("vscode.openWith", target, "betterMarkdown.editor");
+      return target;
+    })),
     vscode.commands.registerCommand("markdownStudio.preflight", guarded(async (arg?: unknown) => {
       const uri = targetDocument(arg);
       if (!uri) return vscode.window.showInformationMessage("Open a Markdown document first.");

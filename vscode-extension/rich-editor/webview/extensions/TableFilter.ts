@@ -3,6 +3,8 @@ import { Plugin, PluginKey, type EditorState, type Transaction } from "@tiptap/p
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import { Fragment, Slice, type Node as PMNode, type Schema } from "@tiptap/pm/model";
 import { TableMap, selectedRect } from "@tiptap/pm/tables";
+import { PAPER } from "../studio/store";
+import { cellCss, resolveTableLook, type CellLook } from "../../document/tableLook";
 
 /**
  * Excel-style column filters for tables. View-only: filtered rows are hidden
@@ -88,7 +90,7 @@ export const TableFilter = Extension.create({
         },
       },
       {
-        // Dragged row height (px); saved in the `<!-- ms-table:… -->` comment.
+        // Dragged row height (px); saved with the column widths in the table's group (`blocks.<id>.rows`).
         types: ["tableRow"],
         attributes: {
           height: {
@@ -104,7 +106,8 @@ export const TableFilter = Extension.create({
 
   addProseMirrorPlugins() {
     return [
-      rowResizePlugin(),
+      // Column / row sizes persist in a `.paper` only (group props); a `.md` keeps plain GFM tables.
+      ...(PAPER ? [rowResizePlugin(), tableLayoutPlugin(), tableLookPlugin()] : []),
       new Plugin<ColumnFilter[]>({
         key: tableFilterKey,
         state: {
@@ -146,6 +149,94 @@ export const TableFilter = Extension.create({
     ];
   },
 });
+
+/**
+ * A table's geometry (cell `colwidth`, row `height`) mirrored in its block props `cols` / `rows`:
+ * the table becomes a `::: id` group whose `blocks.<id>` the frontmatter keeps (no comment in the body).
+ */
+function tableLayoutPlugin(): Plugin {
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  return new Plugin({
+    appendTransaction(trs, _old, state) {
+      if (!trs.some((t) => t.docChanged)) return null;
+      const tr = state.tr;
+      state.doc.descendants((n, pos) => {
+        if (n.type.name !== "table") return true;
+        const rows: (number | null)[] = [];
+        n.forEach((row) => rows.push(Number(row.attrs.height) || null));
+        const cols: (number | null)[] = [];
+        n.firstChild?.forEach((cell) => {
+          const widths: (number | null)[] = cell.attrs.colwidth ?? [];
+          for (let i = 0; i < (cell.attrs.colspan || 1); i++) cols.push(widths[i] || null);
+        });
+        let props: Record<string, unknown> = {};
+        try {
+          props = n.attrs.msBlock ? JSON.parse(n.attrs.msBlock) : {};
+        } catch {
+          // Unreadable props: rebuilt below.
+        }
+        const next = { ...props, cols: cols.some(Boolean) ? cols : undefined, rows: rows.some(Boolean) ? rows : undefined };
+        if (!same(next.cols, props.cols) || !same(next.rows, props.rows)) {
+          const clean = JSON.parse(JSON.stringify(next));
+          tr.setNodeMarkup(pos, undefined, { ...n.attrs, msBlock: Object.keys(clean).length ? JSON.stringify(clean) : null });
+        }
+        return false;
+      });
+      return tr.docChanged ? tr : null;
+    },
+  });
+}
+
+/** Cell decorations for the table look of each table (`blocks.<id>.table` / `cells`, document/tableLook.ts). */
+function tableLookDecorations(doc: PMNode): DecorationSet {
+  const decos: Decoration[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name !== "table") return true;
+    if (!node.attrs.msBlock) return false;
+    let props: { table?: CellLook; cells?: Record<string, CellLook>; align?: string } = {};
+    try {
+      props = JSON.parse(node.attrs.msBlock);
+    } catch {
+      return false;
+    }
+    // Table alignment on the page (the wrapper holds the table, which keeps its own width).
+    if (props.align === "center" || props.align === "right") {
+      decos.push(Decoration.node(pos, pos + node.nodeSize, { style: `display:flex;justify-content:${props.align === "center" ? "center" : "flex-end"}` }));
+    }
+    if (!props.table && !props.cells) return false;
+    const map = TableMap.get(node);
+    const grid = resolveTableLook(map.height, map.width, props.table, props.cells);
+    if (!grid) return false;
+    const seen = new Set<number>();
+    for (const offset of map.map) {
+      if (seen.has(offset)) continue;
+      seen.add(offset);
+      const rect = map.findCell(offset);
+      const cell = node.nodeAt(offset)!;
+      // a merged cell takes the look of its first grid cell, its far edges from the last
+      const first = grid[rect.top][rect.left];
+      const last = grid[rect.bottom - 1][rect.right - 1];
+      const style = cellCss({ ...first, right: last.right, bottom: last.bottom });
+      if (style) decos.push(Decoration.node(pos + 1 + offset, pos + 1 + offset + cell.nodeSize, { style }));
+    }
+    return false;
+  });
+  return DecorationSet.create(doc, decos);
+}
+
+function tableLookPlugin(): Plugin {
+  return new Plugin<DecorationSet>({
+    state: {
+      init: (_, state) => tableLookDecorations(state.doc),
+      apply: (tr, old) => (tr.docChanged ? tableLookDecorations(tr.doc) : old),
+    },
+    props: {
+      decorations(state) {
+        return this.getState(state);
+      },
+    },
+  });
+}
 
 /**
  * Drag the bottom edge of a row to set its height (columns use

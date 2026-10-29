@@ -182,6 +182,16 @@ const CUSTOM_PROP_FIELDS: Record<string, { group: string; fields: PropFieldSpec[
   activityBar: { group: 'Sequence', fields: [
     { key: 'y', label: 'Vertical position', placeholder: 'e.g. 140' },
   ] },
+  seqGraph: { group: 'Sequence', fields: [
+    { key: 'autonumber', label: 'Number messages', placeholder: 'off', options: [
+      { value: 'off', label: 'Off' },
+      { value: 'on', label: 'On (1. 2. 3.)' },
+    ] },
+    { key: 'activations', label: 'Activation bars', placeholder: 'on', options: [
+      { value: 'on', label: 'Automatic (call → reply)' },
+      { value: 'off', label: 'Only the drawn ones' },
+    ] },
+  ] },
   snakeGraph: { group: 'Snake diagram', fields: [
     { key: 'maxColumns', label: 'Maximum columns', placeholder: '5' },
   ] },

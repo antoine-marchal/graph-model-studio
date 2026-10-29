@@ -171,3 +171,31 @@ test("`::: id` groups: block styles, header text and placeholders come from the 
   const header = (await Promise.all(names.filter((n) => /word\/header\d*\.xml/.test(n)).map(text))).join("");
   assert.match(header, /<w:jc w:val="right"\/>[\s\S]*?ACME confidential/, "header text and alignment");
 });
+
+test("table look: whole table and cell ranges become Word cell borders, shading and runs", async () => {
+  const src = [
+    "---",
+    "markdownStudio:",
+    "  version: 2",
+    "  blocks:",
+    "    sales:",
+    "      table: { borderColor: \"#9AA5B1\", borderStyle: dashed, borderWidth: 1 }",
+    "      cells:",
+    "        \"A1:B1\": { fill: \"#1F4E79\", color: \"#FFFFFF\", bold: true }",
+    "        \"A3:B3\": { borderStyle: double, edges: top }",
+    "---",
+    "::: sales",
+    "| Region | Total |",
+    "| - | - |",
+    "| North | 10 |",
+    "| South | 12 |",
+    ":::",
+    "",
+  ].join("\n");
+  const { buffer } = await compileDocx(options(src));
+  const doc = await (await unzip(buffer!)).text("word/document.xml");
+  assert.match(doc, /<w:shd [^>]*w:fill="1F4E79"/, "header range shading");
+  assert.match(doc, /<w:color w:val="FFFFFF"\/>[\s\S]*?Region/, "header text color");
+  assert.match(doc, /<w:top w:val="dashed"[^>]*w:color="9AA5B1"/, "whole-table dashed borders");
+  assert.match(doc, /<w:top w:val="double"/, "range top edge");
+});

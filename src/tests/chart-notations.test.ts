@@ -98,9 +98,10 @@ describe('sequence graph container', () => {
     expect(activity.parentId).toBe('flow')
     expect(activity.data.shape).toBe('activityBar')
     expect(activity.data.customAccent).toBe(true)
-    // The self-message lands just below the requested bar, so the bar grows to
-    // cover both of its connection points.
-    expect({ width: activity.width, height: activity.height }).toEqual({ width: 18, height: 148 })
+    // The bar grows to cover the connection points of the messages it chains (its self-message included).
+    expect(activity.width).toBe(18)
+    const loopEnd = nodes.find(node => node.id === loop.target)!
+    expect(activity.position.y + activity.height!).toBeGreaterThanOrEqual(loopEnd.position.y + 1)
     expect(activity.position.x + activity.width! / 2).toBe(participant.position.x + participant.width! / 2)
     expect(activity.position.y).toBe(160)
     const firstMessagePoint = nodes.find(node => node.id === msgEdges[0].source)!
@@ -116,8 +117,101 @@ describe('sequence graph container', () => {
     expect(selfLoopCurve({ x: 10, y: 20, width: 120, height: 60 }, 'r', 0).path).not.toContain('Q')
 
     const sequence = sequenceLoopCurve({ x: 100, y: 120 }, { x: 100, y: 142 })
-    expect(sequence.path).toContain('154')
-    expect(sequence.label.x).toBe(154)
+    expect(sequence.path).toContain('144')
+    // the label starts right of the loop, never on it
+    expect(sequence.label.x).toBeGreaterThan(144)
+  })
+
+  const seq = (extra = '') => parse(`model {
+    s = seqGraph "Order" {
+      ${extra}
+      a = participant "Client"
+      b = participant "Server"
+      c = participant "Store"
+    }
+    a -> b : message "A rather long request label that has to wrap between two lifelines"
+    b -> c : message "read"
+    c -> b : replyMessage "rows"
+    b -> a : replyMessage "done"
+  }
+  views { view v "V" { include * } }`)
+  const centres = (model: GraphModel, v: GraphView) => {
+    const { nodes } = modelToFlow(model, v)
+    return ['a', 'b', 'c'].map(id => { const n = nodes.find(x => x.id === id)!; return n.position.x + n.width! / 2 })
+  }
+
+  it('sizes sequence columns and rows from the labels, which wrap above their arrows', () => {
+    const m = seq()
+    const { edges, nodes } = modelToFlow(m, view(m))
+    const long = edges.find(e => m.relations[e.id]?.label?.startsWith('A rather'))!
+    expect(long.data?.chartRelation).toBe('sequence')
+    const width = long.data!.sequenceLabelWidth as number
+    const [ax, bx] = centres(m, view(m))
+    // the label wraps inside the span, clear of both arrow ends
+    expect(width).toBeLessThanOrEqual(bx - ax - 30)
+    expect(width).toBeGreaterThan(100)
+    const points = nodes.filter(n => n.type === 'seqPoint')
+    expect(points.length).toBe(8)
+  })
+
+  it('fills a resized sequence frame: columns and rows spread', () => {
+    const m = seq()
+    const v = view(m)
+    const before = centres(m, v)
+    const msgY = (model: GraphModel, vv: GraphView) => modelToFlow(model, vv).nodes.filter(n => n.type === 'seqPoint' && n.id.endsWith('_s')).map(n => n.position.y)
+    const ys = msgY(m, v)
+    v.nodeSizes = { ...v.nodeSizes, s: { width: 1400, height: 900 } }
+    const after = centres(m, v)
+    expect(after[2] - after[0]).toBeGreaterThan(before[2] - before[0] + 300)
+    // evenly spread columns
+    expect(Math.abs((after[1] - after[0]) - (after[2] - after[1]))).toBeLessThan((after[2] - after[0]) * 0.25)
+    const ys2 = msgY(m, v)
+    expect(ys2[ys2.length - 1] - ys2[0]).toBeGreaterThan(ys[ys.length - 1] - ys[0] + 200)
+    const frame = modelToFlow(m, v).nodes.find(n => n.id === 's')!
+    const lifeline = frame.data.chartFrame!.lines[0]
+    expect(lifeline.y2).toBeGreaterThan(800)
+  })
+
+  it('draws automatic activation bars from a call to its reply; message ends stop at the bar', () => {
+    const m = seq()
+    const frame = modelToFlow(m, view(m)).nodes.find(n => n.id === 's')!
+    // Server: from the request to its reply; Store: from read to rows
+    expect(frame.data.chartFrame!.paths!.filter(p => p.fill)).toHaveLength(2)
+    const off = seq('activations "off"')
+    expect(modelToFlow(off, view(off)).nodes.find(n => n.id === 's')!.data.chartFrame!.paths!.filter(p => p.fill)).toHaveLength(0)
+    const { nodes, edges } = modelToFlow(m, view(m))
+    const read = edges.find(e => m.relations[e.id]?.label === 'read')!
+    const start = nodes.find(n => n.id === read.source)!
+    const [, bx] = centres(m, view(m))
+    // leaves the Server bar's right edge, not its lifeline
+    expect(start.position.x + 1).toBeGreaterThan(bx + 3)
+  })
+
+  it('treats a plain message back to the caller as a return: no stacked or overlapping bars', () => {
+    const m = parse(`model {
+      s = seqGraph "S" {
+        p = participant "P"
+        x = seqActor "X"
+        y = seqActor "Y"
+      }
+      p -> x : message "hello"
+      x -> y : message ""
+      y -> x : message ""
+      x -> p : message ""
+    }
+    views { view v "V" { include * } }`)
+    const bars = modelToFlow(m, view(m)).nodes.find(n => n.id === 's')!.data.chartFrame!.paths!.filter(p => p.fill)
+    // X from "hello" to its return to P, Y from the call to its return; nothing on P, nothing nested
+    expect(bars).toHaveLength(2)
+    const xs = bars.map(b => Number(/^M([\d.]+)/.exec(b.d)![1]))
+    expect(new Set(xs).size).toBe(2)
+  })
+
+  it('numbers sequence messages with autonumber', () => {
+    const m = seq('autonumber "on"')
+    const labels = modelToFlow(m, view(m)).edges.filter(e => e.data?.sequenceHostId).map(e => e.data!.label)
+    expect(labels[0]).toMatch(/^1\. A rather/)
+    expect(labels[3]).toBe('4. done')
   })
 
   it('always routes auto anchors orthogonally with curved routing selected', () => {

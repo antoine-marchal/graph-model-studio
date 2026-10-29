@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useReducer } from "react";
 import { Image } from "@tiptap/extension-image";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
+import { ResizeFrame } from "./ResizeFrame";
+import { imageWidthAttr } from "../../document/imageSize";
 
 /**
  * Freshly generated images (`.gmc` embed PNGs rendered by this webview), keyed
@@ -23,8 +25,11 @@ export function setImageOverride(src: string, dataUrl: string): void {
   window.dispatchEvent(new Event(OVERRIDE_EVENT));
 }
 
-function ImageNodeView({ node, updateAttributes, selected }: any) {
+function ImageNodeView({ node, updateAttributes, selected, editor }: any) {
   const [error, setError] = useState(false);
+  const [ratio, setRatio] = useState<number | undefined>();
+  const [liveWidth, setLiveWidth] = useState<number | null>(null);
+  const width = imageWidthAttr(node.attrs.width);
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   useEffect(() => {
     window.addEventListener(OVERRIDE_EVENT, rerender);
@@ -69,13 +74,30 @@ function ImageNodeView({ node, updateAttributes, selected }: any) {
             </span>
           </div>
         ) : (
-          <img
-            src={src}
-            alt={node.attrs.alt || ""}
-            title={node.attrs.title || undefined}
-            onError={() => setError(true)}
-            draggable={false}
-          />
+          <ResizeFrame
+            active={selected && editor.isEditable && !!ratio}
+            ratio={ratio}
+            style={liveWidth ? { width: liveWidth } : width ? { width } : undefined}
+            onResize={(s) => setLiveWidth(s.width)}
+            onCommit={(s) => {
+              setLiveWidth(null);
+              // Percent of the text width: the picture follows the page / panel width.
+              const pct = Math.round((s.width / s.maxWidth) * 100);
+              updateAttributes({ width: pct >= 99 ? null : `${pct}%` });
+            }}
+          >
+            <img
+              src={src}
+              alt={node.attrs.alt || ""}
+              title={node.attrs.title || undefined}
+              onError={() => setError(true)}
+              onLoad={(e) => {
+                const img = e.currentTarget;
+                if (img.naturalWidth && img.naturalHeight) setRatio(img.naturalWidth / img.naturalHeight);
+              }}
+              draggable={false}
+            />
+          </ResizeFrame>
         )}
         <figcaption onClick={() => setEditing(true)}>
           {editing ? (
@@ -109,6 +131,19 @@ export const ImageBlock = Image.extend({
   // Force block-level so images aren't inline
   inline: false,
   group: "block",
+
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      // `{width=60%}` after the image in Markdown (document/imageSize.ts).
+      width: {
+        default: null,
+        parseHTML: (el: HTMLElement) => imageWidthAttr(el.getAttribute("width")) || null,
+        renderHTML: (a: Record<string, unknown>) => (a.width ? { width: a.width } : {}),
+      },
+      height: { default: null, rendered: false },
+    };
+  },
 
   addNodeView() {
     return ReactNodeViewRenderer(ImageNodeView);

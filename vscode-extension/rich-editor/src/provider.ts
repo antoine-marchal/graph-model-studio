@@ -31,6 +31,7 @@ const TOOLKIT_COMMANDS = new Set([
   "markdownToolkit.exportDocx",
   "corporateSlides.openVisualEditor",
   "corporateSlides.exportPptx",
+  "markdownStudio.createPaper",
 ]);
 
 /**
@@ -804,7 +805,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
       }
     });
 
-    webview.html = this.getHtmlForWebview(webview);
+    webview.html = this.getHtmlForWebview(webview, isPaperDocument(document.uri));
 
     // Track active webview for search command
     const uriKey = document.uri.toString();
@@ -926,15 +927,20 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     await vscode.workspace.fs.writeFile(pngUri, Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64"));
   }
 
-  /** Regenerate embeds / TOCs of `document` with the bundled toolkit embedder. */
-  private async refreshEmbeds(document: vscode.TextDocument, webview: vscode.Webview): Promise<void> {
+  /**
+   * Regenerate embeds / TOCs of `document` with the bundled toolkit embedder. Without a webview
+   * (no editor open yet), `.gmc` pictures are rendered the embedder's own way.
+   */
+  async refreshEmbeds(document: vscode.TextDocument, webview?: vscode.Webview): Promise<void> {
     try {
       const { MarkdownEmbedder } = require(
         path.join(this.context.extensionPath, "integrations", "markdown-code-embedder", "embedder.js"),
       );
       const embedder = new MarkdownEmbedder();
-      embedder.renderGmcPng = (sourceUri: vscode.Uri, pngUri: vscode.Uri, view?: string, theme?: string) =>
-        this.renderPngInWebview(webview, sourceUri, pngUri, view, theme);
+      if (webview) {
+        embedder.renderGmcPng = (sourceUri: vscode.Uri, pngUri: vscode.Uri, view?: string, theme?: string) =>
+          this.renderPngInWebview(webview, sourceUri, pngUri, view, theme);
+      }
       const edits: vscode.TextEdit[] = await embedder.generateEdits(document);
       const errors: { file: string; message: string }[] = embedder.errors;
       if (errors.length) {
@@ -958,7 +964,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     }
   }
 
-  private getHtmlForWebview(webview: vscode.Webview): string {
+  private getHtmlForWebview(webview: vscode.Webview, paper = false): string {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.context.extensionUri, "dist", "rich-editor", "webview.js"),
     );
@@ -976,12 +982,17 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
   <link href="${styleUri}" rel="stylesheet">
   <title>Markdown Studio</title>
 </head>
-<body>
+<body${paper ? ' data-studio="paper"' : ""}>
   <div id="root"></div>
   <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
 </body>
 </html>`;
   }
+}
+
+/** `.paper` = Markdown laid out as a paginated document (Word-like studio); `.md` stays a continuous editor. */
+export function isPaperDocument(uri: vscode.Uri): boolean {
+  return /\.paper$/i.test(uri.path);
 }
 
 interface DiffPane {

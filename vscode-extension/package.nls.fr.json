@@ -112,7 +112,6 @@
   "s203.run.corporate.preflight": "Lancer le contrôle avant livraison",
   "s204.pandoc.is.no.longer.used": "Pandoc n'est plus utilisé : l'export DOCX est intégré.",
   "s205.reference.docs.are.replaced.by.masters": "Les documents de référence sont remplacés par les masques Markdown Studio : utilisez « Importer un modèle Word comme masque ».",
-  "s206.show.documents.as.paginated.pages": "Afficher les documents en pages (papier, marges, en-têtes et pieds de page). Désactivé : une seule colonne continue.",
   "s207.permissive.export": "Écrire le document ; le contenu non représentable utilise des solutions de repli listées dans le rapport.",
   "s208.strict.export": "Refuser d'écrire un document qui perdrait du contenu.",
   "s209.docx.export.mode": "Traitement par **Exporter en DOCX modifiable** du contenu que Word ne peut pas représenter.",
@@ -128,5 +127,6 @@
   "s266.open.master.json": "Ouvrir master.json",
   "s267.refresh.masters": "Actualiser",
   "s268.duplicate.master": "Dupliquer…",
-  "s269.no.document.master": "Aucun masque de document dans cet espace de travail.\n[Importer un modèle Word](command:markdownStudio.importTemplate)\n[Nouveau masque](command:markdownStudio.newMaster)"
+  "s269.no.document.master": "Aucun masque de document dans cet espace de travail.\n[Importer un modèle Word](command:markdownStudio.importTemplate)\n[Nouveau masque](command:markdownStudio.newMaster)",
+  "s207.create.paper.from.markdown": "Créer un document .paper à partir de ce Markdown"
 }

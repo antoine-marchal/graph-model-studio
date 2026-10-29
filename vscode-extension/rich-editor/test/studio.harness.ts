@@ -16,11 +16,13 @@ export const state = {
   content: "",
   theme: "light" as "light" | "dark",
   lang: "en",
+  /** `.paper` document (paginated studio); false = a `.md` (continuous editor). */
+  paper: true,
   baseUri: "https://file+.vscode-resource.vscode-cdn.net/c%3A/docs",
 };
 
 const page = () => `<!doctype html><html lang="${state.lang}"><head><meta charset="utf-8"><link href="/dist/rich-editor/editor.css" rel="stylesheet"></head>
-<body class="vscode-${state.theme}"><div id="root"></div>
+<body class="vscode-${state.theme}"${state.paper ? ' data-studio="paper"' : ""}><div id="root"></div>
 <script>
 window.__doc = { text: ${JSON.stringify(state.content)}, version: 1 };
 window.__edits = []; window.__msgs = [];
@@ -74,8 +76,9 @@ export const listen = () => new Promise<void>((r) => server.listen(0, "127.0.0.1
 export const origin = () => `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 
 /** Open a document in a fresh page; resolves once the paper is laid out. */
-export async function open(browser: any, doc: string, opts: { width?: number; height?: number; theme?: "light" | "dark"; lang?: string } = {}) {
+export async function open(browser: any, doc: string, opts: { width?: number; height?: number; theme?: "light" | "dark"; lang?: string; paper?: boolean } = {}) {
   state.content = doc;
+  state.paper = opts.paper ?? true;
   state.theme = opts.theme ?? "light";
   state.lang = opts.lang ?? "en";
   const p = await browser.newPage({ viewport: { width: opts.width ?? 1400, height: opts.height ?? 900 } });
@@ -85,7 +88,7 @@ export async function open(browser: any, doc: string, opts: { width?: number; he
   p.on("response", (r: any) => r.status() === 404 && !/favicon/.test(r.url()) && errors.push(`404 ${r.url()}`));
   await p.goto(`${origin()}/`);
   await p.waitForSelector(".ProseMirror");
-  await p.waitForFunction(() => document.querySelectorAll(".ms-page").length > 0, null, { timeout: 15000 });
+  if (state.paper) await p.waitForFunction(() => document.querySelectorAll(".ms-page").length > 0, null, { timeout: 15000 });
   await p.waitForTimeout(800);
   return { p, errors };
 }

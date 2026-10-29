@@ -112,7 +112,6 @@
   "s203.run.corporate.preflight": "Run corporate preflight",
   "s204.pandoc.is.no.longer.used": "Pandoc is no longer used: DOCX export is built in.",
   "s205.reference.docs.are.replaced.by.masters": "Reference documents are replaced by Markdown Studio masters: use \"Import Word template as master\".",
-  "s206.show.documents.as.paginated.pages": "Show documents as paginated pages (paper, margins, headers and footers). Off: one continuous column.",
   "s207.permissive.export": "Write the document; unrepresentable content uses documented fallbacks listed in the report.",
   "s208.strict.export": "Refuse to write a document that would lose content.",
   "s209.docx.export.mode": "How **Export editable DOCX** handles content Word cannot represent.",
@@ -128,5 +127,6 @@
   "s266.open.master.json": "Open master.json",
   "s267.refresh.masters": "Refresh",
   "s268.duplicate.master": "Duplicate…",
-  "s269.no.document.master": "No document master in this workspace yet.\n[Import a Word template](command:markdownStudio.importTemplate)\n[New master](command:markdownStudio.newMaster)"
+  "s269.no.document.master": "No document master in this workspace yet.\n[Import a Word template](command:markdownStudio.importTemplate)\n[New master](command:markdownStudio.newMaster)",
+  "s207.create.paper.from.markdown": "Create a .paper document from this Markdown"
 }

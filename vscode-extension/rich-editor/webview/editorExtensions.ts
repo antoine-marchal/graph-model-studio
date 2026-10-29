@@ -21,6 +21,7 @@ import { RawHtmlBlock } from "./extensions/RawHtmlBlock";
 import { DirectiveBlock } from "./extensions/DirectiveBlock";
 import { AlignBlock, Column, Columns, Highlight, Hashtags } from "./extensions/BlockStyle";
 import { TableFilter } from "./extensions/TableFilter";
+import { PAPER } from "./studio/store";
 import { GitHubEmbed } from "./extensions/GitHubEmbed";
 import { HeadingIndent } from "./extensions/HeadingIndent";
 import { PageBreak, SectionBreak, StudioBlockAttrs, StudioObject, StudioStory, TextStyle } from "./extensions/StudioNodes";
@@ -88,7 +89,7 @@ export function contentExtensions({ history = true }: { history?: boolean } = {}
     Code.extend({ excludes: "" }),
     Link.configure({ openOnClick: false }),
     ImageBlock,
-    Table.configure({ resizable: true, cellMinWidth: 40 }),
+    Table.configure({ resizable: PAPER, cellMinWidth: 40 }),
     TableRow,
     TableCell,
     TableHeader,

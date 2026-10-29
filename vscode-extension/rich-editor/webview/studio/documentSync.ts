@@ -69,8 +69,11 @@ export class DocumentSync {
     this.deps.afterLoad?.();
     const map = mapLoadedDoc(this.editor.state.doc, sourceBlocks(body));
     // Blocks still written with `<!-- ms:block -->` / `<!-- ms:object -->` markers are rewritten as
-    // `::: id` groups on the next save.
-    for (const [node, r] of map) if (/^<!-- ms:(block|object|endobject|pagebreak|section)\b/.test(body.slice(r.start, r.end))) map.delete(node);
+    // `::: id` groups on the next save; a table's `<!-- ms-table -->` comment is dropped.
+    for (const [node, r] of map) {
+      const text = body.slice(r.start, r.end);
+      if (/^<!-- ms:(block|object|endobject|pagebreak|section)\b/.test(text) || /<!-- ms-table:/.test(text)) map.delete(node);
+    }
     this.current = { body, map };
   }
 

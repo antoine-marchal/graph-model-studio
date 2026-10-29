@@ -14,6 +14,7 @@ import {
 import { useModelStore, type RelationTextField } from '@/store'
 import { routeOrthogonal, pointsToRoundedPath, polylineSegments, polylineOverlapCost, clipRouteInputs, filterRoutingObstacles, segmentCrossesRect, type NodeRect, type Rect, type Point, type Segment } from './orthogonal-router'
 import { END_LABEL_DISTANCE, pointOnBezier, pointOnBezierAtDistance, pointOnPolyline, pointOnPolylineAtDistance } from './edge-label-position'
+import { SEQ_LOOP_REACH } from '@/core/layout/special-layouts'
 
 // Routes of currently-mounted edges, so each edge can pay a malus for running
 // on the same pixel line as another relation (see overlapPenalty in the router).
@@ -442,13 +443,12 @@ export function selfLoopCurve(rect: SelfLoopRect, side: 't' | 'b' | 'l' | 'r' = 
   }
 }
 
-/** UML-style rectangular return drawn at one sequence lifeline. */
-export function sequenceLoopCurve(source: Point, target: Point) {
-  const reach = 54
+/** UML-style rectangular return drawn at one sequence lifeline; its label goes right of the loop. */
+export function sequenceLoopCurve(source: Point, target: Point, reach = SEQ_LOOP_REACH) {
   const points = [source, { x: source.x + reach, y: source.y }, { x: source.x + reach, y: target.y }, target]
   return {
     path: pointsToRoundedPath(points, 6),
-    label: { x: source.x + reach, y: (source.y + target.y) / 2 },
+    label: { x: source.x + reach + 8, y: (source.y + target.y) / 2 },
     sourceLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE),
     targetLabelPoint: pointOnPolylineAtDistance(points, END_LABEL_DISTANCE, true),
   }
@@ -561,10 +561,12 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     snakeSourceSide?: 'l' | 'r'
     snakeTargetSide?: 'l' | 'r'
     snakeReverse?: boolean
-    chartRelation?: 'gantt' | 'git' | 'sequenceLoop'
+    chartRelation?: 'gantt' | 'git' | 'sequence' | 'sequenceLoop'
     gitOrientation?: 'horizontal' | 'vertical'
     ganttTargetMilestone?: boolean
     sequenceHostId?: string
+    /** width a sequence message label wraps within (layoutSequenceGraph) */
+    sequenceLabelWidth?: number
   } | undefined
 
   const loopSide = (sourceHandleId ?? targetHandleId ?? 'r') as 't' | 'b' | 'l' | 'r'
@@ -648,6 +650,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       targetPos = Position.Left
     }
   }
+  const sequenceMessage = chartRelation === 'sequence' || chartRelation === 'sequenceLoop'
+  if (sequenceMessage) {
+    // Lifeline points (2 px nodes): the message runs exactly between their centres.
+    sx = sourceNode.internals.positionAbsolute.x + (sourceNode.measured.width ?? 2) / 2
+    sy = sourceNode.internals.positionAbsolute.y + (sourceNode.measured.height ?? 2) / 2
+    tx = targetNode.internals.positionAbsolute.x + (targetNode.measured.width ?? 2) / 2
+    ty = targetNode.internals.positionAbsolute.y + (targetNode.measured.height ?? 2) / 2
+  }
   const snakeCurve = edgeData?.snakeRelation && edgeData.snakeSourceSide && edgeData.snakeTargetSide
   const gitCurve = chartRelation === 'git' ? gitFlowCurve({ x: sx, y: sy }, { x: tx, y: ty }, edgeData?.gitOrientation) : undefined
   const sequenceCurve = chartRelation === 'sequenceLoop' ? sequenceLoopCurve({ x: sx, y: sy }, { x: tx, y: ty }) : undefined
@@ -673,7 +683,7 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     routed = middle
       ? dedupeColinear([src, ...middle, tgt])
       : dedupeColinear([src, sourceStub, { x: sourceStub.x, y: targetStub.y }, targetStub, tgt])
-  } else if (!selfCurve && !sequenceCurve && !snakeCurve) {
+  } else if (!selfCurve && !sequenceMessage && !snakeCurve) {
     // The middle route runs between outward stubs. Keeping endpoint rectangles
     // here stops pinned edges from turning back through their own source/target.
     const obstacles = filterRoutingObstacles(
@@ -773,6 +783,14 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
     labelY = sequenceCurve.label.y
     sourceLabelPoint = sequenceCurve.sourceLabelPoint
     targetLabelPoint = sequenceCurve.targetLabelPoint
+  } else if (chartRelation === 'sequence') {
+    // A message is a straight horizontal arrow; its label sits above it (UML).
+    path = `M${sx},${sy}L${tx},${ty}`
+    labelX = (sx + tx) / 2
+    labelY = sy - 3
+    sourceLabelPoint = pointOnPolylineAtDistance([{ x: sx, y: sy }, { x: tx, y: ty }], END_LABEL_DISTANCE)
+    targetLabelPoint = pointOnPolylineAtDistance([{ x: sx, y: sy }, { x: tx, y: ty }], END_LABEL_DISTANCE, true)
+    middleArrowAngle = Math.atan2(ty - sy, tx - sx) * 180 / Math.PI
   } else if (snakeCurve) {
     const curve = edgeData!.snakeReverse
       ? snakeArcCurve({ x: sx, y: sy }, { x: tx, y: ty })
@@ -906,12 +924,21 @@ export const FloatingEdge = memo(({ id, source, target, markerEnd, markerStart, 
       {label && editingField !== 'label' && (
         <EdgeLabelRenderer>
           <div
-            className="gms-edge-label nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium shadow-sm"
+            className={`gms-edge-label nodrag nopan absolute rounded px-1.5 py-0.5 text-[11px] font-medium${sequenceMessage ? '' : ' shadow-sm'}`}
             style={{
-              transform: `translate(-50%,-50%) translate(${labelX}px,${renderedLabelY}px)`,
+              // Sequence labels wrap within their lifelines and sit above the arrow (right of a
+              // self message), so they never cover its ends.
+              transform: chartRelation === 'sequence'
+                ? `translate(-50%,-100%) translate(${labelX}px,${renderedLabelY}px)`
+                : chartRelation === 'sequenceLoop'
+                  ? `translate(0,-50%) translate(${labelX}px,${renderedLabelY}px)`
+                  : `translate(-50%,-50%) translate(${labelX}px,${renderedLabelY}px)`,
+              ...(sequenceMessage && d2?.sequenceLabelWidth
+                ? { maxWidth: d2.sequenceLabelWidth, width: 'max-content', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', lineHeight: '15px', textAlign: chartRelation === 'sequence' ? 'center' : 'left' }
+                : {}),
               background: 'var(--surface-1)',
               color: 'var(--edge-label)',
-              border: selected ? `1px solid ${d2?.selectedStroke ?? 'var(--accent)'}` : '1px solid var(--border)',
+              border: selected ? `1px solid ${d2?.selectedStroke ?? 'var(--accent)'}` : sequenceMessage ? '1px solid transparent' : '1px solid var(--border)',
               pointerEvents: 'all',
             }}
             onClick={() => selectRelation(id)}

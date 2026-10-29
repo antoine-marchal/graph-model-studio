@@ -79,7 +79,8 @@
     "onCommand:markdownStudio.exportDocx",
     "onCommand:markdownStudio.importTemplate",
     "onCommand:markdownStudio.manageMasters",
-    "onCommand:markdownStudio.preflight"
+    "onCommand:markdownStudio.preflight",
+    "onCommand:markdownStudio.createPaper"
   ],
   "contributes": {
     "customEditors": [
@@ -89,6 +90,9 @@
         "selector": [
           {
             "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.paper"
           }
         ],
         "priority": "default"
@@ -246,6 +250,11 @@
       {
         "command": "markdownStudio.manageMasters",
         "title": "%s202.manage.document.masters%",
+        "category": "Markdown Studio"
+      },
+      {
+        "command": "markdownStudio.createPaper",
+        "title": "%s207.create.paper.from.markdown%",
         "category": "Markdown Studio"
       },
       {
@@ -524,6 +533,11 @@
         }
       ],
       "explorer/context": [
+        {
+          "command": "markdownStudio.createPaper",
+          "when": "resourceExtname == .md",
+          "group": "navigation"
+        },
         {
           "command": "pasteAsMarkdown.copyAsHtml",
           "when": "resourceLangId == markdown",
@@ -879,12 +893,6 @@
             "order": 68,
             "markdownDescription": "%s098.colors.of.html.pdf.png%"
           },
-          "markdownStudio.pageView": {
-            "type": "boolean",
-            "default": true,
-            "order": 69,
-            "markdownDescription": "%s206.show.documents.as.paginated.pages%"
-          },
           "markdownStudio.assetsFolder": {
             "type": "string",
             "default": "",
@@ -1115,6 +1123,12 @@
           ".deck"
         ],
         "configuration": "./language-configuration.deck.json"
+      },
+      {
+        "id": "markdown",
+        "extensions": [
+          ".paper"
+        ]
       }
     ],
     "grammars": [

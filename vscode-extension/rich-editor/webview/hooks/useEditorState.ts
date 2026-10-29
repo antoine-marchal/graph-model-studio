@@ -61,7 +61,8 @@ export function useEditorState({
   const userTouched = useRef(false);
   useEffect(() => {
     const touch = () => (userTouched.current = true);
-    const events = ["keydown", "mousedown", "paste", "drop"] as const;
+    // pointerdown too: resize handles cancel it, so no mousedown follows.
+    const events = ["keydown", "mousedown", "pointerdown", "paste", "drop"] as const;
     for (const type of events) window.addEventListener(type, touch, true);
     return () => {
       for (const type of events) window.removeEventListener(type, touch, true);
@@ -140,7 +141,6 @@ export function useEditorState({
         if (msg.settings) {
           const merged = mergeSettings(msg.settings);
           applySettings(merged);
-          studio.set({ pageView: merged.pageView });
         }
         if (msg.isReadonly) {
           isReadonly.current = true;
@@ -207,7 +207,6 @@ export function useEditorState({
       } else if (msg.type === "settingsUpdated") {
         const merged = mergeSettings(msg.settings);
         applySettings(merged);
-        studio.set({ pageView: merged.pageView });
       } else if (msg.type === "gitDiffResponse") {
         if (typeof msg.headContent !== "string") {
           setStatus("Not tracked by git — nothing to diff against HEAD.");
@@ -338,7 +337,7 @@ export function useEditorState({
     });
     if (!title) {
       const name = filePath.current.split(/[\\/]/).pop() || "";
-      title = name.replace(/\.(md|markdown)$/i, "");
+      title = name.replace(/\.(md|markdown|paper)$/i, "");
     }
     userTouched.current = true;
     setFrontmatter(defaultFrontmatter(title));

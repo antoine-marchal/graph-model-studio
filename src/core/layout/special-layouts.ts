@@ -34,6 +34,8 @@ export interface DecorPath {
   color?: string
   dash?: string
   opacity?: number
+  /** closed shapes (sequence activation bars) */
+  fill?: string
 }
 
 export interface DecorArrow {
@@ -65,6 +67,8 @@ export interface SeqMessage {
   tx: number
   ty: number
   selfLoop: boolean
+  /** width the label wraps within (it never covers the arrow ends) */
+  labelWidth: number
 }
 
 /** Result of laying out one chart container's children. */
@@ -94,74 +98,263 @@ const empty = (): Pick<ChartLayout, 'placements' | 'frame' | 'messages' | 'suppr
   placements: {}, frame: { lines: [], texts: [] }, messages: [], suppressed: [],
 })
 
+/* ------------------------------------------------------------ sequence */
+
+/** Average glyph width / line height of a message label (11px, medium). */
+const SEQ_GLYPH = 6.2
+const SEQ_LINE_H = 15
+/** Horizontal padding of a label chip. */
+const SEQ_LABEL_PAD = 12
+/** Room kept clear at each end of a message so its label never covers the arrow ends. */
+const SEQ_END_ROOM = 18
+/** Widest a label grows before wrapping (straight / self messages). */
+const SEQ_LABEL_MAX = 260
+const SEQ_LOOP_LABEL_MAX = 180
+/** Horizontal reach of a self message (FloatingEdge.sequenceLoopCurve). */
+export const SEQ_LOOP_REACH = 44
+const SEQ_LOOP_DROP = 24
+const SEQ_BAR_W = 10
+/** A nested activation shifts right by this much. */
+const SEQ_BAR_NEST = 5
+
+const seqLabelWidth = (text: string) => text ? Math.max(...text.split('\n').map(line => line.length)) * SEQ_GLYPH + SEQ_LABEL_PAD : 0
+
+/** Lines a label wraps to within `maxWidth` (greedy, by words; long words break). */
+export function seqLabelLines(text: string, maxWidth: number): number {
+  if (!text.trim()) return 0
+  const max = Math.max(1, Math.floor((maxWidth - SEQ_LABEL_PAD) / SEQ_GLYPH))
+  let lines = 0
+  for (const paragraph of text.split('\n')) {
+    let used = 0
+    lines++
+    for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+      if (used > 0 && used + 1 + word.length <= max) {
+        used += 1 + word.length
+        continue
+      }
+      if (used > 0) lines++
+      used = word.length
+      while (used > max) {
+        lines++
+        used -= max
+      }
+    }
+  }
+  return lines
+}
+
+interface SeqBar { participant: number; depth: number; y1: number; y2: number }
+
 /**
- * Sequence diagram: participants become columns with dashed lifelines; the
- * relations between them are drawn as ordered horizontal messages.
+ * Sequence diagram (UML): participants become columns with dashed lifelines; the relations between
+ * them are ordered messages, one row each.
+ *
+ * - Column gaps grow so every message label fits between its two lifelines (labels wider than
+ *   SEQ_LABEL_MAX wrap), rows grow with the label's wrapped lines.
+ * - A resized frame (`frame`) is filled: extra width spreads the columns, extra height spreads the
+ *   rows; a narrower frame tightens the gaps down to the heads and wraps the labels more.
+ * - Activations: explicit `activityBar` children stay as placed; a participant without one gets
+ *   automatic bars, from a synchronous `message` it receives to the `replyMessage` it sends back
+ *   (nested for re-entrant calls, a self message opens a nested bar). Message ends stop at the bar.
+ * - Labels sit above their arrow (self messages: right of the loop) within `labelWidth`.
  */
-export function layoutSequenceGraph(elements: GraphElement[], relations: GraphRelation[], nodeSizes: Record<string, Size> = {}): ChartLayout {
+export function layoutSequenceGraph(
+  elements: GraphElement[],
+  relations: GraphRelation[],
+  nodeSizes: Record<string, Size> = {},
+  frame?: Partial<Size>,
+  options: { activations?: boolean } = {},
+): ChartLayout {
   const out = { ...empty(), width: 240, height: 160 } as ChartLayout
+  out.frame.paths = []
   const participants = elements.filter(element => element.type === 'participant' || element.type === 'seqActor')
   const activities = elements.filter(element => element.type === 'activityBar')
   if (participants.length === 0) return out
 
-  const COL = 184
+  const n = participants.length
   const sizes = participants.map(p => nodeSizes[p.id] ?? defSize(p, p.type === 'seqActor' ? 90 : 140, p.type === 'seqActor' ? 96 : 52))
   const headH = Math.max(...sizes.map(s => s.height))
-  const centerX = (i: number) => PADX + 74 + i * COL
   const headTop = TITLE + PADY
-
-  const partIds = new Set(participants.map(p => p.id))
-  const msgs = relations.filter(r => partIds.has(r.sourceId) && partIds.has(r.targetId))
-  const STEP = 38
-  const lifelineStart = headTop + headH + 2
-  const firstY = headTop + headH + 34
-  const lastCenter = centerX(participants.length - 1)
-
-  const width = lastCenter + 74 + PADX
   const idx = new Map(participants.map((p, i) => [p.id, i]))
-  const activityBottom = activities.reduce((bottom, activity) => {
-    const participantIndex = activity.parentId ? idx.get(activity.parentId) : undefined
-    if (participantIndex === undefined) return bottom
+  const msgs = relations.filter(r => idx.has(r.sourceId) && idx.has(r.targetId))
+  const labelOf = (r: GraphRelation) => r.label ?? ''
+
+  // 1. Column gaps: the heads, then the labels of the messages spanning them (shortest spans first).
+  const minGaps = Array.from({ length: n - 1 }, (_, i) => Math.max(110, (sizes[i].width + sizes[i + 1].width) / 2 + 24))
+  const wanted = [...minGaps]
+  let rightRoom = 0
+  const spans = msgs
+    .map(r => ({ r, a: idx.get(r.sourceId)!, b: idx.get(r.targetId)! }))
+    .map(m => ({ ...m, lo: Math.min(m.a, m.b), hi: Math.max(m.a, m.b) }))
+    .sort((x, y) => (x.hi - x.lo) - (y.hi - y.lo))
+  for (const m of spans) {
+    const labelW = Math.min(seqLabelWidth(labelOf(m.r)), m.lo === m.hi ? SEQ_LOOP_LABEL_MAX : SEQ_LABEL_MAX)
+    if (m.lo === m.hi) {
+      const need = SEQ_LOOP_REACH + 10 + labelW + 12
+      if (m.lo < n - 1) wanted[m.lo] = Math.max(wanted[m.lo], need + sizes[m.lo + 1].width / 4)
+      else rightRoom = Math.max(rightRoom, need)
+      continue
+    }
+    const need = labelW + 2 * SEQ_END_ROOM
+    let have = 0
+    for (let i = m.lo; i < m.hi; i++) have += wanted[i]
+    if (need > have) for (let i = m.lo; i < m.hi; i++) wanted[i] += (need - have) / (m.hi - m.lo)
+  }
+
+  // 2. Fit the frame width: spread or tighten the gaps.
+  const left = PADX + sizes[0].width / 2
+  const right = PADX + Math.max(sizes[n - 1].width / 2, rightRoom)
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0)
+  let gaps = wanted
+  let leftX = left
+  if (frame?.width && n > 1) {
+    const avail = frame.width - left - right
+    const natural = sum(wanted)
+    const minimal = sum(minGaps)
+    if (avail >= natural) gaps = wanted.map(g => g + (avail - natural) / (n - 1))
+    else if (avail > minimal) gaps = wanted.map((g, i) => minGaps[i] + (g - minGaps[i]) * (avail - minimal) / (natural - minimal))
+    else gaps = minGaps
+  } else if (frame?.width && n === 1) {
+    leftX = Math.max(left, (frame.width - rightRoom + sizes[0].width / 2) / 2)
+  }
+  const cx: number[] = [leftX]
+  for (const g of gaps) cx.push(cx[cx.length - 1] + g)
+  const width = Math.max(cx[n - 1] + right, frame?.width ?? 0)
+
+  // 3. Rows: one per message, as tall as its wrapped label.
+  const lifelineStart = headTop + headH + 2
+  const top = lifelineStart + 10
+  const rows = msgs.map(r => {
+    const a = idx.get(r.sourceId)!
+    const b = idx.get(r.targetId)!
+    const self = a === b
+    const room = self
+      ? (a < n - 1 ? gaps[a] - sizes[a + 1].width / 4 : width - cx[a] - PADX) - SEQ_LOOP_REACH - 22
+      : Math.abs(cx[b] - cx[a]) - 2 * SEQ_END_ROOM
+    const labelWidth = Math.max(48, Math.min(self ? SEQ_LOOP_LABEL_MAX : SEQ_LABEL_MAX, room))
+    const lines = seqLabelLines(labelOf(r), labelWidth)
+    const labelH = lines ? lines * SEQ_LINE_H + 4 : 0
+    const height = self ? Math.max(SEQ_LOOP_DROP + 26, labelH + 14) : Math.max(36, labelH + 24)
+    return { self, labelWidth, labelH, height }
+  })
+  const naturalArea = sum(rows.map(r => r.height)) + 18
+  if (frame?.height && rows.length) {
+    const extra = frame.height - PADY - 6 - top - naturalArea
+    if (extra > 0) for (const row of rows) row.height += extra / rows.length
+  }
+  let cursor = top
+  const lineYs = rows.map(row => {
+    const rowTop = cursor
+    cursor += row.height
+    // label + arrow centred in the row; a self message's loop centred instead
+    return row.self ? rowTop + row.height / 2 - SEQ_LOOP_DROP / 2 : rowTop + row.height / 2 + row.labelH / 2
+  })
+  const messageBottom = cursor + 18
+
+  // 4. Activations.
+  const explicitOn = new Set(activities.map(a => a.parentId).filter((id): id is string => !!id))
+  const rowSpan = Math.max(24, ...rows.map(row => row.height + 2))
+  let activityBottom = 0
+  for (const activity of activities) {
+    const p = activity.parentId ? idx.get(activity.parentId) : undefined
+    if (p === undefined) continue
     const size = nodeSizes[activity.id] ?? defSize(activity, 14, 96)
     const requestedY = Number(activity.properties?.['y'])
-    const y = Math.max(lifelineStart, Number.isFinite(requestedY) && requestedY > 0 ? requestedY : firstY)
-    const endpointYs = msgs.flatMap((relation, relationIndex) => {
-      const messageY = firstY + relationIndex * STEP
+    const y = Math.max(lifelineStart, Number.isFinite(requestedY) && requestedY > 0 ? requestedY : lineYs[0] ?? top)
+    const endpointYs = msgs.flatMap((relation, k) => {
       const points: number[] = []
-      if (relation.sourceId === activity.parentId) points.push(messageY)
-      if (relation.targetId === activity.parentId) points.push(relation.sourceId === relation.targetId ? messageY + 22 : messageY)
+      if (relation.sourceId === activity.parentId) points.push(lineYs[k])
+      if (relation.targetId === activity.parentId) points.push(relation.sourceId === relation.targetId ? lineYs[k] + SEQ_LOOP_DROP : lineYs[k])
       return points
     })
     const autoHeight = endpointYs
       .filter(endpointY => endpointY >= y)
-      .sort((left, right) => left - right)
-      .reduce((height, endpointY) => endpointY <= y + height + 24 ? Math.max(height, endpointY - y + 2) : height, size.height)
-    out.placements[activity.id] = {
-      x: centerX(participantIndex) - size.width / 2,
-      y,
-      width: size.width,
-      height: autoHeight,
+      .sort((a, b) => a - b)
+      // consecutive endpoints (one row apart, however tall the rows) extend the bar
+      .reduce((height, endpointY) => endpointY <= y + height + rowSpan ? Math.max(height, endpointY - y + 2) : height, size.height)
+    out.placements[activity.id] = { x: cx[p] - size.width / 2, y, width: size.width, height: autoHeight }
+    activityBottom = Math.max(activityBottom, y + autoHeight)
+  }
+  const bars: SeqBar[] = []
+  if (options.activations !== false) {
+    const open: { y: number; depth: number; caller: number }[][] = participants.map(() => [])
+    const lastY: number[] = participants.map(() => -Infinity)
+    const close = (p: number, y: number) => {
+      const bar = open[p].pop()
+      if (bar) bars.push({ participant: p, depth: bar.depth, y1: bar.y, y2: Math.max(y, bar.y + 16) })
     }
-    return Math.max(bottom, y + autoHeight)
-  }, 0)
-  const messageBottom = firstY + Math.max(msgs.length, 1) * STEP
-  const height = Math.max(messageBottom, activityBottom) + PADY + 6
+    msgs.forEach((r, k) => {
+      const a = idx.get(r.sourceId)!
+      const b = idx.get(r.targetId)!
+      const y = lineYs[k]
+      const auto = (p: number) => !explicitOn.has(participants[p].id)
+      if (a === b) {
+        if (auto(a)) bars.push({ participant: a, depth: open[a].length, y1: y + SEQ_LOOP_DROP - 4, y2: y + SEQ_LOOP_DROP + 14 })
+      } else if (r.type === 'replyMessage' || open[a][open[a].length - 1]?.caller === b) {
+        // a reply, or any message back to whoever opened the sender's current call, returns it
+        if (auto(a)) close(a, y)
+      } else if (r.type !== 'asyncMessage' && auto(b)) {
+        open[b].push({ y, depth: open[b].length, caller: a })
+      }
+      lastY[a] = Math.max(lastY[a], y + (a === b ? SEQ_LOOP_DROP : 0))
+      lastY[b] = Math.max(lastY[b], y + (a === b ? SEQ_LOOP_DROP : 0))
+    })
+    // a call never answered stays active until the participant's last message
+    open.forEach((stack, p) => {
+      while (stack.length) close(p, Math.max(lastY[p] + 10, stack[stack.length - 1].y + 16))
+    })
+  }
+  // outer bars first: a nested activation paints over the one it sits on
+  bars.sort((x, y) => x.depth - y.depth)
+  for (const bar of bars) {
+    const x = cx[bar.participant] - SEQ_BAR_W / 2 + bar.depth * SEQ_BAR_NEST
+    out.frame.paths!.push({
+      d: `M${x} ${bar.y1}H${x + SEQ_BAR_W}V${bar.y2}H${x}Z`,
+      fill: 'var(--surface-1)',
+      color: EDGE_COLOR,
+      width: 1.2,
+    })
+    activityBottom = Math.max(activityBottom, bar.y2)
+  }
 
+  /** x where a message touching participant `p` at `y` ends: its lifeline, or the edge of its bar. */
+  const endX = (p: number, y: number, towards: number) => {
+    let edgeLeft = cx[p]
+    let edgeRight = cx[p]
+    for (const bar of bars) {
+      if (bar.participant !== p || y < bar.y1 - 0.5 || y > bar.y2 + 0.5) continue
+      const x = cx[p] - SEQ_BAR_W / 2 + bar.depth * SEQ_BAR_NEST
+      edgeLeft = Math.min(edgeLeft, x)
+      edgeRight = Math.max(edgeRight, x + SEQ_BAR_W)
+    }
+    for (const activity of activities) {
+      const placed = out.placements[activity.id]
+      if (!placed || idx.get(activity.parentId ?? '') !== p || y < placed.y - 0.5 || y > placed.y + placed.height + 0.5) continue
+      edgeLeft = Math.min(edgeLeft, placed.x)
+      edgeRight = Math.max(edgeRight, placed.x + placed.width)
+    }
+    return towards >= cx[p] ? edgeRight : edgeLeft
+  }
+
+  const height = Math.max(Math.max(messageBottom, activityBottom + 12) + PADY + 6, frame?.height ?? 0)
   participants.forEach((p, i) => {
     const s = sizes[i]
     // bottom-align the heads so every lifeline starts at the same y
-    out.placements[p.id] = { x: centerX(i) - s.width / 2, y: headTop + (headH - s.height), width: s.width, height: s.height }
-    out.frame.lines.push({ x1: centerX(i), y1: lifelineStart, x2: centerX(i), y2: height - PADY, dash: '5 4', color: EDGE_COLOR })
+    out.placements[p.id] = { x: cx[i] - s.width / 2, y: headTop + (headH - s.height), width: s.width, height: s.height }
+    out.frame.lines.push({ x1: cx[i], y1: lifelineStart, x2: cx[i], y2: height - PADY, dash: '5 4', color: EDGE_COLOR })
   })
+  // Bars paint over their lifeline (paths come after lines).
 
   msgs.forEach((r, k) => {
     out.suppressed.push(r.id)
-    const sx = centerX(idx.get(r.sourceId)!)
-    const selfLoop = r.sourceId === r.targetId
-    const sy = firstY + k * STEP
-    const tx = selfLoop ? sx : centerX(idx.get(r.targetId)!)
-    const ty = selfLoop ? sy + 22 : sy
-    out.messages.push({ relId: r.id, sourceId: r.sourceId, targetId: r.targetId, sx, sy, tx, ty, selfLoop })
+    const a = idx.get(r.sourceId)!
+    const b = idx.get(r.targetId)!
+    const selfLoop = a === b
+    const sy = lineYs[k]
+    const ty = selfLoop ? sy + SEQ_LOOP_DROP : sy
+    const sx = endX(a, sy, selfLoop ? Infinity : cx[b])
+    const tx = endX(b, ty, selfLoop ? Infinity : cx[a])
+    out.messages.push({ relId: r.id, sourceId: r.sourceId, targetId: r.targetId, sx, sy, tx, ty, selfLoop, labelWidth: rows[k].labelWidth })
   })
 
   out.width = width

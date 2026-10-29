@@ -195,6 +195,20 @@ export async function planBodyUpdate(doc: PMNode, schema: Schema, oldBody: strin
   }
   if (i1 < 0) i1 = 0;
   if (i1 < i0) [i0, i1] = [i1, i0];
+  // A directive just before the change may be the opener it fills (an embed refreshed for the
+  // first time gets its content and `<!-- embed:end -->` after the opener): parse them together.
+  if (i0 > 0 && tops[i0 - 1].node.type.name === "directiveBlock" && tops[i0].r!.start >= s) i0--;
+  // A change bringing an end marker (`<!-- embed:end -->`…) closes the nearest unfilled opener
+  // above: re-parse from it, or what the opener now holds would stay outside it (VS Code may
+  // deliver an embed as two changes: the content, then the end marker).
+  if (/<!--\s*[\w:-]*:end\s*-->/.test(newBody.slice(s, en))) {
+    for (let k = i0; k >= 0; k--) {
+      if (tops[k].node.type.name === "directiveBlock" && !tops[k].node.attrs.close) {
+        i0 = k;
+        break;
+      }
+    }
+  }
   // Whole groups.
   while (i0 > 0 && tops[i0 - 1].r === tops[i0].r) i0--;
   while (i1 < tops.length - 1 && tops[i1 + 1].r === tops[i1].r) i1++;

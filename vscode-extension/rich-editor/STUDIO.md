@@ -1,9 +1,29 @@
 # Markdown Studio — document studio
 
-Word-like authoring of `.md` files in the `betterMarkdown.editor` custom editor: paginated paper,
+Word-like authoring of **`.paper`** files (Markdown, `markdown` language) in the `betterMarkdown.editor`
+custom editor: paginated paper,
 named styles, sections, headers / footers, masters imported from corporate Word templates,
 positioned objects with layers, and native DOCX export without Pandoc. Markdown stays the only
 source; everything else is derived.
+
+A `.md` file opens in the same editor as a plain continuous Markdown editor (toolbar, sticky
+headings, outline; no ribbon, no pages, no view switch, no column / row resizing). Rename a `.md` to
+`.paper` to lay it out as a document. The body of either never contains `<!-- ms… -->` comments:
+table column widths / row heights of a `.paper` live in the table group (`blocks.<id>.cols` /
+`rows`), a picture width is a Pandoc attribute (`![alt](src){width=60%}`), a GMC diagram size is its
+fence `width=` / `height=` (px). Pictures and diagrams are resized with handles while selected, in
+line as well as floating.
+
+*Markdown Studio: Create a .paper document from this Markdown* (explorer menu, `.md` Tools menu)
+writes `<name>.paper` holding one embed block of the `.md` (refresh the embed to follow the source)
+and opens it.
+
+**Table design** (Inspector, caret in a table of a `.paper`): shading, text color, bold and borders
+(color, style solid / dashed / dotted / double / none, width in pt, which edges: all / outside /
+inside / top / bottom) for the whole table or the selected cell range. Stored in the table group:
+`blocks.<id>.table` and `blocks.<id>.cells` keyed by Excel ranges (`"A1:D1"`), later ranges win;
+borders resolve per grid edge (`document/tableLook.ts`), exported as Word cell borders / shading.
+Ranges do not follow row / column insertions.
 
 ## Where the code lives
 
@@ -27,6 +47,12 @@ Tailwind and its page-level rules) before `studio.css`, so both studios share on
   Home / Insert / Layout / References / Design / Review / View plus the contextual *Object format*
   (or *Master format*) tab, navigator (Outline / Pages), inspector (Format / Styles / Layers /
   Check), status bar (page, section, words, sync dot, issues, zoom). Units shown in cm, stored in pt.
+* **One home per command, one context per selection** (Slides Studio). Character formatting and
+  alignment: Home ribbon. Page setup: Layout ribbon and the *Document* pane (master, margins, section,
+  fields). The Format pane shows only the selection: text → spacing / indents (pagination and
+  bookmark under *More options*); table → table alignment and cell design; picture / diagram →
+  position and its options; objects → geometry, wrap, look. A selected block or object gets the
+  contextual *Format* tab (Arrange).
 * **No boxes on the paper.** Blocks (code, diagrams, embeds, equations) render as document content;
   their tools appear only while selected or focused. Their settings live in the inspector and the
   context menu.
@@ -279,8 +305,7 @@ breaks are exact.
 * `markdownToolkit.pandoc.path` is deprecated and ignored. `markdownToolkit.pandoc.referenceDoc`
   is deprecated: after an export, a document with no master is offered "Import as master" for the
   configured reference document.
-* New settings: `markdownStudio.pageView` (paper view, default on),
-  `markdownStudio.docx.mode` (`permissive` | `strict`), `markdownStudio.docx.hiddenObjects`
+* New settings: `markdownStudio.docx.mode` (`permissive` | `strict`), `markdownStudio.docx.hiddenObjects`
   (`omit` | `include`).
 * New commands: Export editable DOCX, Import Word template as master, Manage document masters,
   Run corporate preflight.
@@ -298,7 +323,7 @@ pnpm run test:studio:browser    # built webview against a stub host (pagination,
                                 # floating blocks, rulers, master canvas, perf; regressions: moves
                                 # across pages at 75 % / 150 % while scrolling, text box / shape
                                 # editing, footer formatting, GMC float round trip, H1–H6, master
-                                # placeholders, continuous view)
+                                # placeholders, .md continuous editor, sizes)
 node rich-editor/esbuild.mjs --dev && npx tsx rich-editor/test/studio.profile.ts   # CPU + React commits
 pnpm run test:rich-editor:browser
 pnpm run test:studio:host       # inside VS Code: import, export, no-op open, undo, flush, preflight

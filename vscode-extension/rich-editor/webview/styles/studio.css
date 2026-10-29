@@ -208,7 +208,11 @@ body.vscode-high-contrast:not(.vscode-high-contrast-light) .ms-studio {
 .ms-paged .deck-block figure { border-color: transparent; }
 .ms-paged .math-block-rendered { border-color: transparent; }
 .ms-paged .frontmatter-panel { display: none; }
-.ms-paged .ProseMirror-selectednode:not(.ms-object):not(.ms-break) { outline: 1.5px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+/* Block frame (blockFrame.ts): dashed around the hovered block; on the frame it turns blue, a click selects the block. */
+.ms-paged .ms-block-hover { outline: 1px dashed #a3a8b0; outline-offset: 4px; border-radius: 2px; transition: outline-color 120ms ease-out; }
+.ms-paged .ms-frame-hot .ms-block-hover { outline-color: var(--accent); }
+.ms-paged .ms-frame-hot, .ms-paged .ms-frame-hot * { cursor: pointer; }
+.ms-paged .ProseMirror-selectednode:not(.ms-object):not(.ms-break) { outline: 1.5px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .ms-paged .image-block.selected figure { outline-width: 1.5px; outline-color: var(--accent); }
 
 /* Breaks: Word's non-printing marks. */
@@ -365,3 +369,23 @@ body.zen-mode .app.ms-studio .workspace { grid-template-columns: minmax(0, 1fr);
 
 /* Header / footer / placeholder text (`::: id` groups): edited on the page, never in the flow. */
 .ProseMirror .ms-story-source { display: none; }
+
+/* Inspector sub-heading inside a section (table design › borders). */
+.insp-sub { margin: 10px 0 4px; font-size: 11px; font-weight: 600; color: var(--fg-muted); }
+
+/* Format pane: secondary paragraph options behind one disclosure; inline link button. */
+.insp-more { margin-top: 8px; }
+.insp-more > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 11px; color: var(--fg-muted); user-select: none; }
+.insp-more > summary::-webkit-details-marker { display: none; }
+.insp-more > summary::before { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 140ms ease-out; }
+.insp-more[open] > summary::before { transform: rotate(45deg); }
+.insp-more > summary:hover { color: var(--fg); }
+.insp-more > :not(summary) { margin-top: 6px; }
+.link-btn { background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.ms-line-sample { padding: 0 4px; }
+
+/* Inspector tabs: the active one names itself, the others are icons (five panes fit 280px). */
+.insp-tab { gap: 6px; }
+.insp-tab:not(.is-active) { flex: 0 0 auto; padding-inline: 8px; }
+/* A picture shows its resize frame as the selection; no second outline around the block. */
+.ProseMirror-selectednode:has(> .image-block), .image-block.ProseMirror-selectednode { outline: none !important; box-shadow: none !important; }
