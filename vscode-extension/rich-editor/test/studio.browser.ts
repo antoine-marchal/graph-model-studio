@@ -248,6 +248,7 @@ async function regressions(browser: any) {
     assert.equal((await obj.boundingBox()).y, t.y, `${kind}: selecting text does not move the object`);
     await p.keyboard.press("Shift+End");
     await p.waitForTimeout(150); // selectionchange reaches ProseMirror asynchronously
+    await p.waitForFunction(() => { const s = (document.querySelector(".ProseMirror") as any).editor.state.selection; return s.to > s.from; });
     await p.getByRole("tab", { name: "Home" }).click();
     await p.getByTestId("bold").click();
     assert.match(await obj.innerHTML(), /<strong>Hello world/, `${kind}: ribbon bold applies inside`);
@@ -312,16 +313,22 @@ async function regressions(browser: any) {
     await footer.scrollIntoViewIfNeeded();
     const fb = await footer.boundingBox();
     await p.mouse.dblclick(fb.x + 40, fb.y + fb.height / 2);
-    const ta = p.locator(".ms-story-editor textarea");
+    const ta = p.locator(".ms-story-editor .ms-story-input");
     await ta.waitFor();
+    await p.waitForFunction(() => /Confidential/.test(document.querySelector(".ms-story-input")?.textContent ?? ""));
+    // Past the double-click interval: the drag is not a triple click (paragraph selection).
+    await p.waitForTimeout(700);
     const tb = await ta.boundingBox();
-    await p.mouse.move(tb.x + 4, tb.y + 10);
+    await p.mouse.move(tb.x + 10, tb.y + 10);
     await p.mouse.down();
     await p.mouse.move(tb.x + 70, tb.y + 10, { steps: 8 });
     await p.mouse.up();
-    assert.ok(await ta.evaluate((e: HTMLTextAreaElement) => e.selectionEnd > e.selectionStart), "mouse selection in the footer");
+    assert.ok(await p.evaluate(() => (window.getSelection()?.toString().length ?? 0) > 0), "mouse selection in the footer");
+    // Select the first word ("Confidential").
+    await p.evaluate(() => (document.querySelector(".ms-story-input") as any).editor.commands.setTextSelection({ from: 1, to: 13 }));
     await p.getByTestId("bold").click();
     assert.equal(await ta.count(), 1, "the ribbon does not end footer editing");
+    assert.equal(await ta.locator("b, strong").count(), 1, "bold shown while editing (WYSIWYG)");
     await p.keyboard.press("Control+Enter");
     await p.waitForTimeout(800);
     const text = await docOf(p);
@@ -332,11 +339,69 @@ async function regressions(browser: any) {
     // Alignment and style of the footer being edited: `blocks.footer`, shown on the page.
     await footer.dblclick();
     await ta.waitFor();
+    await p.waitForFunction(() => /Confiden/.test(document.querySelector(".ms-story-input")?.textContent ?? ""));
     await p.getByTestId("align-center").click();
+    await p.waitForTimeout(300);
+    assert.equal(await ta.evaluate((e: Element) => getComputedStyle(e).textAlign), "center", "alignment shown while editing");
+    assert.match(await ta.innerText(), /Confiden/, "text kept after the alignment change");
     await p.keyboard.press("Control+Enter");
     await p.waitForTimeout(800);
     assert.match(await docOf(p), /blocks:\n\s+footer: \{ align: center \}/, "footer alignment in the frontmatter");
     assert.equal(await p.locator(".ms-story-footers .ms-story-text").first().evaluate((e: Element) => getComputedStyle(e).textAlign), "center", "footer centered on the page");
+    // The footer is a document of its own: blocks (a list) and drawings (a shape, moved by drag).
+    await footer.dblclick();
+    await ta.waitFor();
+    await p.waitForFunction(() => /Confiden/.test(document.querySelector(".ms-story-input")?.textContent ?? ""));
+    await p.waitForTimeout(500);
+    await p.keyboard.press("Control+End");
+    await p.keyboard.press("Enter");
+    await p.keyboard.type("- First item");
+    await p.waitForTimeout(200);
+    assert.equal(await ta.locator("ul li").count(), 1, `a list in the footer: ${await p.evaluate(() => [(document.activeElement as HTMLElement)?.className, document.querySelector(".ms-story-input")?.innerHTML].join(" | "))}`);
+    await p.getByRole("tab", { name: "Insert" }).click();
+    await p.locator("button", { hasText: "Text box" }).first().click();
+    await p.waitForTimeout(600);
+    const shape = p.locator("[data-story-object]").first();
+    assert.equal(await shape.count(), 1, "text box drawn in the footer band");
+    assert.equal(await ta.count(), 1, "inserting a drawing keeps the footer in edit");
+    const sb = await shape.boundingBox();
+    await p.mouse.move(sb.x + 10, sb.y + 8);
+    await p.mouse.down();
+    await p.mouse.move(sb.x - 90, sb.y + 8, { steps: 6 });
+    await p.mouse.up();
+    await p.waitForTimeout(600);
+    assert.ok((await p.locator("[data-story-object]").first().boundingBox()).x < sb.x - 50, "drawing moved");
+    await p.locator(".ms-story-editor .ms-story-input").click();
+    await p.keyboard.press("Control+Enter");
+    await p.waitForTimeout(800);
+    const withBlocks = await docOf(p);
+    assert.match(withBlocks, /::: footer\n[^]*\n- First item\n:::/, "list saved in the footer group");
+    assert.match(withBlocks, /footers:[^]*default:[^]*id: footer[^]*objects:[^]*textbox/, "footer drawing in the frontmatter");
+    assert.deepEqual(errors, []);
+    await p.close();
+  }
+
+  // Column backgrounds (Word cell shading): Format pane › Columns, one column and the whole block.
+  {
+    const doc = ["# Columns", "", '<div class="ms-columns" style="display:flex;gap:24px">', "", '<div class="ms-column" style="flex:1;min-width:0">', "", "Left text", "", "</div>", "", '<div class="ms-column" style="flex:1;min-width:0">', "", "Right text", "", "</div>", "", "</div>", ""].join("\n");
+    const { p, errors } = await open(browser, doc, { width: 1500, height: 1000 });
+    await p.locator(".ProseMirror p", { hasText: "Right text" }).click();
+    await p.evaluate(() => (window as any).__studio.set({ pane: "format", rightOpen: true }));
+    // Menus close on scroll: bring the picker into view before opening it.
+    await p.getByTestId("column-fill").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(200);
+    await p.getByTestId("column-fill").click();
+    await p.getByTestId("column-fill-menu").locator(".palette-chip").nth(3).click();
+    await p.waitForTimeout(800);
+    assert.match(await docOf(p), /<div class="ms-column" style="flex:1;min-width:0;background:#[0-9A-F]{6};padding:12px">\n\nRight text/, "column background in the source");
+    assert.notEqual(await p.locator(".ms-column[data-fill]").evaluate((e: Element) => getComputedStyle(e).backgroundColor), "rgba(0, 0, 0, 0)", "column background shown");
+    // Menus close on scroll: bring the picker into view before opening it.
+    await p.getByTestId("columns-fill").scrollIntoViewIfNeeded();
+    await p.waitForTimeout(200);
+    await p.getByTestId("columns-fill").click();
+    await p.getByTestId("columns-fill-menu").locator(".palette-chip").nth(5).click();
+    await p.waitForTimeout(800);
+    assert.match(await docOf(p), /<div class="ms-columns" style="display:flex;gap:24px;background:#[0-9A-F]{6};padding:12px">/, "block background in the source");
     assert.deepEqual(errors, []);
     await p.close();
   }

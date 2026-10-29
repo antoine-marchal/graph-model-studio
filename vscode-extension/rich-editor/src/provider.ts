@@ -9,6 +9,8 @@ import { MasterLibrary } from "./masterLibrary";
 import { preflight, reportMarkdown, type ExportHost } from "./exportDocx";
 import type { ExportReport } from "./docx/compile";
 
+const loc = (fr: string, en: string) => (vscode.env.language.toLowerCase().startsWith("fr") ? fr : en);
+
 const CONFIG_NAMESPACE = "markdownStudio";
 const CURSORS_KEY = "betterMarkdown.cursors";
 const CONSENT_SHOWN_KEY = "betterMarkdown.consentShown";
@@ -143,6 +145,29 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
         return this.library.delete(uri, String(msg.id));
       case "reimport":
         return this.library.reimport(uri, String(msg.id));
+      case "importDocument": {
+        const target = await this.library.importDocument(uri);
+        if (target) await vscode.commands.executeCommand("vscode.openWith", target, "betterMarkdown.editor");
+        return target?.toString();
+      }
+      // Master browser actions that need a name or a confirmation (webviews have no prompt()).
+      case "renamePrompt": {
+        const name = await vscode.window.showInputBox({ prompt: loc("Nouveau nom affiché (l’identifiant ne change pas)", "New display name (the id stays)"), value: String(msg.name ?? "") });
+        return name ? this.library.rename(uri, String(msg.id), name) : undefined;
+      }
+      case "duplicatePrompt": {
+        const name = await vscode.window.showInputBox({ prompt: loc("Nom de la copie", "Name of the copy"), value: `${msg.name ?? msg.id} copy` });
+        return name ? this.library.create(uri, name, String(msg.id)) : undefined;
+      }
+      case "createPrompt": {
+        const name = await vscode.window.showInputBox({ prompt: loc("Nom du masque", "Master name") });
+        return name ? this.library.create(uri, name) : undefined;
+      }
+      case "deleteConfirm": {
+        const yes = loc("Supprimer", "Delete");
+        const pick = await vscode.window.showWarningMessage(loc(`Supprimer le masque « ${msg.name ?? msg.id} » ?`, `Delete master "${msg.name ?? msg.id}"?`), { modal: true }, yes);
+        return pick === yes ? this.library.delete(uri, String(msg.id)) : undefined;
+      }
       case "save":
         return this.library.save(uri, msg.master);
       case "usage": {

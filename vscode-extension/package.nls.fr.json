@@ -128,5 +128,6 @@
   "s267.refresh.masters": "Actualiser",
   "s268.duplicate.master": "Dupliquer…",
   "s269.no.document.master": "Aucun masque de document dans cet espace de travail.\n[Importer un modèle Word](command:markdownStudio.importTemplate)\n[Nouveau masque](command:markdownStudio.newMaster)",
-  "s207.create.paper.from.markdown": "Créer un document .paper à partir de ce Markdown"
+  "s207.create.paper.from.markdown": "Créer un document .paper à partir de ce Markdown",
+  "s270.import.word.document.as.paper": "Importer un document Word en .paper"
 }

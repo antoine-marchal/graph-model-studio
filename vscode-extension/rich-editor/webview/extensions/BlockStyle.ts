@@ -47,6 +47,17 @@ export const Columns = Node.create({
   isolating: true,
   draggable: true,
 
+  addAttributes() {
+    return {
+      // One background behind all the columns (Word cells shaded alike), RRGGBB.
+      fill: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-fill"),
+        renderHTML: (a: any) => (a.fill ? { "data-fill": a.fill, style: `background:#${a.fill};padding:12px` } : {}),
+      },
+    };
+  },
+
   parseHTML() {
     return [{ tag: 'div[data-type="columns"]' }];
   },
@@ -74,6 +85,12 @@ export const Column = Node.create({
         parseHTML: (el: HTMLElement) => Number(el.getAttribute("data-flex")) || 1,
         renderHTML: (a: any) =>
           a.flex && a.flex !== 1 ? { "data-flex": String(a.flex), style: `flex-grow:${a.flex}` } : {},
+      },
+      // Background (Word cell shading), RRGGBB.
+      fill: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-fill"),
+        renderHTML: (a: any) => (a.fill ? { "data-fill": a.fill, style: `background:#${a.fill};padding:12px;margin:0` } : {}),
       },
     };
   },

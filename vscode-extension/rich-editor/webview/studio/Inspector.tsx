@@ -12,7 +12,7 @@ import type { BlockProps, MasterDef, ObjectDescriptor, SectionProps, StyleDef } 
 import { studio, useStudio, objectOf, notify, type Pane } from "./store";
 import {
   applyLayerOrder, currentBlock, currentSectionBreak, deleteMasterObjects, floatBlockAt, getSync, inlineObject, reorder, selectObject, setBlockProps, setMasterObjectMode, setPageSetup, setPlacement,
-  setSectionProps, setStyleOverride, updateMaster, updateMasterObjects, updateMeta, updateObjects, exitMasterEdit, renameObject, renameMasterObject,
+  setSectionProps, setStyleOverride, columnsAt, setColumnFill, updateMaster, updateMasterObjects, updateMeta, updateObjects, exitMasterEdit, renameObject, renameMasterObject,
 } from "./actions";
 import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
 import { masterAction } from "./bridge";
@@ -265,6 +265,7 @@ function BlockFormat({ editor, readonly }: { editor: Editor; readonly: boolean }
         </Section>
       )}
       {table && <TableLookSection editor={editor} readonly={readonly} align={p.align} />}
+      <ColumnsSection editor={editor} readonly={readonly} />
       {c.name === "msSection" && (
         <p className="hint insp-hint">
           {tr("Mise en page de la section : panneau ", "Section page setup: ")}
@@ -762,4 +763,18 @@ function fontInstalled(font: string): boolean {
   const base = ctx.measureText(sample).width;
   ctx.font = `32px "${font}", monospace`;
   return ctx.measureText(sample).width !== base;
+}
+
+/** Background of the column holding the caret, and of its whole column group (Word cell shading). */
+function ColumnsSection({ editor, readonly }: { editor: Editor; readonly: boolean }) {
+  const at = columnsAt(editor);
+  if (!at.column || !at.columns) return null;
+  return (
+    <Section title={tr("Colonnes", "Columns")}>
+      <div className="grid2">
+        <ColorPicker label={tr("Fond de la colonne", "Column background")} value={at.column.fill} allowNone testId="column-fill" onChange={(v) => !readonly && setColumnFill(at.column!.pos, v)} />
+        <ColorPicker label={tr("Fond du bloc", "Block background")} value={at.columns.fill} allowNone testId="columns-fill" onChange={(v) => !readonly && setColumnFill(at.columns!.pos, v)} />
+      </div>
+    </Section>
+  );
 }

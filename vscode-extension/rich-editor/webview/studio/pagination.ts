@@ -28,6 +28,10 @@ export const paginationKey = new PluginKey<DecorationSet>("msPagination");
 export const PAGE_GAP = 28;
 const TEXT_TYPES = new Set(["paragraph", "heading", "blockquote", "bulletList", "orderedList", "taskList", "codeBlock"]);
 const MAX_PASSES = 4;
+/** Consecutive passes that changed the spacers: stops a layout that oscillates. */
+const MAX_CHURN = 8;
+/** Block containers paginated through their children (embed / link / toc cards, alignment, diff). */
+const CONTAINERS = new Set(["directiveBlock", "alignBlock", "diffBlock"]);
 
 const px = ptToPx;
 
@@ -159,6 +163,9 @@ class Paginator {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private frame = 0;
   private passes = 0;
+  private churn = 0;
+  private heights = new Map<string, number>();
+  private observed = new Set<Element>();
   private staticSet: Decoration[] = [];
   private staticKey = "";
   private spacerKey = "";
@@ -172,7 +179,9 @@ class Paginator {
   };
 
   constructor(private view: EditorView) {
-    this.ro = new ResizeObserver(() => this.schedule(60));
+    // Blocks are observed too: the root keeps its min-height, so a block that grows or shrinks on
+    // its own (diagram rendered, embed collapsed) would not resize it.
+    this.ro = new ResizeObserver(() => this.schedule(60, true));
     this.ro.observe(view.dom);
     view.dom.addEventListener("load", this.onLoad, true);
     void document.fonts?.ready.then(() => this.schedule(0, true));
@@ -192,6 +201,7 @@ class Paginator {
     this.view = view;
     if (view.state.doc !== prev.doc) {
       this.passes = 0;
+      this.churn = 0;
       this.schedule(view.state.doc.content.size > 200_000 ? 250 : 90);
     }
   }
@@ -215,6 +225,7 @@ class Paginator {
   }
 
   private dispatch(): void {
+    this.churn++;
     const set = DecorationSet.create(this.view.state.doc, [...this.staticSet, ...this.spacers]);
     this.view.dispatch(this.view.state.tr.setMeta(paginationKey, set).setMeta("addToHistory", false));
   }
@@ -225,7 +236,7 @@ class Paginator {
       view.dom.addEventListener("compositionend", () => this.schedule(30), { once: true });
       return;
     }
-    if (this.passes >= MAX_PASSES) return;
+    if (this.passes >= MAX_PASSES || this.churn >= MAX_CHURN) return;
     this.passes++;
     const t0 = performance.now();
     const doc = view.state.doc;
@@ -274,34 +285,65 @@ class Paginator {
     const spacerYs = [...root.querySelectorAll<HTMLElement>("[data-ms-spacer]")]
       .map((el) => ({ y: yOf(el.getBoundingClientRect().top), h: el.classList.contains("ms-repeat-header") ? el.getBoundingClientRect().height / zoom : Number(el.dataset.h) || 0 }))
       .sort((a, b) => a.y - b.y);
+    // Spacer heights summed above a DOM y: prefix sums + binary search (was O(blocks × spacers)).
+    const above = [0];
+    for (const s of spacerYs) above.push(above[above.length - 1] + s.h);
     const content = (domY: number) => {
-      let above = 0;
-      for (const s of spacerYs) if (s.y < domY - 0.5) above += s.h;
-      return domY - padTop - above;
+      let lo = 0;
+      let hi = spacerYs.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (spacerYs[mid].y < domY - 0.5) lo = mid + 1;
+        else hi = mid;
+      }
+      return domY - padTop - above[lo];
     };
 
-    const tops: { node: PMNode; pos: number; dom: HTMLElement }[] = [];
-    doc.forEach((node, pos) => {
+    // Paginated units: top-level blocks, with containers (embeds…) flattened into their children
+    // so a long embed breaks between its blocks instead of overflowing as one unit. The first
+    // child takes the container's top and position: its header moves with it.
+    /** `dom` = the unit's own element (lines, rows); `box` = where it starts (container if first). */
+    const tops: { node: PMNode; pos: number; dom: HTMLElement; box: HTMLElement; section: number }[] = [];
+    const collect = (node: PMNode, pos: number, section: number) => {
       const dom = view.nodeDOM(pos) as HTMLElement | null;
-      if (!dom || !(dom instanceof HTMLElement) || node.type.name === "msObject") return;
-      tops.push({ node, pos, dom });
-    });
+      // Not in the flow: objects (positioned) and hidden nodes (header / footer stories). A hidden
+      // node's rect is all zeros, i.e. its "top" follows the scroll position.
+      if (!dom || !(dom instanceof HTMLElement) || node.type.name === "msObject" || !dom.getClientRects().length) return;
+      if (CONTAINERS.has(node.type.name) && node.childCount) {
+        const start = tops.length;
+        node.forEach((child, off) => collect(child, pos + 1 + off, section));
+        // Hidden children (collapsed embed) give no unit: the container stays atomic.
+        const shown = tops.slice(start).filter((t) => t.dom.getClientRects().length && !t.dom.closest(".collapsed"));
+        tops.length = start;
+        if (shown.length) {
+          tops.push(...shown);
+          Object.assign(tops[start], { pos, box: dom });
+          return;
+        }
+      }
+      tops.push({ node, pos, dom, box: dom, section });
+    };
     const secOf = sectionIndexes(doc);
-    const secByPos = new Map<number, number>();
     let k = 0;
-    doc.forEach((_n, pos) => void secByPos.set(pos, secOf[k++]));
+    doc.forEach((node, pos) => collect(node, pos, secOf[k++]));
+    const rects = tops.map((t) => t.box.getBoundingClientRect());
+    if (this.observed.size > 2 * tops.length + 32) {
+      this.ro.disconnect();
+      this.observed.clear();
+      this.ro.observe(view.dom);
+    }
+    for (const t of tops) for (const el of [t.dom, t.box]) if (!this.observed.has(el)) (this.observed.add(el), this.ro.observe(el));
 
-    const blocks: Block[] = tops.map(({ node, pos, dom }, i) => {
-      const r = dom.getBoundingClientRect();
+    const blocks: Block[] = tops.map(({ node, pos, dom, section }, i) => {
+      const r = rects[i];
       const top = content(yOf(r.top));
-      const next = tops[i + 1];
-      const bottom = next ? content(yOf(next.dom.getBoundingClientRect().top)) : content(yOf(r.bottom));
+      const bottom = i + 1 < tops.length ? content(yOf(rects[i + 1].top)) : content(yOf(r.bottom));
       const name = node.type.name;
       const props = parseBlockProps(node.attrs.msBlock);
-      const sheet = studio.get().sections[secByPos.get(pos) ?? 0]?.sheet;
+      const sheet = studio.get().sections[section]?.sheet;
       const styleId = props.style ?? defaultStyleFor({ type: name === "codeBlock" ? "code" : name, depth: node.attrs.level });
       const style = sheet?.styles.get(styleId)?.paragraph ?? {};
-      const kind: Block["kind"] = name === "msPageBreak" ? "pageBreak" : name === "msSection" ? "sectionBreak" : name === "table" ? "table" : TEXT_TYPES.has(name) ? "text" : "atomic";
+      const kind: Block["kind"] = name === "msPageBreak" ? "pageBreak" : name === "msSection" ? "sectionBreak" : name === "table" ? "table" : name === "columns" ? "columns" : TEXT_TYPES.has(name) ? "text" : "atomic";
       return {
         pos,
         top,
@@ -311,8 +353,9 @@ class Paginator {
         keepTogether: props.keepTogether ?? style.keepTogether,
         pageBreakBefore: props.pageBreakBefore ?? style.pageBreakBefore,
         widowControl: props.widowControl ?? style.widowControl,
-        lines: kind === "text" ? () => measureLines(view, dom, yOf, content) : undefined,
-        rows: kind === "table" ? () => measureRows(view, dom, yOf, content) : undefined,
+        lines: kind === "text" ? once(() => measureLines(view, dom, yOf, content)) : undefined,
+        rows: kind === "table" ? once(() => measureRows(view, dom, yOf, content)) : undefined,
+        columns: kind === "columns" ? once(() => measureColumns(view, node, pos, dom, top, yOf)) : undefined,
       };
     });
     const sectionFrames = g.pages.map((p) => ({ contentHeight: px(contentHeight(p)) }));
@@ -326,10 +369,16 @@ class Paginator {
     const decos: Decoration[] = [];
     let shift = 0;
     const keys: string[] = [];
+    const heights = new Map<string, number>();
     for (const b of result.breaks) {
       const page = g.pages[result.pages[b.page].section];
       const desired = pageTops[b.page] + px(page.margins.top);
-      const h = Math.max(0, Math.round((desired - (padTop + b.at + shift)) * 100) / 100);
+      let h = Math.max(0, Math.round((desired - (padTop + b.at + shift)) * 100) / 100);
+      // Sub-pixel layout makes the measure jitter (220.24 ↔ 220.25): keep the previous height
+      // within half a pixel, or every pass redraws the spacers and the layout never settles.
+      const prevH = this.heights.get(`${b.page}-${b.kind}`);
+      if (prevH !== undefined && Math.abs(prevH - h) < 0.5) h = prevH;
+      heights.set(`${b.page}-${b.kind}`, h);
       const headerH = b.repeatHeader?.height ?? 0;
       shift += h + headerH;
       // The widget key leaves the position out: typing before a break only shifts it (mapped), so
@@ -350,6 +399,21 @@ class Paginator {
             return clone;
           }, { side: -2 + i * 0.01, key: `${key}-h${i}-${headerH}`, ignoreSelection: true }));
         });
+      } else if (b.kind === "columns" && b.cuts) {
+        // One spacer per broken column: each resumes at the page top. Only the earliest one
+        // counts in content coordinates; the others are column-local (`data-h` 0).
+        b.cuts.forEach((c, n) => {
+          const hc = Math.max(0, Math.round((h - (c.at - b.at)) * 100) / 100);
+          const $pos = view.state.doc.resolve(c.pos);
+          const inline = $pos.parent.isTextblock && $pos.parentOffset > 0;
+          const counted = c.pos === b.pos;
+          decos.push(Decoration.widget(c.pos, () => {
+            const el = spacerEl(inline ? "span" : "div", hc, b.page);
+            el.dataset.colSpacer = String(hc);
+            if (!counted) el.dataset.h = "0";
+            return el;
+          }, { side: -1, key: `${key}-c${n}-${hc}-${counted ? 1 : 0}`, ignoreSelection: true, marks: [] }));
+        });
       } else {
         const $pos = view.state.doc.resolve(b.pos);
         const inline = b.kind === "line" && $pos.parent.isTextblock && $pos.parentOffset > 0;
@@ -357,13 +421,14 @@ class Paginator {
       }
     }
     const spacerKey = keys.join("|");
+    this.heights = heights;
     if (spacerKey !== this.spacerKey) {
       this.spacerKey = spacerKey;
       this.spacers = decos;
       this.dispatch();
       // Spacers inside paragraphs can re-wrap a line: check once more.
       this.schedule(16);
-    }
+    } else this.churn = 0;
 
     // Page boxes for the paper layer.
     let number = 1;
@@ -395,6 +460,11 @@ class Paginator {
   }
 }
 
+const once = <T,>(f: () => T): (() => T) => {
+  let v: T | undefined;
+  return () => (v ??= f());
+};
+
 /** Line boxes of a text block: text fragments grouped by line, each with the position it starts at. */
 function measureLines(view: EditorView, dom: HTMLElement, yOf: (y: number) => number, content: (y: number) => number): Line[] {
   const frags: { top: number; bottom: number; left: number; clientTop: number; clientH: number }[] = [];
@@ -419,9 +489,42 @@ function measureLines(view: EditorView, dom: HTMLElement, yOf: (y: number) => nu
   // (posAtCoords is the expensive part of a pagination pass).
   for (const l of lines) {
     let pos: number | undefined;
-    Object.defineProperty(l, "pos", { get: () => (pos ??= view.posAtCoords({ left: l.left + 0.5, top: l.clientTop + l.clientH / 2 })?.pos ?? 0) });
+    Object.defineProperty(l, "pos", { configurable: true, get: () => (pos ??= view.posAtCoords({ left: l.left + 0.5, top: l.clientTop + l.clientH / 2 })?.pos ?? 0) });
   }
   return lines;
+}
+
+/**
+ * Break units of side-by-side columns, per column, in the block's natural coordinates: the lines
+ * of text blocks, other blocks whole. The column's own page spacers are taken out.
+ */
+function measureColumns(view: EditorView, node: PMNode, pos: number, dom: HTMLElement, top: number, yOf: (y: number) => number): Line[][] {
+  const blockY = yOf(dom.getBoundingClientRect().top);
+  const out: Line[][] = [];
+  node.forEach((column, colOff) => {
+    const colPos = pos + 1 + colOff;
+    const colDom = view.nodeDOM(colPos) as HTMLElement | null;
+    if (!colDom) return out.push([]);
+    const spacers = [...colDom.querySelectorAll<HTMLElement>("[data-col-spacer]")].map((el) => ({ y: yOf(el.getBoundingClientRect().top), h: Number(el.dataset.colSpacer) || 0 }));
+    const natural = (y: number) => top + (y - blockY) - spacers.filter((s) => s.y < y - 0.5).reduce((a, s) => a + s.h, 0);
+    const units: Line[] = [];
+    column.forEach((child, off) => {
+      const childPos = colPos + 1 + off;
+      const childDom = view.nodeDOM(childPos) as HTMLElement | null;
+      if (!childDom || !(childDom instanceof HTMLElement) || !childDom.getClientRects().length) return;
+      const lines = TEXT_TYPES.has(child.type.name) ? measureLines(view, childDom, yOf, natural) : [];
+      if (lines.length) {
+        // The first line breaks before the block (its margin moves with it).
+        Object.defineProperty(lines[0], "pos", { value: childPos });
+        units.push(...lines);
+      } else {
+        const r = childDom.getBoundingClientRect();
+        units.push({ top: natural(yOf(r.top)), bottom: natural(yOf(r.bottom)), pos: childPos });
+      }
+    });
+    out.push(units);
+  });
+  return out;
 }
 
 function measureRows(view: EditorView, dom: HTMLElement, yOf: (y: number) => number, content: (y: number) => number): Row[] {

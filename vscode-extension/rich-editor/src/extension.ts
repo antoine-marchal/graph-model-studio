@@ -144,11 +144,22 @@ export function activate(context: vscode.ExtensionContext): void {
       return exportDocx(provider, uri, opts ?? {});
     })),
     vscode.commands.registerCommand("markdownStudio.importTemplate", guarded(async (arg?: unknown, file?: vscode.Uri, opts?: { keepAll?: boolean }) => {
+      // Explorer context menu on a .docx: that file is the template.
+      if (arg instanceof vscode.Uri && /\.(docx|dotx)$/i.test(arg.path)) [file, arg] = [arg, undefined];
       const uri = targetDocument(arg) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
       if (!uri) return vscode.window.showInformationMessage("Open a folder or a Markdown document first.");
       const result = await provider.library.importDocx(uri, file, undefined, !!opts?.keepAll);
       if (result) vscode.window.showInformationMessage(`Imported master(s): ${result.ids.join(", ")}. The import report is next to master.json.`);
       return result;
+    })),
+    // Word document → `.paper` (body, pictures, shapes, layout) + its page design as a master.
+    vscode.commands.registerCommand("markdownStudio.importDocx", guarded(async (arg?: unknown) => {
+      const file = arg instanceof vscode.Uri && /\.(docx|dotx)$/i.test(arg.path) ? arg : undefined;
+      const target = await provider.library.importDocument(file ?? targetDocument(arg) ?? vscode.workspace.workspaceFolders?.[0]?.uri, file);
+      if (!target) return undefined;
+      await vscode.commands.executeCommand("vscode.openWith", target, "betterMarkdown.editor");
+      void vscode.window.showInformationMessage(`Imported as ${vscode.workspace.asRelativePath(target)}. What could not be kept is listed in the .import-report.json beside it.`);
+      return target;
     })),
     // A `.paper` laid out from a `.md`: one embed block of the Markdown (refresh it to follow the
     // source), so the `.md` stays the text and the `.paper` adds the page design.
@@ -176,6 +187,8 @@ export function activate(context: vscode.ExtensionContext): void {
       return provider.showReport(uri, report);
     })),
     vscode.commands.registerCommand("markdownStudio.manageMasters", guarded(async (arg?: unknown) => {
+      // An open .paper shows its master browser (thumbnails, actions); else a quick pick.
+      if (!(arg instanceof vscode.Uri) && provider.postToStudio({ type: "showMasterBrowser" })) return true;
       const uri = targetDocument(arg) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
       if (!uri) return vscode.window.showInformationMessage("Open a folder or a Markdown document first.");
       const { entries } = await provider.library.list(uri);

@@ -109,6 +109,12 @@ export interface StudioState {
   leftOpen: boolean;
   rightOpen: boolean;
   ribbonCollapsed: boolean;
+  /** Rich editor of the header / footer being edited: the ribbon and inspector act on it. */
+  storyEditor: import("@tiptap/core").Editor | null;
+  /** Selected drawing of the header / footer being edited. */
+  storyObjectSel: string | null;
+  /** Master browser shown over the workspace. */
+  mastersOpen: boolean;
   /** Master being edited (master edit mode), null in document mode. */
   masterEdit: MasterDef | null;
   /** Id of the master the edited copy replaces on the paper (a starter is edited as a new copy). */
@@ -154,6 +160,9 @@ let state: StudioState = {
   leftOpen: true,
   rightOpen: true,
   ribbonCollapsed: false,
+  mastersOpen: false,
+  storyEditor: null,
+  storyObjectSel: null,
   masterEdit: null,
   masterEditOf: null,
   report: null,

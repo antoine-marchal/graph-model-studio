@@ -82,6 +82,7 @@ window.addEventListener("message", (e) => {
   }
   if (msg.type === "mastersResult") applyMasters(msg);
   else if (msg.type === "mastersChanged") void refreshMasters();
+  else if (msg.type === "showMasterBrowser") studio.set({ mastersOpen: true });
   // Explorer › Document masters: edit a master on this document's pages, or apply it.
   else if (msg.type === "enterMasterEdit" && typeof msg.id === "string") void import("./actions").then((a) => (studio.get().masterEdit ? a.exitMasterEdit(true) : Promise.resolve()).then(() => a.enterMasterEdit(msg.id)));
   else if (msg.type === "applyMaster" && typeof msg.id === "string") void import("./actions").then((a) => {

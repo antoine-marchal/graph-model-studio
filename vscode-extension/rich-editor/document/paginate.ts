@@ -27,7 +27,7 @@ export interface Block {
   top: number;
   /** Top of the next block (the block's advance, margins included). */
   bottom: number;
-  kind: "text" | "table" | "atomic" | "pageBreak" | "sectionBreak";
+  kind: "text" | "table" | "atomic" | "pageBreak" | "sectionBreak" | "columns";
   keepWithNext?: boolean;
   keepTogether?: boolean;
   pageBreakBefore?: boolean;
@@ -35,6 +35,11 @@ export interface Block {
   /** Line boxes (text) — only asked for when the block crosses a page boundary. */
   lines?: () => Line[];
   rows?: () => Row[];
+  /**
+   * Side-by-side columns: the break units of each column (lines of its text, its other blocks
+   * whole), in the block's natural coordinates (no page break inside it).
+   */
+  columns?: () => Line[][];
 }
 
 export interface SectionFrame {
@@ -58,13 +63,18 @@ export interface Break {
   /** Content coordinate of the first thing on the new page. */
   at: number;
   pos: number;
-  kind: "block" | "line" | "row";
+  kind: "block" | "line" | "row" | "columns";
   block: number;
   /** New page index. */
   page: number;
   /** Repeated table header rows on the new page. */
   repeatHeader?: { height: number; rows: number };
   explicit?: boolean;
+  /**
+   * Columns break: where each broken column continues (`at` in the same coordinates as `at`, which
+   * is the earliest of them). Each column gets its own spacer so they all resume at the page top.
+   */
+  cuts?: { pos: number; at: number }[];
 }
 
 export interface Overflow {
@@ -134,7 +144,9 @@ export function paginate(blocks: Block[], sections: SectionFrame[], opts: { minL
     // Keep with next: the block and the first piece of the next one share a page.
     if (b.bottom <= page().limit + EPS) {
       if (b.keepWithNext && blocks[i + 1] && blocks[i + 1].kind !== "pageBreak" && blocks[i + 1].kind !== "sectionBreak") {
-        const need = firstPiece(i + 1);
+        // The first piece ends before the block does: when the whole next block fits, so does it
+        // (skips measuring lines — the costly part — for every heading).
+        const need = blocks[i + 1].bottom <= page().limit + EPS ? blocks[i + 1].bottom : firstPiece(i + 1);
         if (need > page().limit + EPS) {
           // Move the whole keep-with-next run that ends here, when it fits on a page.
           let k = i;
@@ -150,6 +162,10 @@ export function paginate(blocks: Block[], sections: SectionFrame[], opts: { minL
 
     // Does not fit. Unsplittable (or kept together and not taller than a page): next page.
     const height = b.bottom - b.top;
+    if (b.kind === "columns" && !b.keepTogether && b.columns) {
+      breakColumns(i, b);
+      continue;
+    }
     const splittable = b.kind === "text" || b.kind === "table";
     const together = !splittable || (b.keepTogether && height <= frame().contentHeight);
     if (together) {
@@ -216,4 +232,44 @@ export function paginate(blocks: Block[], sections: SectionFrame[], opts: { minL
     }
   }
   return { pages, breaks, overflows };
+
+  /**
+   * Columns cross the page end: every column breaks before its first unit that does not fit, as
+   * Word breaks a table row across pages; the columns resume together at the next page top
+   * (continuation coordinates: a column resumes at the earliest cut, `shift` per column).
+   */
+  function breakColumns(i: number, b: Block): void {
+    const cols = b.columns!().map((lines) => lines.filter((l) => l.bottom > l.top));
+    const shift = cols.map(() => 0);
+    const next = cols.map(() => 0);
+    for (let guard = 0; guard < MAX_PAGES; guard++) {
+      const limit = page().limit + EPS;
+      const cuts: { col: number; k: number; at: number; pos: number }[] = [];
+      cols.forEach((lines, c) => {
+        let k = next[c];
+        while (k < lines.length && lines[k].bottom - shift[c] <= limit) k++;
+        if (k < lines.length) cuts.push({ col: c, k, at: lines[k].top - shift[c], pos: lines[k].pos });
+      });
+      if (!cuts.length) return;
+      // Nothing of the block fits on this page: it moves whole (once), like a paragraph.
+      if (cuts.length === cols.filter((l) => l.length).length && cuts.every((x) => x.k === 0) && b.top > page().start + EPS) {
+        if (newPage({ at: b.top, pos: b.pos, kind: "block", block: i })) continue;
+      }
+      // A unit taller than a page at a page top: place it, report it, cut after it.
+      for (const x of cuts) {
+        if (x.at <= page().start + EPS) {
+          overflows.push({ block: i, page: pages.length - 1, height: cols[x.col][x.k].bottom - cols[x.col][x.k].top, limit: frame().contentHeight });
+          next[x.col] = x.k + 1;
+        }
+      }
+      const live = cuts.filter((x) => x.at > page().start + EPS);
+      if (!live.length) continue;
+      const first = live.reduce((a, x) => (x.at < a.at ? x : a));
+      if (!newPage({ at: first.at, pos: first.pos, kind: "columns", block: i, cuts: live.map((x) => ({ pos: x.pos, at: x.at })) })) return;
+      for (const x of live) {
+        shift[x.col] += x.at - first.at;
+        next[x.col] = x.k;
+      }
+    }
+  }
 }

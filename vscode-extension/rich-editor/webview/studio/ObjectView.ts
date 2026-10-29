@@ -29,7 +29,7 @@ export function shapeSvg(d: ObjectDescriptor, w: number, h: number, theme: Theme
   const el = (tag: string, attrs: Record<string, string | number>) => {
     const e = document.createElementNS(SVG_NS, tag);
     for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, String(v));
-    e.setAttribute("fill", tag === "line" ? "none" : d.type === "textbox" && style.fill === undefined ? "none" : fill);
+    e.setAttribute("fill", tag === "line" || attrs.fill === "none" ? "none" : d.type === "textbox" && style.fill === undefined ? "none" : fill);
     e.setAttribute("stroke", stroke === "#none" ? "none" : stroke);
     e.setAttribute("stroke-width", String(sw));
     if (style.dash === "dash") e.setAttribute("stroke-dasharray", `${sw * 4} ${sw * 3}`);
@@ -46,6 +46,12 @@ export function shapeSvg(d: ObjectDescriptor, w: number, h: number, theme: Theme
     case "rightArrow": el("polygon", { points: `0,${h * 0.25} ${w * 0.65},${h * 0.25} ${w * 0.65},0 ${w},${h / 2} ${w * 0.65},${h} ${w * 0.65},${h * 0.75} 0,${h * 0.75}` }); break;
     case "chevron": el("polygon", { points: `0,0 ${w * 0.75},0 ${w},${h / 2} ${w * 0.75},${h} 0,${h} ${w * 0.25},${h / 2}` }); break;
     case "line": el("line", { x1: 0, y1: 0, x2: w, y2: h }); break;
+    case "custom": {
+      const g = d.geometry;
+      if (!g) { el("rect", { x: 0, y: 0, width: w, height: h }); break; }
+      el("path", { d: g.d, transform: `scale(${w / Math.max(g.w, 0.01)} ${h / Math.max(g.h, 0.01)})`, "vector-effect": "non-scaling-stroke", ...(g.open ? { fill: "none" } : {}) });
+      break;
+    }
     default: el("rect", { x: 0, y: 0, width: w, height: h });
   }
   return svg;

@@ -7,6 +7,8 @@
  */
 import React, { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
+import { EditorContent, useEditor } from "@tiptap/react";
+import { contentExtensions } from "../editorExtensions";
 import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -16,10 +18,10 @@ import { storyGroupId } from "../../document/groups";
 import { isAutoField, placeholderKey, placeholderPrompt, placeholderValue, type AutoField } from "../../document/placeholders";
 import { resolveColor } from "../../document/styles";
 import type { Margins, MasterDef, ObjectDescriptor, StoryDef, StorySet } from "../../document/schema";
-import { ptToPx, pxToPt } from "../../document/units";
+import { cssLineHeight, fontStack, ptToPx, pxToPt } from "../../document/units";
 import { shapeSvg } from "./ObjectView";
 import { studio, useStudio, type PageBox } from "./store";
-import { currentBlock, currentSectionBreak, getEditor, setBlockProps, setPageSetup, setSectionProps, updateMaster, updateMasterObjects, updateMeta, setGroupText } from "./actions";
+import { currentBlock, currentSectionBreak, getEditor, getSync, setBlockProps, updateStoryObjects, setPageSetup, setSectionProps, updateMaster, updateMasterObjects, updateMeta, setGroupText } from "./actions";
 import { parseBlockProps } from "../extensions/StudioNodes";
 import { useEditorDerived } from "./hooks";
 import { tr } from "./ui";
@@ -141,16 +143,16 @@ function TextContent({ id, d, page, values, theme, master }: { id: string; d: Ob
 }
 
 /** One recurring drawing: shape / picture with its text, or a placeholder. */
-function Furniture({ id, d, page, pageNo, assetBase, theme, values, editable, selected, master }: { id: string; d: ObjectDescriptor; page: PageBox; pageNo: number; assetBase?: string; theme: any; values: Values; editable?: boolean; selected?: boolean; master: boolean }) {
+function Furniture({ id, d, page, pageNo, assetBase, theme, values, editable, selected, master, story }: { id: string; d: ObjectDescriptor; page: PageBox; pageNo: number; assetBase?: string; theme: any; values: Values; editable?: boolean; selected?: boolean; master: boolean; story?: boolean }) {
   const style = boxStyle(d, page);
   const fillable = !!d.placeholder && !isAutoField(d.placeholder) && !master;
   const cls = `ms-furniture${editable ? " is-editable" : ""}${selected ? " is-selected" : ""}${d.placeholder ? " is-placeholder" : ""}${fillable ? " is-fillable" : ""}`;
-  if (d.type === "image" && d.src) return <img className={cls} data-id={id} style={style} src={assetBase ? `${assetBase}/${d.src}` : d.src} alt={d.alt ?? ""} draggable={false} />;
+  if (d.type === "image" && d.src) return <img className={cls} data-id={id} data-story-object={story ? "" : undefined} style={style} src={assetBase ? `${assetBase}/${d.src}` : d.src} alt={d.alt ?? ""} draggable={false} />;
   const w = ptToPx(d.box.width);
   const h = ptToPx(d.box.height);
   const hasShape = d.type === "shape" || d.style?.fill || d.style?.line;
   return (
-    <div className={cls} data-id={id} style={fillable ? { ...style, zIndex: 3 } : style}>
+    <div className={cls} data-id={id} data-story-object={story ? "" : undefined} style={fillable ? { ...style, zIndex: 3 } : style}>
       {hasShape && <span className="ms-furniture-shape" ref={(el) => el?.replaceChildren(shapeSvg(d, w, h, theme))} />}
       {(d.type === "textbox" || d.text || d.placeholder) && <TextContent id={id} d={d} page={pageNo} values={values} theme={theme} master={master} />}
     </div>
@@ -159,7 +161,7 @@ function Furniture({ id, d, page, pageNo, assetBase, theme, values, editable, se
 
 type StoryKind = "headers" | "footers";
 
-const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundaries, overflow, editing, onEdit, master, masterSel }: {
+const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundaries, overflow, editing, onEdit, master, masterSel, storySel }: {
   p: PageBox;
   sec: ResolvedSection | undefined;
   values: Values;
@@ -170,6 +172,7 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
   onEdit: (page: number, kind: StoryKind | null, variant?: keyof StorySet, value?: string | null) => void;
   master: MasterDef | null;
   masterSel: string[];
+  storySel: string | null;
 }) {
   const evenAndOdd = !!sec?.chain.some((m) => m.evenAndOdd);
   const opts = { firstOfSection: p.firstOfSection, titlePage: !!sec?.titlePage, pageNumber: p.number, evenAndOdd };
@@ -186,7 +189,7 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
     return (
       <div className={`ms-story ms-story-${kind}${isEditing ? " is-editing" : ""}${s?.markdown ? "" : " is-empty"}`} style={style} data-label={`${label}${origin}`} onDoubleClick={() => onEdit(p.index, kind, variant)} title={tr(`Double-cliquer pour modifier : ${label.toLowerCase()}${origin}`, `Double-click to edit the ${label.toLowerCase()}${origin}`)}>
         {isEditing ? (
-          <StoryEditor initial={s?.markdown ?? ""} kind={kind} variant={variant} master={!!master} onDone={(value) => onEdit(p.index, null, variant, value === (s?.markdown ?? "") ? null : value)} />
+          <StoryEditor initial={s?.markdown ?? ""} block={s?.block} kind={kind} variant={variant} master={!!master} onDone={(value) => onEdit(p.index, null, variant, value === (s?.markdown ?? "") ? null : value)} />
         ) : s?.markdown ? (
           <div className={`ms-story-text${s.block?.style ? ` ms-s-${s.block.style}` : ""}`} style={{ textAlign: s.block?.align as React.CSSProperties["textAlign"] }} dangerouslySetInnerHTML={{ __html: storyHtml(fillFields(s.markdown, { page: p.number, pages: values.total, title: values.title, fields: values.fields })) }} />
         ) : (
@@ -197,9 +200,14 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
   };
   return (
     <div className="ms-page" style={{ top: p.top, left: p.left, width: p.width, height: p.height }} data-page={p.index + 1}>
-      {theme && [...Object.entries(sec?.background ?? {}), ...Object.entries(header?.objects ?? {}), ...Object.entries(footer?.objects ?? {})].filter(([id]) => !(id in own)).map(([id, d]) => (
+      {theme && Object.entries(sec?.background ?? {}).filter(([id]) => !(id in own)).map(([id, d]) => (
         <Furniture key={id} id={id} d={d} page={p} pageNo={p.number} assetBase={assetBase} theme={theme} values={values} master={!!master} />
       ))}
+      {/* Header / footer drawings: editable while their story is edited. */}
+      {theme && ([["headers", header], ["footers", footer]] as const).flatMap(([kind, s]) => Object.entries(s?.objects ?? {}).map(([id, d]) => (
+        <Furniture key={`${kind}-${id}`} id={id} d={d} page={p} pageNo={p.number} assetBase={assetBase} theme={theme} values={values} master={!!master}
+          story={editing === kind} editable={editing === kind} selected={editing === kind && storySel === id} />
+      )))}
       {theme && master && Object.entries(own).map(([id, d]) => (
         <Furniture key={id} id={id} d={d} page={p} pageNo={p.number} assetBase={assetBase} theme={theme} values={values} editable selected={masterSel.includes(id)} master />
       ))}
@@ -222,6 +230,8 @@ export function PageLayer({ editor }: { editor: Editor }) {
   const boundaries = useStudio((s) => s.showBoundaries);
   const master = useStudio((s) => s.masterEdit);
   const masterSel = useStudio((s) => s.masterSel);
+  const storySel = useStudio((s) => s.storyObjectSel);
+  useStoryObjectTool();
   const [editing, setEditing] = useState<{ page: number; kind: StoryKind } | null>(null);
   const total = layout?.pages.length ?? 0;
   const values = useMemo<Values>(() => {
@@ -279,7 +289,7 @@ export function PageLayer({ editor }: { editor: Editor }) {
         const owner = sec?.chain[sec.chain.length - 1]?.id;
         return (
           <PageSheet key={p.index} p={p} sec={sec} values={values} assetBase={owner ? assetBases[owner] : undefined} boundaries={boundaries} overflow={layout.overflows.some((o) => o.page === p.index)}
-            editing={editing?.page === p.index ? editing.kind : null} onEdit={onEdit} master={master} masterSel={masterSel} />
+            editing={editing?.page === p.index ? editing.kind : null} onEdit={onEdit} master={master} masterSel={masterSel} storySel={storySel} />
         );
       })}
       {master && <MasterObjectTool editor={editor} />}
@@ -288,53 +298,142 @@ export function PageLayer({ editor }: { editor: Editor }) {
 }
 
 /**
- * Ribbon inline formats while a header / footer is edited: the Markdown `marker` around the
- * selection (again: removed). `null`: a format stories do not have, ignored. False when no story
- * is being edited (the command goes to the document).
+ * Header / footer edited in place as a document of its own: the same blocks as the body
+ * (headings, lists, tables, side-by-side columns, pictures, diagrams…) with the story's paragraph
+ * style and alignment. The ribbon and inspector act on it while it is edited (`storyEditor`).
+ * Fields stay `{{page}}` tokens. Saved as Markdown on Ctrl+Enter or when the focus leaves for the
+ * document; Escape cancels.
  */
-export function storyWrap(marker: string | null): boolean {
-  const ta = document.activeElement;
-  if (!(ta instanceof HTMLTextAreaElement) || !ta.closest(".ms-story-editor")) return false;
-  if (!marker) return true;
-  const { selectionStart: a, selectionEnd: b, value } = ta;
-  const inner = value.slice(a, b);
-  const on = inner.length >= 2 * marker.length && inner.startsWith(marker) && inner.endsWith(marker);
-  ta.setRangeText(on ? inner.slice(marker.length, -marker.length) : `${marker}${inner}${marker}`, a, b, "select");
-  ta.dispatchEvent(new Event("input", { bubbles: true }));
-  return true;
-}
-
-function StoryEditor({ initial, kind, variant, master, onDone }: { initial: string; kind: StoryKind; variant: keyof StorySet; master: boolean; onDone: (value: string | null) => void }) {
-  const [value, setValue] = useState(initial);
+function StoryEditor({ initial, block, kind, variant, master, onDone }: { initial: string; block?: StoryDef["block"]; kind: StoryKind; variant: keyof StorySet; master: boolean; onDone: (value: string | null) => void }) {
   const done = useRef(false);
+  const loaded = useRef(false);
+  const editor: Editor | null = useEditor({
+    extensions: contentExtensions(),
+    editorProps: {
+      attributes: {
+        class: "tiptap-editor ms-story-input",
+        "data-kind": kind,
+        "data-variant": variant,
+        role: "textbox",
+        "aria-label": kind === "headers" ? tr("En-tête", "Header") : tr("Pied de page", "Footer"),
+      },
+      handleKeyDown: (_view, e): boolean => {
+        if (e.key === "Escape") return e.preventDefault(), finish(null), true;
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) return e.preventDefault(), finish(markdown()), true;
+        return false;
+      },
+    },
+  }, []);
+  const markdown = (): string => (editor && loaded.current ? getSync()?.toMarkdown(editor.getHTML()).trim() ?? initial : initial);
   const finish = (v: string | null) => {
     if (done.current) return;
     done.current = true;
+    studio.set({ storyEditor: null });
     onDone(v);
+    getEditor()?.view.focus();
   };
+  useEffect(() => {
+    if (!editor) return;
+    let alive = true;
+    void (getSync()?.toHtml(initial) ?? Promise.resolve(initial)).then((html) => {
+      if (!alive || editor.isDestroyed) return;
+      editor.commands.setContent(html || "<p></p>", { emitUpdate: false });
+      loaded.current = true;
+      editor.commands.focus("end");
+      studio.set({ storyEditor: editor });
+    });
+    // Leaving for the document (not for the ribbon, a menu or the inspector) ends the editing.
+    const blur = ({ event }: { event: FocusEvent }) => {
+      const to = event.relatedTarget as HTMLElement | null;
+      if (to?.closest?.(".ribbon-wrap, .menu, .inspector, .ms-story-editor, .ctx-menu, dialog")) return;
+      setTimeout(() => {
+        const now = document.activeElement as HTMLElement | null;
+        if (now?.closest?.(".ms-story-editor, .ribbon-wrap, .menu, .inspector, .ctx-menu, dialog")) return;
+        finish(markdown());
+      }, 0);
+    };
+    editor.on("blur", blur);
+    return () => {
+      alive = false;
+      editor.off("blur", blur);
+      if (studio.get().storyEditor === editor) studio.set({ storyEditor: null });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor]);
   return (
-    <div className="ms-story-editor" onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
-      <textarea
-        className="ms-story-input"
-        data-kind={kind}
-        data-variant={variant}
-        autoFocus
-        rows={2}
-        aria-label={kind === "headers" ? tr("Texte de l’en-tête (Markdown)", "Header text (Markdown)") : tr("Texte du pied de page (Markdown)", "Footer text (Markdown)")}
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          // Leaving from the keyboard goes back to the document text.
-          if (e.key === "Escape") (e.preventDefault(), finish(null), getEditor()?.view.focus());
-          if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) (e.preventDefault(), finish(value), getEditor()?.view.focus());
-        }}
-        onBlur={() => finish(value)}
-      />
+    <div className={`ms-story-editor ms-story-text${block?.style ? ` ms-s-${block.style}` : ""}`} style={{ textAlign: block?.align as React.CSSProperties["textAlign"] }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
+      <EditorContent editor={editor} />
       <div className="ms-story-hint">
-        {master ? tr("Masque", "Master") : tr("Document", "Document")} · <kbd>Ctrl+Entrée</kbd> {tr("valider", "save")} · <kbd>Échap</kbd> {tr("annuler", "cancel")} · {"{{page}} {{pages}} {{title}} {{field:nom}}"}
+        {master ? tr("Masque", "Master") : tr("Document", "Document")} · <kbd>Ctrl+Entrée</kbd> {tr("valider", "save")} · <kbd>Échap</kbd> {tr("annuler", "cancel")} · {tr("champs", "fields")} {"{{page}} {{pages}} {{title}} {{field:nom}}"}
       </div>
     </div>
   );
+}
+
+/**
+ * Drawings of the header / footer being edited: a click selects one (the story keeps the focus),
+ * dragging moves it (transient, one edit on release), Delete removes it, a click in the text
+ * deselects it.
+ */
+function useStoryObjectTool(): void {
+  useEffect(() => {
+    let drag: { id: string; el: HTMLElement; sx: number; sy: number; box: ObjectDescriptor["box"]; moved: boolean } | null = null;
+    const zoom = () => studio.get().zoom || 1;
+    const down = (e: PointerEvent) => {
+      if (!studio.get().storyEditor || e.button !== 0) return;
+      const el = (e.target as HTMLElement).closest<HTMLElement>("[data-story-object]");
+      if (!el) {
+        if (studio.get().storyObjectSel && (e.target as HTMLElement).closest(".ms-story-editor")) studio.set({ storyObjectSel: null });
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      const id = el.dataset.id!;
+      const sec = studio.get().sections[0];
+      const d = (["headers", "footers"] as const).flatMap((k) => (["default", "first", "even"] as const).map((v) => sec?.[k]?.[v]?.objects?.[id])).find(Boolean);
+      if (!d) return;
+      studio.set({ storyObjectSel: id });
+      drag = { id, el, sx: e.clientX, sy: e.clientY, box: d.box, moved: false };
+    };
+    const move = (e: PointerEvent) => {
+      if (!drag) return;
+      const dx = (e.clientX - drag.sx) / zoom();
+      const dy = (e.clientY - drag.sy) / zoom();
+      if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
+      drag.el.style.translate = `${dx}px ${dy}px`;
+    };
+    const up = (e: PointerEvent) => {
+      if (!drag) return;
+      const { id, el, box, moved, sx, sy } = drag;
+      drag = null;
+      el.style.translate = "";
+      if (!moved) return;
+      updateStoryObjects({ [id]: { box: { ...box, x: Math.round((box.x + pxToPt((e.clientX - sx) / zoom())) * 100) / 100, y: Math.round((box.y + pxToPt((e.clientY - sy) / zoom())) * 100) / 100 } } });
+    };
+    const key = (e: KeyboardEvent) => {
+      const id = studio.get().storyObjectSel;
+      if (!id || !studio.get().storyEditor) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        e.preventDefault();
+        e.stopPropagation();
+        updateStoryObjects({ [id]: null });
+        studio.set({ storyObjectSel: null });
+      } else if (e.key === "Escape") {
+        e.stopPropagation();
+        studio.set({ storyObjectSel: null });
+      }
+    };
+    document.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    document.addEventListener("keydown", key, true);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      document.removeEventListener("keydown", key, true);
+    };
+  }, []);
 }
 
 /* Master objects on the canvas ------------------------------------------- */
@@ -485,6 +584,8 @@ function next(b: ObjectDescriptor["box"], dx: number, dy: number, handle: string
 /** Named styles of the document (master → local overrides) as CSS for the paper view. */
 export function StyleSheetCss() {
   const sheet = useStudio((s) => s.sections[0]?.sheet);
+  const masters = useStudio((s) => s.masters);
+  const fontClasses = useMemo(() => Object.assign({}, ...masters.map((m) => m.fontClasses ?? {})) as NonNullable<MasterDef["fontClasses"]>, [masters]);
   const css = useMemo(() => {
     if (!sheet) return "";
     const theme = sheet.theme;
@@ -496,7 +597,7 @@ export function StyleSheetCss() {
       const p = s.paragraph;
       const font = r.font === "theme.heading" ? theme.fonts.heading : r.font === "theme.body" ? theme.fonts.body : r.font;
       return [
-        font && `font-family:"${font}",system-ui,sans-serif`,
+        font && `font-family:${fontStack(font, fontClasses[font])}`,
         r.size && `font-size:${r.size}pt`,
         resolveColor(r.color, theme) && `color:#${resolveColor(r.color, theme)}`,
         r.bold !== undefined && `font-weight:${r.bold ? 700 : 400}`,
@@ -504,10 +605,11 @@ export function StyleSheetCss() {
         r.underline && "text-decoration:underline",
         r.caps && "text-transform:uppercase",
         r.smallCaps && "font-variant:small-caps",
+        r.spacing && `letter-spacing:${r.spacing}pt`,
         p.align && `text-align:${p.align}`,
         p.spaceBefore !== undefined && `margin-top:${p.spaceBefore}pt`,
         p.spaceAfter !== undefined && `margin-bottom:${p.spaceAfter}pt`,
-        p.lineSpacing && `line-height:${p.lineSpacing}`,
+        p.lineSpacing && `line-height:${cssLineHeight(p.lineSpacing)}`,
         p.indentLeft && `padding-left:${p.indentLeft}pt`,
         p.indentRight && `padding-right:${p.indentRight}pt`,
         p.firstLine && `text-indent:${p.firstLine}pt`,
@@ -526,7 +628,7 @@ export function StyleSheetCss() {
       if (s.type === "character") rules.push(`${root} .ms-cs-${CSS.escape(s.id)}{${decl(s.id)}}`);
     }
     return rules.join("\n");
-  }, [sheet]);
+  }, [sheet, fontClasses]);
   return <style>{css}</style>;
 }
 

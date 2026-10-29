@@ -9,7 +9,11 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { MASTER_FILE, MASTER_FOLDER, starterMasters, validateMaster } from "../document/masters";
 import type { MasterDef } from "../document/schema";
-import { importTemplate } from "./docx/importTemplate";
+import type { ImportedTemplate } from "./docx/importTemplate";
+import { importDocument, importMasters } from "./docx/importDocument";
+import { renderSectionThumbnails } from "./docx/wordThumbnails";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 export interface MasterEntry {
   id: string;
@@ -216,7 +220,12 @@ export class MasterLibrary {
     const picked = file ?? (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { "Word templates": ["docx", "dotx"] }, openLabel: "Import as master" }))?.[0];
     if (!picked) return undefined;
     const data = await vscode.workspace.fs.readFile(picked);
-    const imported = await importTemplate(data, path.basename(picked.fsPath));
+    const imported = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Importing the Word template…" }, () => importMasters(data, path.basename(picked.fsPath)));
+    return this.saveImported(doc, imported, picked, data, reimportId, keepAll);
+  }
+
+  /** Write imported masters (the user picks the page designs to keep), their assets, Word thumbnails and the kept template. */
+  private async saveImported(doc: vscode.Uri, imported: ImportedTemplate, picked: vscode.Uri, data: Uint8Array, reimportId?: string, keepAll = false): Promise<{ ids: string[]; report: MasterDef["provenance"]; sectionIds: string[] } | undefined> {
     const designs = [imported.family, ...imported.variants];
     let chosen = designs;
     if (!reimportId && !keepAll && designs.length > 1) {
@@ -228,12 +237,23 @@ export class MasterLibrary {
       chosen = designs.filter((_, i) => i === 0 || picks.some((p) => p.index === i));
     }
     const familyId = reimportId ?? (await this.freeId(doc, imported.family.id));
+    // Reference thumbnails rendered by Word (first page of each section), when Word is installed.
+    const thumbDir = await mkdtemp(path.join(tmpdir(), "ms-thumbs-"));
+    const thumbs = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "Rendering reference thumbnails with Word…" }, () => renderSectionThumbnails(data, path.extname(picked.fsPath), thumbDir));
     const ids: string[] = [];
+    const idOf = new Map<MasterDef, string>();
     for (const m of chosen) {
       const id = m === imported.family ? familyId : await this.freeId(doc, `${familyId}-${m.id.split("-").pop()}`);
+      idOf.set(m, id);
       const previous = reimportId && m === imported.family ? await this.read(vscode.Uri.joinPath(this.folderOf(doc, id), MASTER_FILE)) : undefined;
+      const section = m.provenance?.section;
+      const thumb = section ? thumbs.get(section) : undefined;
+      if (thumb) {
+        await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.folderOf(doc, id), "thumbnails"));
+        await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(this.folderOf(doc, id), "thumbnails", "reference.png"), await readFile(path.join(thumbDir, thumb)));
+      }
       // Reimport keeps the id and the user's display name.
-      const master: MasterDef = { ...m, id, ...(m.basedOn ? { basedOn: familyId } : {}), ...(previous && !("errors" in previous) ? { name: previous.name } : {}) };
+      const master: MasterDef = { ...m, id, ...(m.basedOn ? { basedOn: familyId } : {}), ...(thumb ? { thumbnail: "thumbnails/reference.png" } : {}), ...(previous && !("errors" in previous) ? { name: previous.name } : {}) };
       await this.write(doc, master);
       for (const [name, bytes] of imported.assets) {
         const target = vscode.Uri.joinPath(this.folderOf(doc, id), "assets", name);
@@ -249,7 +269,36 @@ export class MasterLibrary {
     for (let i = 2; await this.statOk(original); i++) original = vscode.Uri.joinPath(sourceDir, `${path.parse(picked.fsPath).name}-${i}${path.extname(picked.fsPath)}`);
     await vscode.workspace.fs.writeFile(original, data);
     await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(this.folderOf(doc, familyId), "import-report.json"), Buffer.from(`${JSON.stringify({ file: path.basename(picked.fsPath), fonts: imported.fonts, report: imported.report }, null, 2)}\n`));
-    return { ids, report: imported.family.provenance };
+    await rm(thumbDir, { recursive: true, force: true });
+    // Master of every section (a dropped design falls back to the family).
+    const sectionIds = imported.sectionDesigns.map((i) => idOf.get(designs[i]) ?? familyId);
+    return { ids, report: imported.family.provenance, sectionIds };
+  }
+
+  /**
+   * Word document → `<name>.paper` beside it (pictures and drawings in `<name>.assets/`), its
+   * page design saved as a master of the library. Returns the new document, or undefined.
+   */
+  async importDocument(doc: vscode.Uri | undefined, file?: vscode.Uri): Promise<vscode.Uri | undefined> {
+    const picked = file ?? (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { "Word documents": ["docx", "dotx"] }, openLabel: "Import as .paper" }))?.[0];
+    if (!picked) return undefined;
+    const data = await vscode.workspace.fs.readFile(picked);
+    const base = path.parse(picked.fsPath).name.replace(/[^\w\- .]+/g, "_");
+    const folder = vscode.Uri.joinPath(picked, "..");
+    let target = vscode.Uri.joinPath(folder, `${base}.paper`);
+    for (let i = 2; await this.statOk(target); i++) target = vscode.Uri.joinPath(folder, `${base}-${i}.paper`);
+    const name = path.parse(target.fsPath).name;
+    const assetsDir = `${name}.assets`;
+    const fileName = path.basename(picked.fsPath);
+    const imported = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Importing ${fileName}…` }, () => importDocument(data, fileName, { assetsDir, master: "__master__" }));
+    const saved = await this.saveImported(doc ?? target, imported.template, picked, data, undefined, true);
+    if (!saved) return undefined;
+    const source = imported.source.replace(/master: __master__/, `master: ${saved.ids[0]}`);
+    if (imported.assets.size) await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(folder, assetsDir));
+    for (const [file, bytes] of imported.assets) await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, assetsDir, file), bytes);
+    await vscode.workspace.fs.writeFile(target, Buffer.from(source, "utf8"));
+    await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, `${name}.import-report.json`), Buffer.from(`${JSON.stringify({ file: fileName, master: saved.ids[0], report: imported.report }, null, 2)}\n`));
+    return target;
   }
 
   private async statOk(uri: vscode.Uri): Promise<boolean> {

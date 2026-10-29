@@ -9,8 +9,12 @@ import { starterMasters } from "../document/masters";
 export const root = path.resolve(__dirname, "..", "..");
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 export const { chromium } = require(path.join(root, "slides-studio/node_modules/@playwright/test"));
-export const masters = starterMasters();
-export const fixtureDir = path.join(__dirname, "fixtures", "report");
+export let masters = starterMasters();
+export let fixtureDir = path.join(__dirname, "fixtures", "report");
+/** Serve another folder under /fixture/ and other masters (imported documents). */
+export let assetBases: Record<string, string> = {};
+export const useFixtures = (dir: string, extra: typeof masters = [], bases: Record<string, string> = {}) => ((fixtureDir = dir), (masters = [...extra, ...starterMasters()]), (assetBases = bases));
+const entriesOf = () => masters.map((m) => ({ id: m.id, name: m.name, basedOn: m.basedOn, source: m.provenance?.source ?? "starter", readonly: m.id.startsWith("studio-") }));
 
 export const state = {
   content: "",
@@ -34,7 +38,7 @@ window.acquireVsCodeApi = () => ({
     window.__msgs.push(m);
     if (m.type === 'ready') {
       reply({ type: 'init', content: window.__doc.text, version: window.__doc.version, baseUri: ${JSON.stringify(state.baseUri)}, docFolderPath: 'c:/docs', filePath: 'c:/docs/report.md', isReadonly: false, settings: { pageView: true }, gmcRuntimeUri: '/dist/markdown-preview/runtime.js', gmcEditorUri: '', gmcEditorCssUri: '', gmcVersion: 't' });
-      reply({ type: 'mastersResult', entries: ${JSON.stringify(masters.map((m) => ({ id: m.id, name: m.name, source: "starter", readonly: true })))}, masters: ${JSON.stringify(masters)}, assetBases: {} });
+      reply({ type: 'mastersResult', entries: ${JSON.stringify(entriesOf())}, masters: ${JSON.stringify(masters)}, assetBases: ${JSON.stringify(assetBases)} });
     }
     if (m.type === 'edit') {
       window.__edits.push(m);
@@ -46,7 +50,7 @@ window.acquireVsCodeApi = () => ({
       reply({ type: 'ack', id: m.id, version: window.__doc.version });
       if (text !== applied) reply({ type: 'update', content: text, version: window.__doc.version });
     }
-    if (m.type === 'masters') reply({ type: 'mastersResult', requestId: m.requestId, entries: [], masters: ${JSON.stringify(masters)}, assetBases: {} });
+    if (m.type === 'masters') reply({ type: 'mastersResult', requestId: m.requestId, entries: ${JSON.stringify(entriesOf())}, masters: ${JSON.stringify(masters)}, assetBases: ${JSON.stringify(assetBases)} });
     if (m.type === 'masterAction') {
       window.__masters = window.__masters || ${JSON.stringify(masters)};
       if (m.action === 'save') window.__masters = [...window.__masters.filter((x) => x.id !== m.master.id), m.master];
@@ -63,7 +67,8 @@ export const server = http.createServer((req, res) => {
   if (url.startsWith("/fixture/")) {
     const f = path.join(fixtureDir, url.slice("/fixture/".length));
     if (!f.startsWith(fixtureDir) || !fs.existsSync(f)) return (res.statusCode = 404), res.end();
-    res.setHeader("content-type", "image/png");
+    const ext = path.extname(f).toLowerCase();
+    res.setHeader("content-type", ext === ".svg" ? "image/svg+xml" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png");
     return res.end(fs.readFileSync(f));
   }
   const file = path.join(root, url);

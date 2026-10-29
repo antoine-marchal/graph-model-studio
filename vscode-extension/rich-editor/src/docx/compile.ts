@@ -248,6 +248,7 @@ function runOptions(run: RunProps, theme: Theme, fonts?: Set<string>): d.IRunSty
     ...(run.strike ? { strike: true } : {}),
     ...(run.caps ? { allCaps: true } : {}),
     ...(run.smallCaps ? { smallCaps: true } : {}),
+    ...(run.spacing ? { characterSpacing: Math.round(run.spacing * 20) } : {}),
   };
 }
 

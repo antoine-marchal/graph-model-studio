@@ -13,6 +13,7 @@ import { exitMasterEdit } from "./actions";
 import { manualFit, setZoom } from "./PageLayer";
 import { Icon } from "./icons";
 import { tr } from "./ui";
+import { MasterBrowser } from "./MasterBrowser";
 
 export { hostRedo, hostUndo } from "./commands";
 
@@ -95,6 +96,8 @@ export function Shell({ editor, readonly, onSource, children }: { editor: Editor
   const leftOpen = useStudio((s) => s.leftOpen);
   const rightOpen = useStudio((s) => s.rightOpen);
   const masterEdit = useStudio((s) => !!s.masterEdit);
+  const mastersOpen = useStudio((s) => s.mastersOpen);
+  const storyEdit = useStudio((s) => !!s.storyEditor);
   // Narrow panels: start with the side panes closed (Slides Studio collapses the same way).
   useEffect(() => {
     if (window.innerWidth < 900) studio.set({ leftOpen: false });
@@ -113,7 +116,7 @@ export function Shell({ editor, readonly, onSource, children }: { editor: Editor
     return () => document.removeEventListener("mousedown", keep, true);
   }, []);
   return (
-    <div className={`app ms-studio${leftOpen ? "" : " no-nav"}${rightOpen ? "" : " no-inspector"}${masterEdit ? " is-master-edit" : ""}`}>
+    <div className={`app ms-studio${leftOpen ? "" : " no-nav"}${rightOpen ? "" : " no-inspector"}${masterEdit ? " is-master-edit" : ""}${storyEdit ? " is-story-edit" : ""}`}>
       <Ribbon editor={editor} readonly={readonly} onSource={onSource} />
       <div className="workspace">
         {leftOpen && <NavPanel editor={editor} />}
@@ -125,6 +128,7 @@ export function Shell({ editor, readonly, onSource, children }: { editor: Editor
           </div>
         </main>
         {rightOpen && <Inspector editor={editor} readonly={readonly} />}
+        {mastersOpen && <MasterBrowser editor={editor} />}
       </div>
       <StatusBar />
       <ContextMenu editor={editor} />

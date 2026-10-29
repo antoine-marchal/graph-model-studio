@@ -13,6 +13,7 @@ import { sanitizeSpanStyle } from "../../document/remarkStudio";
 import type { BlockProps } from "../../document/schema";
 import { createObjectView } from "../studio/ObjectView";
 import { PAPER, studio } from "../studio/store";
+import { cssLineHeight } from "../../document/units";
 
 export const TOP_LEVEL_TYPES = [
   "paragraph", "heading", "blockquote", "bulletList", "orderedList", "taskList", "codeBlock", "horizontalRule", "table", "image",
@@ -38,7 +39,7 @@ function blockCss(p: BlockProps): string {
     p.align && `text-align:${p.align}`,
     pt(p.spaceBefore) && `margin-top:${pt(p.spaceBefore)}`,
     pt(p.spaceAfter) && `margin-bottom:${pt(p.spaceAfter)}`,
-    p.lineSpacing && `line-height:${p.lineSpacing}`,
+    p.lineSpacing && `line-height:${cssLineHeight(p.lineSpacing)}`,
     pt(p.indentLeft) && `padding-left:${pt(p.indentLeft)}`,
     pt(p.indentRight) && `padding-right:${pt(p.indentRight)}`,
     p.firstLine && `text-indent:${p.firstLine}pt`,

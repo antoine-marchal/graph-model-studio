@@ -59,7 +59,7 @@ async function template(): Promise<Buffer> {
   const h = await zip.file(headers[headers.length - 1])!.async("string");
   zip.file(headers[headers.length - 1], h.replace("</w:hdr>", '<w:p><w:r><w:pict><v:shape id="wm"/></w:pict></w:r></w:p></w:hdr>'));
   const rels = await zip.file("word/_rels/document.xml.rels")!.async("string");
-  zip.file("word/_rels/document.xml.rels", rels.replace("</Relationships>", '<Relationship Id="rIdExt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://tracker.example/x" TargetMode="External"/></Relationships>'));
+  zip.file("word/_rels/document.xml.rels", rels.replace("</Relationships>", '<Relationship Id="rIdExt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="https://tracker.example/x.png" TargetMode="External"/></Relationships>'));
   zip.file("word/vbaProject.bin", "not executed");
   return zip.generateAsync({ type: "nodebuffer" });
 }

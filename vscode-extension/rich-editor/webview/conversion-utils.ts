@@ -95,11 +95,13 @@ const ALIGN_DIV_RE = /^<div\s+align=["']?(left|center|right)["']?\s*>$/i;
 export const COLUMNS_OPEN = '<div class="ms-columns" style="display:flex;gap:24px">';
 export const COLUMN_OPEN = '<div class="ms-column" style="flex:1;min-width:0">';
 /** Column opener with a relative width (flex-grow; 1 = equal share). */
-export const columnOpen = (flex = 1) => COLUMN_OPEN.replace("flex:1", `flex:${flex}`);
+export const columnOpen = (flex = 1, fill?: string) => COLUMN_OPEN.replace("flex:1", `flex:${flex}`).replace(/">$/, fill ? `;background:#${fill};padding:12px">` : `">`);
 const COLUMNS_DIV_RE = /^<div\s+class=["']ms-(columns|column)["']/i;
 const COLUMN_FLEX_RE = /\bflex:\s*([\d.]+)/i;
+/** Column background (Word cell shading): `background:#RRGGBB` in the column opener. */
+const COLUMN_FILL_RE = /\bbackground:\s*#([0-9a-f]{6})\b/i;
 
-function directiveToken(node: any): { close: boolean; key: string; align?: string; layout?: string; flex?: number } | null {
+function directiveToken(node: any): { close: boolean; key: string; align?: string; layout?: string; flex?: number; fill?: string } | null {
   if (node.type !== "html") return null;
   const value = String(node.value).trim();
   if (/^<\/div\s*>$/i.test(value)) return { close: true, key: "div" };
@@ -110,6 +112,7 @@ function directiveToken(node: any): { close: boolean; key: string; align?: strin
       align: ALIGN_DIV_RE.exec(value)?.[1].toLowerCase(),
       layout: COLUMNS_DIV_RE.exec(value)?.[1].toLowerCase(),
       flex: Number(COLUMN_FLEX_RE.exec(value)?.[1]) || undefined,
+      fill: COLUMN_FILL_RE.exec(value)?.[1].toUpperCase(),
     };
   }
   const m = DIRECTIVE_RE.exec(value);
@@ -154,8 +157,8 @@ function groupDirectiveChildren(children: any[]): any[] {
       if (t.key === "div") {
         if (t.layout && end !== undefined) {
           out.push(t.layout === "columns"
-            ? { type: "columnsGroup", children: build(i + 1, end), position }
-            : { type: "columnGroup", flex: t.flex, children: build(i + 1, end), position });
+            ? { type: "columnsGroup", fill: t.fill, children: build(i + 1, end), position }
+            : { type: "columnGroup", flex: t.flex, fill: t.fill, children: build(i + 1, end), position });
           i = end;
           continue;
         }
@@ -353,8 +356,8 @@ export function rehypeUnwrapDirectives() {
       walk(child);
       if (child.type === "element" && (child.properties?.dataType === "columns" || child.properties?.dataType === "column")) {
         const open = child.properties.dataType === "columns"
-          ? COLUMNS_OPEN
-          : columnOpen(Number(child.properties.dataFlex) || 1);
+          ? (child.properties.dataFill ? COLUMNS_OPEN.replace(/">$/, `;background:#${child.properties.dataFill};padding:12px">`) : COLUMNS_OPEN)
+          : columnOpen(Number(child.properties.dataFlex) || 1, child.properties.dataFill || undefined);
         return [rawHtmlPre(open), ...child.children, rawHtmlPre("</div>")];
       }
       if (child.type === "element" && child.properties?.dataType === "align") {
@@ -427,13 +430,13 @@ export const remarkRehypeHandlers: Record<string, (state: any, node: any, parent
     };
   },
   columnsGroup(state: any, node: any): any {
-    return { type: "element", tagName: "div", properties: { dataType: "columns" }, children: state.wrap(state.all(node), true) };
+    return { type: "element", tagName: "div", properties: { dataType: "columns", ...(node.fill ? { dataFill: node.fill } : {}) }, children: state.wrap(state.all(node), true) };
   },
   columnGroup(state: any, node: any): any {
     return {
       type: "element",
       tagName: "div",
-      properties: { dataType: "column", ...(node.flex && node.flex !== 1 ? { dataFlex: String(node.flex) } : {}) },
+      properties: { dataType: "column", ...(node.flex && node.flex !== 1 ? { dataFlex: String(node.flex) } : {}), ...(node.fill ? { dataFill: node.fill } : {}) },
       children: state.wrap(state.all(node), true),
     };
   },

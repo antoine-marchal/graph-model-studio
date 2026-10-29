@@ -43,6 +43,15 @@ export class DocumentSync {
 
   constructor(private deps: SyncDeps) {}
 
+  /** The document's own Markdown ↔ HTML conversion (header / footer editors use it too). */
+  toHtml(md: string): Promise<string> {
+    return this.deps.toHtml(md);
+  }
+
+  toMarkdown(html: string): string {
+    return this.deps.toMarkdown(html);
+  }
+
   private get editor() {
     return this.deps.editor;
   }

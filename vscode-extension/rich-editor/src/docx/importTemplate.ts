@@ -13,7 +13,7 @@ import JSZip from "jszip";
 import { XMLParser } from "fast-xml-parser";
 import { posix } from "node:path";
 import { createHash } from "node:crypto";
-import { twipToPt, emuToPt, round2 } from "../../document/units";
+import { twipToPt, emuToPt, round2, WORD_LINE_PITCH } from "../../document/units";
 import type { ImportReportItem, MasterDef, ObjectDescriptor, ParagraphProps, RunProps, StoryDef, StorySet, StyleDef, ThemeSlot } from "../../document/schema";
 
 export const IMPORT_LIMITS = { maxFileBytes: 50 * 1024 * 1024, maxEntries: 3000, maxUncompressedBytes: 300 * 1024 * 1024, maxRatio: 200, maxXmlBytes: 30 * 1024 * 1024 };
@@ -29,15 +29,17 @@ export interface ImportedTemplate {
   assets: Map<string, Uint8Array>;
   report: ImportReportItem[];
   fonts: string[];
+  /** Per section (document order): index of its design in `[family, ...variants]`. */
+  sectionDesigns: number[];
 }
 
-const attrs = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", allowBooleanAttributes: true, processEntities: true, htmlEntities: false });
-const ordered = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", allowBooleanAttributes: true, preserveOrder: true, trimValues: false, processEntities: true, htmlEntities: false });
+export const attrs = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", allowBooleanAttributes: true, processEntities: true, htmlEntities: false });
+export const ordered = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", allowBooleanAttributes: true, preserveOrder: true, trimValues: false, processEntities: true, htmlEntities: false });
 
 const isUnsafeEntryName = (name: string) =>
   name.includes("\0") || name.includes("\\") || name.startsWith("/") || /^[a-zA-Z]:/.test(name) || name.split("/").some((seg) => seg === ".." || seg === ".");
 
-async function loadPackage(data: Uint8Array): Promise<JSZip> {
+export async function loadPackage(data: Uint8Array): Promise<JSZip> {
   if (data.byteLength > IMPORT_LIMITS.maxFileBytes) throw new TemplateImportError(`File too large (${data.byteLength} bytes, limit ${IMPORT_LIMITS.maxFileBytes})`);
   let zip: JSZip;
   try {
@@ -61,7 +63,7 @@ async function loadPackage(data: Uint8Array): Promise<JSZip> {
   return zip;
 }
 
-async function xml(zip: JSZip, part: string, parser = attrs): Promise<any> {
+export async function xml(zip: JSZip, part: string, parser = attrs): Promise<any> {
   const f = zip.file(part);
   if (!f) return null;
   const text = await f.async("string");
@@ -74,28 +76,30 @@ async function xml(zip: JSZip, part: string, parser = attrs): Promise<any> {
   }
 }
 
-interface Rel {
+export interface Rel {
   id: string;
   type: string;
   target: string;
   external: boolean;
 }
 
-async function rels(zip: JSZip, part: string): Promise<Map<string, Rel>> {
+export async function rels(zip: JSZip, part: string): Promise<Map<string, Rel>> {
   const relPart = posix.join(posix.dirname(part), "_rels", `${posix.basename(part)}.rels`);
   const parsed = await xml(zip, relPart);
   const out = new Map<string, Rel>();
   for (const r of arr(parsed?.Relationships?.Relationship)) {
     const external = r["@_TargetMode"] === "External";
-    const target = external ? String(r["@_Target"] ?? "") : posix.normalize(posix.join(posix.dirname(part), String(r["@_Target"] ?? "")));
+    const raw = String(r["@_Target"] ?? "");
+    // Targets are relative to the part's folder, or absolute from the package root ("/word/…").
+    const target = external ? raw : raw.startsWith("/") ? posix.normalize(raw.slice(1)) : posix.normalize(posix.join(posix.dirname(part), raw));
     if (!external && (target.startsWith("..") || isUnsafeEntryName(target))) continue;
     out.set(String(r["@_Id"]), { id: String(r["@_Id"]), type: String(r["@_Type"] ?? "").split("/").pop() ?? "", target, external });
   }
   return out;
 }
 
-const arr = <T = any>(v: T | T[] | undefined | null): T[] => (v === undefined || v === null ? [] : Array.isArray(v) ? v : [v]);
-const val = (node: any, key = "@_w:val"): string | undefined => (node && typeof node === "object" ? node[key] : undefined);
+export const arr = <T = any>(v: T | T[] | undefined | null): T[] => (v === undefined || v === null ? [] : Array.isArray(v) ? v : [v]);
+export const val = (node: any, key = "@_w:val"): string | undefined => (node && typeof node === "object" ? node[key] : undefined);
 const on = (node: any): boolean | undefined => (node === undefined ? undefined : !["0", "false", "off"].includes(String(val(node) ?? "1")));
 const num = (v: unknown): number | undefined => (v === undefined || v === "" || isNaN(Number(v)) ? undefined : Number(v));
 
@@ -104,7 +108,7 @@ const THEME_COLOR: Record<string, ThemeSlot> = {
   accent1: "accent1", accent2: "accent2", accent3: "accent3", accent4: "accent4", accent5: "accent5", accent6: "accent6", hyperlink: "hlink", followedHyperlink: "folHlink",
 };
 
-function runProps(rPr: any, fonts: Set<string>): RunProps {
+export function runProps(rPr: any, fonts: Set<string>): RunProps {
   if (!rPr) return {};
   const out: RunProps = {};
   const f = rPr["w:rFonts"];
@@ -131,10 +135,12 @@ function runProps(rPr: any, fonts: Set<string>): RunProps {
     if (v !== undefined) out[prop] = v;
   }
   if (rPr["w:u"] && val(rPr["w:u"]) !== "none") out.underline = true;
+  const spacing = num(val(rPr["w:spacing"]));
+  if (spacing) out.spacing = twipToPt(spacing);
   return out;
 }
 
-function paragraphProps(pPr: any): ParagraphProps & { outlineLevel?: number } {
+export function paragraphProps(pPr: any): ParagraphProps & { outlineLevel?: number } {
   if (!pPr) return {};
   const out: ParagraphProps & { outlineLevel?: number } = {};
   const jc = val(pPr["w:jc"]);
@@ -144,6 +150,8 @@ function paragraphProps(pPr: any): ParagraphProps & { outlineLevel?: number } {
     if (num(sp["@_w:before"]) !== undefined) out.spaceBefore = twipToPt(Number(sp["@_w:before"]));
     if (num(sp["@_w:after"]) !== undefined) out.spaceAfter = twipToPt(Number(sp["@_w:after"]));
     if (num(sp["@_w:line"]) !== undefined && (sp["@_w:lineRule"] ?? "auto") === "auto") out.lineSpacing = round2(Number(sp["@_w:line"]) / 240);
+    // Exact / at-least line heights (pt) become multiples once the font size is known (settleLineHeights).
+    else if (num(sp["@_w:line"]) !== undefined) (out as LineExact).lineExact = { pt: twipToPt(Number(sp["@_w:line"])), atLeast: sp["@_w:lineRule"] === "atLeast" };
   }
   const ind = pPr["w:ind"];
   if (ind) {
@@ -161,6 +169,27 @@ function paragraphProps(pPr: any): ParagraphProps & { outlineLevel?: number } {
   const outline = num(val(pPr["w:outlineLvl"]));
   if (outline !== undefined && outline < 9) out.outlineLevel = outline + 1;
   return out;
+}
+
+type LineExact = { lineExact?: { pt: number; atLeast: boolean } };
+
+/** Exact / at-least line heights → line spacing multiples of the font size (`size` pt). */
+export function settleLineHeight(p: ParagraphProps | undefined, size: number): void {
+  const exact = (p as LineExact | undefined)?.lineExact;
+  if (!p || !exact) return;
+  delete (p as LineExact).lineExact;
+  // The editor multiplies line spacing by the font's line pitch (cssLineHeight): an exact height divides it out.
+  const m = round2(exact.pt / Math.max(1, size) / WORD_LINE_PITCH);
+  if (!exact.atLeast || m > 1) p.lineSpacing = m;
+}
+
+/** Settle every style's exact line height with the font size it inherits. */
+function settleStyleLineHeights(styles: Record<string, StyleDef>): void {
+  const sizeOf = (id: string | undefined, depth = 0): number => {
+    const s = id ? styles[id] : undefined;
+    return s?.run?.size ?? (s?.basedOn && depth < 12 ? sizeOf(s.basedOn, depth + 1) : styles.Normal?.run?.size ?? 11);
+  };
+  for (const s of Object.values(styles)) settleLineHeight(s.paragraph, sizeOf(s.id));
 }
 
 function compactProps<T extends object>(o: T): T | undefined {
@@ -181,7 +210,7 @@ function sectionsOf(document: any): any[] {
   return out;
 }
 
-const slug = (s: string) => s.toLowerCase().replace(/\.(docx|dotx)$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "template";
+export const slug = (s: string) => s.toLowerCase().replace(/\.(docx|dotx)$/i, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "template";
 
 export async function importTemplate(data: Uint8Array, fileName: string, now = new Date()): Promise<ImportedTemplate> {
   const zip = await loadPackage(data);
@@ -191,11 +220,23 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
 
   if (zip.file("word/vbaProject.bin")) add("Macros (VBA project)", "unsupported", "Macros are never executed or kept.", "word/vbaProject.bin");
   const docRels = await rels(zip, "word/document.xml");
-  for (const r of docRels.values()) if (r.external) add("External relationship", "unsupported", `${r.type} → ${r.target} is not fetched.`, "word/_rels/document.xml.rels");
-  if (zip.file("word/fontTable.xml") && /w:embed(Regular|Bold|Italic)/.test((await zip.file("word/fontTable.xml")!.async("string")) ?? "")) add("Embedded fonts", "unsupported", "Embedded fonts are not extracted (font licensing); install the fonts instead.", "word/fontTable.xml");
+  // Part names vary (Office templates ship `theme11.xml`, `fontTable2.xml`…): follow the relationships.
+  const partOf = (type: string, fallback: string) => [...docRels.values()].find((r) => r.type === type && !r.external)?.target ?? fallback;
+  for (const r of docRels.values()) if (r.external && r.type !== "hyperlink") add("External relationship", "unsupported", `${r.type} → ${r.target} is not fetched.`, "word/_rels/document.xml.rels");
+  if (zip.file(partOf("fontTable", "word/fontTable.xml")) && /w:embed(Regular|Bold|Italic)/.test((await zip.file(partOf("fontTable", "word/fontTable.xml"))!.async("string")) ?? "")) add("Embedded fonts", "unsupported", "Embedded fonts are not extracted (font licensing); install the fonts instead.", "word/fontTable.xml");
+
+  // Font classes (roman / swiss / modern…) for the fallback of fonts that are not installed.
+  const fontTable = await xml(zip, partOf("fontTable", "word/fontTable.xml"));
+  const fontClasses: NonNullable<MasterDef["fontClasses"]> = {};
+  for (const f of arr(fontTable?.["w:fonts"]?.["w:font"])) {
+    const name = f["@_w:name"];
+    const family = val(f["w:family"]);
+    const fixed = val(f["w:pitch"]) === "fixed";
+    if (name) fontClasses[name] = fixed || family === "modern" ? "mono" : family === "roman" ? "serif" : family === "script" ? "script" : "sans";
+  }
 
   // Theme.
-  const theme = await xml(zip, "word/theme/theme1.xml");
+  const theme = await xml(zip, partOf("theme", "word/theme/theme1.xml"));
   const scheme = theme?.["a:theme"]?.["a:themeElements"];
   const colors: Partial<Record<ThemeSlot, string>> = {};
   for (const slot of ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"] as ThemeSlot[]) {
@@ -206,11 +247,11 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   const heading = scheme?.["a:fontScheme"]?.["a:majorFont"]?.["a:latin"]?.["@_typeface"];
   const bodyFont = scheme?.["a:fontScheme"]?.["a:minorFont"]?.["a:latin"]?.["@_typeface"];
   for (const f of [heading, bodyFont]) if (f) fonts.add(f);
-  if (theme) add("Theme colors and fonts", "supported", `${Object.keys(colors).length} colors; headings ${heading ?? "?"}, body ${bodyFont ?? "?"}`, "word/theme/theme1.xml");
+  if (theme) add("Theme colors and fonts", "supported", `${Object.keys(colors).length} colors; headings ${heading ?? "?"}, body ${bodyFont ?? "?"}`, partOf("theme", "word/theme/theme1.xml"));
   else add("Theme", "unsupported", "No theme part; defaults are used.");
 
   // Styles: document defaults go into Normal.
-  const stylesXml = await xml(zip, "word/styles.xml");
+  const stylesXml = await xml(zip, partOf("styles", "word/styles.xml"));
   const root = stylesXml?.["w:styles"];
   const styles: Record<string, StyleDef> = {};
   const defaultRun = runProps(root?.["w:docDefaults"]?.["w:rPrDefault"]?.["w:rPr"], fonts);
@@ -251,6 +292,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
     styles[id] = def;
   }
   if (!styles.Normal) styles.Normal = { id: "Normal", name: "Normal", type: "paragraph", run: defaultRun, paragraph: defaultPara };
+  settleStyleLineHeights(styles);
   const counts = { paragraph: 0, character: 0, table: 0 };
   for (const s of Object.values(styles)) counts[s.type]++;
   add("Named styles", "supported", `${counts.paragraph} paragraph, ${counts.character} character, ${counts.table} table styles with basedOn inheritance and document defaults`, "word/styles.xml");
@@ -258,7 +300,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   if (counts.table) add("Table style details", "flattened", "Borders and header row shading are kept; banding, conditional cell formats and cell margins per region are not.", "word/styles.xml");
 
   // Numbering: bullet characters and ordered formats of the first lists defined.
-  const numbering = await xml(zip, "word/numbering.xml");
+  const numbering = await xml(zip, partOf("numbering", "word/numbering.xml"));
   const bullet: string[] = [];
   const orderedFormats: NonNullable<MasterDef["numbering"]>["ordered"] = [];
   // Lists the template uses (body or styles) first, then the rest in definition order.
@@ -275,7 +317,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   }
   if (numbering) add("Numbering", "flattened", `Bullet characters (${bullet.join(" ") || "none"}) and ordered formats (${orderedFormats.join(", ") || "none"}); indents and restart rules use Markdown list nesting.`, "word/numbering.xml");
 
-  const settings = await xml(zip, "word/settings.xml");
+  const settings = await xml(zip, partOf("settings", "word/settings.xml"));
   const evenAndOdd = settings?.["w:settings"]?.["w:evenAndOddHeaders"] !== undefined;
 
   // Sections and their stories.
@@ -295,6 +337,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   };
   type Design = { page: MasterDef["page"]; headers: StorySet; footers: StorySet; titlePage: boolean; signature: string; index: number };
   const designs: Design[] = [];
+  const sectionDesigns: number[] = [];
   let prevHeaders: StorySet = {};
   let prevFooters: StorySet = {};
   for (const [index, s] of sects.entries()) {
@@ -326,6 +369,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
     const titlePage = on(s["w:titlePg"]) ?? false;
     const signature = JSON.stringify([page, headers, footers, titlePage]);
     if (!designs.some((d) => d.signature === signature)) designs.push({ page, headers, footers, titlePage, signature, index });
+    sectionDesigns.push(designs.findIndex((d) => d.signature === signature));
   }
   add("Section page designs", "supported", `${sects.length} section(s), ${designs.length} distinct page design(s): size, orientation, margins, header / footer distances${designs.some((d) => d.page.columns) ? ", newspaper columns" : ""}`, "word/document.xml");
   if (designs.some((d) => d.titlePage)) add("Different first page", "supported", "First-page header / footer stories are kept.");
@@ -349,6 +393,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
     footers: first.footers,
     titlePage: first.titlePage,
     evenAndOdd,
+    ...(Object.keys(fontClasses).length ? { fontClasses } : {}),
     provenance: provenance(first.index + 1),
   };
   const variants: MasterDef[] = rest.map((d, i) => ({
@@ -362,7 +407,7 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
     titlePage: d.titlePage,
     provenance: provenance(d.index + 1),
   }));
-  return { family, variants, assets, report, fonts: [...fonts].sort() };
+  return { family, variants, assets, report, fonts: [...fonts].sort(), sectionDesigns: sectionDesigns.length ? sectionDesigns : [0] };
 }
 
 /**

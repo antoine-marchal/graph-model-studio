@@ -23,6 +23,22 @@ export const ptToHalfPt = (pt: number): number => Math.round(pt * 2);
 /** docx's drawing APIs take "pixels" at 96 dpi (9525 EMU). */
 export const ptToDocxPx = (pt: number): number => Math.round(ptToPx(pt));
 
+/**
+ * CSS line-height for Word's "Multiple" line spacing: Word spaces lines at m × the font's natural
+ * line pitch (ascent + descent + gap, ≈ 1.17 em for common text fonts), CSS at m × the font size.
+ */
+export const WORD_LINE_PITCH = 1.17;
+export const cssLineHeight = (multiple: number): number => Math.round(multiple * WORD_LINE_PITCH * 1000) / 1000;
+
+/**
+ * CSS font stack for a document font: when it is not installed, a fallback of its class as Word
+ * substitutes (Arial for sans, Times New Roman for serif), not the UI font.
+ */
+export function fontStack(font: string, cls?: "serif" | "sans" | "mono" | "script"): string {
+  const fallback = cls === "serif" ? '"Times New Roman",Georgia,serif' : cls === "mono" ? '"Courier New",monospace' : cls === "script" ? '"Segoe Script",cursive' : 'Arial,"Helvetica Neue",sans-serif';
+  return `"${font}",${fallback}`;
+}
+
 /** Named page sizes, portrait, in pt. */
 export const PAGE_SIZES = {
   A3: { width: 841.89, height: 1190.55 },

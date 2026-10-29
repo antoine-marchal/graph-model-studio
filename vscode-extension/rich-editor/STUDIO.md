@@ -270,6 +270,58 @@ reported, never turned into furniture. Untrusted input: size, entry count, expan
 compression-ratio limits, no path traversal, DOCTYPE refused (no entity expansion), macros never
 executed, external relationships listed but never fetched, embedded fonts not extracted.
 
+**Word document import (.docx → .paper).** `src/docx/importDocument.ts` (`importDocument`), command
+*Import Word document as .paper* (Design ribbon, master browser, explorer menu on a `.docx`):
+`<name>.paper` beside the file, pictures and generated drawings in `<name>.assets/`, the page design
+saved as a library master, `<name>.import-report.json`. Paragraph styles → `::: id` groups, headings
+and lists → Markdown, direct run formatting → bold / italic / strike / `<span style>`, content
+controls → their text, inline pictures → images with width, floating drawings → objects at Word's
+position / wrap / layer (Word's anchor frames converted), preset shapes and text boxes → editable
+shapes with their text, custom geometry → `custom` shapes (`geometry: { w, h, d }`, guides and arcs
+evaluated; exported to Word as rectangles), groups and uncommon presets → SVG pictures generated from
+DrawingML (`drawingml.ts`; strokes compensated for group scale), layout tables → side-by-side columns
+(rows joined by vertical merges stacked per column, narrow empty spacer columns dropped, sized empty
+rows kept as spacers), data tables → Markdown tables with widths, page / section breaks → break
+groups, page color → full-page master background. Not kept (reported): cell shading of layout
+tables, character spacing, charts / SmartArt / OLE, VML, EMF / WMF pictures. Fonts that are not
+installed wrap wider than in Word, so long pages can run longer.
+
+**Word fidelity of the paper view.** Side-by-side columns break across pages per column, as Word
+breaks a table row (`paginate.ts` `columns` blocks: each column cut before its first line that
+does not fit, one spacer per column, the earliest one counted in content coordinates). Columns and
+column groups can carry a background (`background:#RRGGBB` in the opener; Word cell shading).
+Line spacing "multiple m" renders at m × 1.17 em (`cssLineHeight`: Word's line pitch, not CSS's
+m × font size); exact heights are imported divided by that pitch. Fonts that are not installed
+fall back by their font-table class as Word does (Arial for sans, Times New Roman for serif,
+`fontStack`, master `fontClasses`), not to the UI font. Columns take no margin and rules are
+hairlines in the paper view. Layout tables are laid out recursively: vertical-merge bands → grid
+segments no cell crosses → nested columns where a segment has merges of its own; cell top / bottom
+borders → rules; picture-filled shapes (round photos) → clipped SVG pictures; character styles keep
+size and font. Headers and footers are edited in place as documents of their own
+(`StoryEditor` in PageLayer.tsx: a Tiptap editor with the body's content extensions — headings,
+lists, tables, side-by-side columns, pictures, diagrams — saved as the story's Markdown through
+the document's own conversion). While one is edited the ribbon and inspector act on it
+(`studio.storyEditor`), the body dims and ignores the pointer (as in Word), Insert › Shape / Text
+box adds a drawing to the story (`updateStoryObjects`: the story's `objects`, page-positioned,
+repeated on every page, exported as header / footer drawings), dragged to move, Delete to remove.
+The story keeps its paragraph style and alignment (whole story). Columns and column groups get a
+background from the Format pane › Columns (`setColumnFill`).
+
+**Template furniture and master browser.** Template import (`importMasters`) also turns each
+section's floating drawings into its master's background (page color, shapes, custom shapes, vector
+groups, pictures, text boxes; a content control in a text box becomes a placeholder `field:<alias>`,
+or `title` / `subtitle` / `date` when bound to the document properties): one master per distinct
+page design (`<template> — page N`, based on the family, `inheritBackground: false`). Drawings
+anchored to a paragraph are placed from the top of their section (reported). With Word installed
+(Windows), `wordThumbnails.ts` renders each section's first page as the master's reference
+thumbnail (`thumbnails/reference.png`, `thumbnail` in master.json). Design › *Manage masters*
+(and the *Manage document masters* command on an open .paper) opens the master browser
+(`webview/studio/MasterBrowser.tsx`, Slides Studio's layout): masters grouped by family, each card a
+live miniature (`MasterPreview`: background drawings, placeholders, stories, style samples) or the
+Word reference, a detail pane (page, theme, placeholders, import notes) and the actions: apply to
+the document / section, edit on the page, duplicate, rename, reimport, open master.json, delete,
+import a Word template or document, new master.
+
 ## Support matrix
 
 | Feature | Editor | DOCX export | Template import |
@@ -279,7 +331,7 @@ executed, external relationships listed but never fetched, embedded fonts not ex
 | Lists, numbering, checklists | yes | native numbering (checkbox glyphs) | flattened to bullet / format lists |
 | Tables, repeated header rows | yes, split by rows | native, header repeats | table style borders / header fill only |
 | Images inline / anchored / page-relative, alt text | yes | native pictures (PNG, JPEG, GIF, BMP) | story pictures (PNG, JPEG, GIF, BMP) |
-| Text boxes, shapes, groups, connectors | yes | native (`wps` / `wpg`) | simple story shapes; other drawings reported |
+| Text boxes, shapes, groups, connectors | yes | native (`wps` / `wpg`); custom shapes as rectangles | body and story drawings: shapes, text boxes, custom geometry; groups as SVG pictures |
 | Square / top-and-bottom wrap, behind / in front | yes | native | — |
 | Sections, orientation, margins, page-number restart | yes | native | supported |
 | Newspaper columns | one-column preview | native `w:cols` | supported |
@@ -328,6 +380,9 @@ node rich-editor/esbuild.mjs --dev && npx tsx rich-editor/test/studio.profile.ts
 pnpm run test:rich-editor:browser
 pnpm run test:studio:host       # inside VS Code: import, export, no-op open, undo, flush, preflight
 npx tsx rich-editor/test/export-fixture.ts rich-editor/test/fixtures/report/report.md out.docx
+npx tsx rich-editor/test/import-docx-fixture.ts in.docx out.paper          # Word document → .paper + report
+npx tsx rich-editor/test/studio.import.ts in.docx [shotsDir]               # imported document in the built studio
+npx tsx rich-editor/test/studio.masters.ts a.dotx b.dotx --shots dir       # template masters, Word thumbnails, master browser
 ```
 
 ## Follow-ups (not in this version)

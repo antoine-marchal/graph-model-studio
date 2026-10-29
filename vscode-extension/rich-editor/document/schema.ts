@@ -71,6 +71,8 @@ export interface RunProps {
   strike?: boolean;
   caps?: boolean;
   smallCaps?: boolean;
+  /** Character spacing (letter spacing), pt; negative condenses. */
+  spacing?: number;
 }
 
 export type StyleType = "paragraph" | "character" | "table";
@@ -139,8 +141,14 @@ export interface MasterDef {
   titlePage?: boolean;
   /** Different odd / even pages (Word's evenAndOddHeaders, document-wide in DOCX). */
   evenAndOdd?: boolean;
+  /** false: the base masters' drawings are not drawn (imported page designs carry their own). */
+  inheritBackground?: boolean;
   /** Recurring page drawings drawn behind the body (backgrounds, bands, watermarks). */
   background?: Record<string, ObjectDescriptor>;
+  /** Font classes from the template's font table (fallback when a font is not installed, as Word substitutes). */
+  fontClasses?: Record<string, "serif" | "sans" | "mono" | "script">;
+  /** Reference rendering of the page design (PNG relative to the master folder, rendered by Word at import). */
+  thumbnail?: string;
   /** Semantic fields offered to documents (title, client, version…), with defaults. */
   fields?: Record<string, { label: string; default?: string }>;
   constraints?: { allowedStyles?: string[]; lockedStyles?: string[] };
@@ -158,7 +166,7 @@ export interface MasterDef {
 export type Placement = "inline" | "anchored" | "page";
 export type Wrap = "square" | "topBottom" | "none";
 export type Plane = "front" | "behind";
-export type ShapeKind = "rect" | "roundRect" | "ellipse" | "triangle" | "diamond" | "rightArrow" | "chevron" | "line";
+export type ShapeKind = "rect" | "roundRect" | "ellipse" | "triangle" | "diamond" | "rightArrow" | "chevron" | "line" | "custom";
 
 export interface ObjectStyle {
   fill?: string | null;
@@ -202,6 +210,8 @@ export interface ObjectDescriptor {
   /** Group path, outermost first (`cards/card-1`), as in Slides Studio. */
   group?: string;
   shape?: ShapeKind;
+  /** `custom` shapes: SVG path drawn in a `w`×`h` pt box, scaled to the object box (`open`: outline only). */
+  geometry?: { w: number; h: number; d: string; open?: boolean };
   style?: ObjectStyle;
   /** Connectors: end points attached to other objects by id. */
   from?: ConnectorEnd;

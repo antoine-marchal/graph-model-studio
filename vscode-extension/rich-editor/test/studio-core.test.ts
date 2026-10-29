@@ -165,3 +165,25 @@ test("model: objects, anchors, sections, duplicate ids and broken connectors", (
   const intro = doc.blocks[fig.anchor];
   assert.ok(src.slice(intro.position.start.offset, intro.position.end.offset).startsWith("<!-- ms:block"));
 });
+
+test("side-by-side columns break per column and resume together at the next page top", () => {
+  // Columns block at 400: column A has 20 lines (to 800), column B 6 lines (to 520); page 500.
+  const cols = (): ReturnType<NonNullable<Block["columns"]>> => [lines(400, 20, 20, 1000), lines(400, 6, 20, 2000)];
+  const blocks: Block[] = [text(0, 20), { pos: 400, top: 400, bottom: 800, kind: "columns", columns: cols }];
+  const { pages, breaks, overflows } = paginate(blocks, [{ contentHeight: 500 }]);
+  assert.equal(pages.length, 2);
+  assert.equal(overflows.length, 0);
+  const b = breaks[0];
+  assert.equal(b.kind, "columns");
+  // A breaks after line 5 (400 + 5 × 20 = 500), B after line 5 too: both cut at 500.
+  assert.deepEqual(b.cuts?.map((c) => c.pos), [1050, 2050]);
+  assert.equal(b.at, 500);
+});
+
+test("a columns block that does not start on the page moves whole when nothing of it fits", () => {
+  const cols = (): ReturnType<NonNullable<Block["columns"]>> => [lines(495, 3, 20, 1000), lines(495, 2, 20, 2000)];
+  const blocks: Block[] = [text(0, 24, { bottom: 495 }), { pos: 495, top: 495, bottom: 555, kind: "columns", columns: cols }];
+  const { breaks } = paginate(blocks, [{ contentHeight: 500 }]);
+  assert.equal(breaks[0].kind, "block");
+  assert.equal(breaks[0].pos, 495);
+});

@@ -12,19 +12,20 @@ import { studio, useStudio, type RibbonTab } from "./store";
 import { useEditorDerived } from "./hooks";
 import {
   alignObjects, applyParagraphStyle, insertStyledParagraph, deleteObjects, duplicateObjects, floatBlockAt, getSync, groupObjects, inlineObject, insertObject, insertSectionBreak, reorder,
-  setBlockProps, setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps, setDocumentMaster, enterMasterEdit, exitMasterEdit, addMasterObject,
+  setBlockProps, setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps, setDocumentMaster, enterMasterEdit, exitMasterEdit, addMasterObject, addStoryObject,
   startConnect, currentBlock, updateMasterObjects, setMasterObjectMode, deleteMasterObjects, type NewObject,
 } from "./actions";
 import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
 import type { ObjectDescriptor } from "../../document/schema";
 import { AUTO_FIELDS, AUTO_LABELS, TEXT_PRESETS, placeholderKey } from "../../document/placeholders";
 import { masterAction, runPreflight } from "./bridge";
-import { manualFit, setZoom, storyWrap } from "./PageLayer";
+import { manualFit, setZoom } from "./PageLayer";
 import { hostRedo, hostUndo } from "./commands";
 import { groupParts } from "../../../slides-studio/packages/core/src/groups";
 import { vscodeApi } from "../vscode-api";
 import { ShapeGallery, StyleGallery, TableGrid } from "./galleries";
 import { insertGmcBlock } from "../extensions/GmcBlock";
+import { MasterPreview } from "./MasterBrowser";
 
 const FONT_SIZES = [8, 9, 10, 10.5, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72];
 const LINE_SPACINGS = [1, 1.15, 1.5, 2, 2.5, 3];
@@ -176,10 +177,10 @@ function HomeTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof deriv
             <Small iconOnly icon="fontShrink" label={tr("Réduire la taille de police", "Decrease font size")} disabled={off} onClick={() => step(-1)} />
           </div>
           <div className="rb-row">
-            <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={d.bold} disabled={off} testId="bold" onClick={() => storyWrap("**") || chain().toggleBold().run()} />
-            <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={d.italic} disabled={off} testId="italic" onClick={() => storyWrap("*") || chain().toggleItalic().run()} />
-            <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={d.underline} disabled={off} onClick={() => storyWrap(null) || chain().toggleUnderline().run()} />
-            <Small iconOnly icon="eraser" label={tr("Barré", "Strikethrough")} active={d.strike} disabled={off} onClick={() => storyWrap(null) || chain().toggleStrike().run()} />
+            <Small iconOnly icon="bold" label={tr("Gras (Ctrl+B)", "Bold (Ctrl+B)")} active={d.bold} disabled={off} testId="bold" onClick={() => chain().toggleBold().run()} />
+            <Small iconOnly icon="italic" label={tr("Italique (Ctrl+I)", "Italic (Ctrl+I)")} active={d.italic} disabled={off} testId="italic" onClick={() => chain().toggleItalic().run()} />
+            <Small iconOnly icon="underline" label={tr("Souligné (Ctrl+U)", "Underline (Ctrl+U)")} active={d.underline} disabled={off} onClick={() => chain().toggleUnderline().run()} />
+            <Small iconOnly icon="eraser" label={tr("Barré", "Strikethrough")} active={d.strike} disabled={off} onClick={() => chain().toggleStrike().run()} />
             <PaletteMenu value={d.color} onChange={(v) => setSpanStyle(editor, { color: v ? `#${hexOf(v) ?? v}` : null })} trigger={(open) => (
               <button type="button" className="rb-small icon-only rb-swatch" disabled={off} onMouseDown={keepFocus} onClick={open} aria-label={tr("Couleur du texte", "Text color")} title={tr("Couleur du texte", "Text color")}>
                 <Icon name="text" />
@@ -280,7 +281,7 @@ function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
   const selection = useStudio((s) => s.selection);
   const chain = () => editor.chain().focus();
   const off = ro;
-  const add = (k: NewObject) => (masterEdit ? addMasterObject(k) : insertObject(k));
+  const add = (k: NewObject) => (studio.get().storyEditor ? addStoryObject(k) : masterEdit ? addMasterObject(k) : insertObject(k));
   return (
     <>
       {masterEdit && (
@@ -533,7 +534,7 @@ function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnTy
                   const m = masters.find((x) => x.id === e.id);
                   return (
                     <button key={e.id} type="button" className={`layout-card${e.id === active ? " is-selected" : ""}`} disabled={!!e.errors} title={e.description ?? e.name} onClick={() => (close(), apply(e.id))}>
-                      <MasterThumb id={e.id} />
+                      {m ? <MasterPreview master={m} width={100} sample={false} /> : null}
                       <span className="layout-name">{e.name}</span>
                       <span className="layout-alias">{e.source === "starter" ? tr("Intégré", "Built-in") : e.source === "docx" ? m?.provenance?.file ?? "Word" : tr("Bibliothèque", "Library")}</span>
                     </button>
@@ -543,8 +544,10 @@ function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnTy
             </div>
           )}
         </Menu>
+        <Big icon="layers" label={tr("Gérer les masques", "Manage masters")} testId="open-master-browser" title={tr("Tous les masques avec leurs vignettes : appliquer, modifier, dupliquer, importer", "All masters with their thumbnails: apply, edit, duplicate, import")} onClick={() => studio.set({ mastersOpen: true })} />
         <Col>
           <Small icon="importDoc" label={tr("Importer un modèle Word", "Import Word template")} disabled={ro} onClick={() => void masterAction("import")} />
+          <Small icon="folderOpen" label={tr("Importer un document Word", "Import Word document")} onClick={() => void masterAction("importDocument")} />
           <Small icon="plus" label={tr("Nouveau masque", "New master")} disabled={ro} onClick={() => {
             // Webviews have no prompt(): VS Code asks for the name.
             vscodeApi.postMessage({ type: "runCommand", command: "markdownStudio.newMaster" });
@@ -556,27 +559,6 @@ function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnTy
         <Big icon="field" label={tr("Champs", "Fields")} onClick={() => studio.set({ pane: "document", rightOpen: true })} title={tr("Titre, client, version… : panneau Document", "Title, client, version…: Document panel")} />
       </Group>
     </>
-  );
-}
-
-/** Miniature of a master's page design (page proportions, margins, header / footer, accent band). */
-export function MasterThumb({ id, width = 100 }: { id: string; width?: number }) {
-  const m = useStudio((s) => s.masters.find((x) => x.id === id));
-  if (!m) return null;
-  const land = m.page.orientation === "landscape";
-  const w = width;
-  const h = land ? width * 0.7 : width * 1.41;
-  const accent = `#${m.theme?.colors.accent1 ?? "1F6BFF"}`;
-  const band = Object.values(m.background ?? {}).find((o) => o.type === "shape" && o.box.y <= 0);
-  const mt = Math.min(0.35, (m.page.margins?.top ?? 72) / 842) * h;
-  return (
-    <div className="thumb ms-master-thumb" style={{ width: w, height: h }}>
-      {band && <span style={{ position: "absolute", left: 0, right: 0, top: 0, height: h * 0.2, background: accent }} />}
-      {m.headers?.default?.markdown || m.headers?.first?.markdown ? <span className="ms-thumb-line" style={{ top: h * 0.05, width: "38%", background: "#9aa0a8" }} /> : null}
-      <span className="ms-thumb-line" style={{ top: mt, width: "55%", height: 4, background: accent }} />
-      {[0, 1, 2, 3, 4].map((i) => <span key={i} className="ms-thumb-line" style={{ top: mt + 10 + i * 7, width: `${82 - (i % 3) * 9}%` }} />)}
-      {m.footers?.default?.markdown ? <span className="ms-thumb-line" style={{ bottom: h * 0.04, width: "22%", background: "#9aa0a8" }} /> : null}
-    </div>
   );
 }
 
@@ -733,7 +715,10 @@ function ObjectFormatTab({ editor, d, ro }: { editor: Editor; d: ReturnType<type
   );
 }
 
-export function Ribbon({ editor, readonly, onSource }: { editor: Editor; readonly: boolean; onSource: () => void }) {
+export function Ribbon({ editor: documentEditor, readonly, onSource }: { editor: Editor; readonly: boolean; onSource: () => void }) {
+  // While a header / footer is edited, the ribbon acts on its editor.
+  const storyEditor = useStudio((s) => s.storyEditor);
+  const editor = storyEditor ?? documentEditor;
   const tab = useStudio((s) => s.tab);
   const collapsed = useStudio((s) => s.ribbonCollapsed);
   const selection = useStudio((s) => s.selection);

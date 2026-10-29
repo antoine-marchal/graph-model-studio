@@ -29,6 +29,13 @@ export interface ResolvedSection {
   sheet: StyleSheet;
 }
 
+/** Recurring drawings of a master family (base first); a master with `inheritBackground: false` starts afresh. */
+export function chainBackground(chain: MasterDef[]): Record<string, ObjectDescriptor> {
+  let from = 0;
+  chain.forEach((m, i) => m.inheritBackground === false && (from = i));
+  return Object.assign({}, ...chain.slice(from).map((m) => m.background ?? {}));
+}
+
 export type MasterLookup = (ref: string) => MasterDef | undefined;
 
 const hasStories = (s?: StorySet) => !!(s && (s.default || s.first || s.even));
@@ -64,7 +71,7 @@ export function resolveSections(meta: StudioMeta | null, markers: SectionProps[]
       storyOrigin = prev.storyOrigin === "none" ? "none" : "linked";
     }
     const titlePage = chain.some((m) => m.titlePage) && (index === 0 || ownMaster);
-    const background = Object.assign({}, ...chain.map((m) => m.background ?? {}));
+    const background = chainBackground(chain);
     const sheet = resolveStyleSheet(chain, meta?.styles);
     if (index === 0) diagnostics.push(...sheet.diagnostics);
     sections.push({ index, props, master, chain, page, headers, footers, storyOrigin, titlePage, background, sheet });

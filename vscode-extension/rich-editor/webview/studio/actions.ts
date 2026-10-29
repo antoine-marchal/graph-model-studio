@@ -4,6 +4,7 @@
  */
 // `tr` names transactions here: the French / English string helper is `loc`.
 import { tr as loc } from "../../../slides-studio/packages/core/src/i18n";
+import { DEFAULT_THEME, resolveColor } from "../../document/styles";
 import type { Editor } from "@tiptap/core";
 import { Extension } from "@tiptap/core";
 import { NodeSelection, Plugin, PluginKey, TextSelection, type EditorState } from "@tiptap/pm/state";
@@ -67,6 +68,8 @@ export type NewObject = "textbox" | "rect" | "roundRect" | "ellipse" | "triangle
 
 /** Insert an object anchored to the current paragraph (its marker goes right before it). */
 export function insertObject(kind: NewObject, extra: Partial<ObjectDescriptor> = {}): string | undefined {
+  // Editing a header / footer: the drawing belongs to it.
+  if (studio.get().storyEditor) return addStoryObject(kind);
   const editor = editorRef;
   if (!editor || !syncRef) return undefined;
   const sel = studio.get().selection;
@@ -409,14 +412,54 @@ function refreshGroupTexts(editor: Editor): void {
   resolveDocument();
 }
 
-/** The header / footer text area being edited, if any (`data-kind`, `data-variant`). */
-function activeStory(): HTMLTextAreaElement | null {
+/** The header / footer being edited in place, if any (`data-kind`, `data-variant`). */
+function activeStory(): HTMLElement | null {
   const el = document.activeElement;
-  return el instanceof HTMLTextAreaElement && el.classList.contains("ms-story-input") ? el : null;
+  return el instanceof HTMLElement && el.classList.contains("ms-story-input") ? el : null;
+}
+
+/** Markdown of a header / footer edited in place: paragraphs, bold, italic, links, pictures, line breaks; fields stay `{{…}}`. */
+export function storyMarkdown(root: HTMLElement): string {
+  // A rich story editor: the document's own HTML → Markdown conversion.
+  const rich = (root as HTMLElement & { editor?: Editor }).editor;
+  if (rich && syncRef) return syncRef.toMarkdown(rich.getHTML()).trim();
+  const inline = (n: Node): string => {
+    if (n.nodeType === Node.TEXT_NODE) return (n.textContent ?? "").replace(/ /g, " ").replace(/([\\`*_[\]])/g, "\\$1");
+    if (!(n instanceof HTMLElement)) return "";
+    const inner = [...n.childNodes].map(inline).join("");
+    const wrap = (m: string) => {
+      const x = /^(\s*)([\s\S]*?)(\s*)$/.exec(inner)!;
+      return x[2] ? `${x[1]}${m}${x[2]}${m}${x[3]}` : inner;
+    };
+    switch (n.tagName) {
+      case "BR": return "  \n";
+      case "B": case "STRONG": return wrap("**");
+      case "I": case "EM": return wrap("*");
+      case "A": return `[${inner}](${n.getAttribute("href") ?? ""})`;
+      case "IMG": return `![${n.getAttribute("alt") ?? ""}](${n.getAttribute("src") ?? ""})`;
+      default: return inner;
+    }
+  };
+  const blocks: string[] = [];
+  let line: Node[] = [];
+  const flush = () => {
+    const text = line.map(inline).join("").replace(/ {2}\n$/, "").trim();
+    if (text) blocks.push(text);
+    line = [];
+  };
+  for (const n of root.childNodes) {
+    if (n instanceof HTMLElement && /^(P|DIV|H[1-6]|LI|UL|OL)$/.test(n.tagName)) {
+      flush();
+      line = [...n.childNodes];
+      flush();
+    } else line.push(n);
+  }
+  flush();
+  return blocks.join("\n\n");
 }
 
 /** Style / alignment of the header or footer being edited: the whole story (document `blocks.<id>`, a master's `block`). */
-function styleStory(ta: HTMLTextAreaElement, patch: Partial<BlockProps>): void {
+function styleStory(ta: HTMLElement, patch: Partial<BlockProps>): void {
   const kind = ta.dataset.kind as "headers" | "footers";
   const variant = (ta.dataset.variant ?? "default") as keyof StorySet;
   const clean = (p: BlockProps): BlockProps | undefined => {
@@ -430,13 +473,77 @@ function styleStory(ta: HTMLTextAreaElement, patch: Partial<BlockProps>): void {
     return;
   }
   const id = storyGroupId(kind, variant);
-  setGroupText(id, ta.value, (meta) => {
+  setGroupText(id, storyMarkdown(ta), (meta) => {
     const blocks = { ...meta.blocks, [id]: clean({ ...meta.blocks?.[id], ...patch })! };
     if (!blocks[id]) delete blocks[id];
     const story = { ...meta[kind]?.[variant], id };
     delete story.markdown;
     return { ...meta, [kind]: { ...meta[kind], [variant]: story }, blocks: Object.keys(blocks).length ? blocks : undefined };
   });
+}
+
+/**
+ * Drawings of the header / footer being edited (Word: shapes anchored in the header, positioned on
+ * the page, repeated on every page of the section): `objects` of the story — the master's story
+ * in master edit mode, else the document's (its text is written with it, so a story taken over
+ * from the master keeps its text). `patch` null deletes the object. One edit.
+ */
+export function updateStoryObjects(change: Record<string, Partial<ObjectDescriptor> | null>): void {
+  const ta = activeStory();
+  const editor = studio.get().storyEditor;
+  const el = ta ?? (editor?.view.dom as HTMLElement | undefined);
+  if (!el) return;
+  const kind = el.dataset.kind as "headers" | "footers";
+  const variant = (el.dataset.variant ?? "default") as keyof StorySet;
+  const apply = (objects: Record<string, ObjectDescriptor> | undefined) => {
+    const out = { ...objects };
+    for (const [id, patch] of Object.entries(change)) {
+      if (patch === null) delete out[id];
+      else out[id] = { ...out[id], ...patch, box: { ...out[id]?.box, ...patch.box } } as ObjectDescriptor;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
+  const m = studio.get().masterEdit;
+  if (m) {
+    const s = m[kind]?.[variant] ?? {};
+    updateMaster({ [kind]: { ...m[kind], [variant]: { ...s, objects: apply(s.objects) } } } as Partial<MasterDef>);
+    return;
+  }
+  const id = storyGroupId(kind, variant);
+  const inherited = studio.get().sections[0]?.[kind]?.[variant];
+  setGroupText(id, storyMarkdown(el), (meta) => {
+    const story = { ...meta[kind]?.[variant], id };
+    delete story.markdown;
+    // Taking the story over from the master: its drawings come along.
+    const base = meta[kind]?.[variant] ? story.objects : { ...inherited?.objects, ...story.objects };
+    return { ...meta, [kind]: { ...meta[kind], [variant]: { ...story, objects: apply(base) } } };
+  });
+}
+
+/** Insert a shape / text box into the header or footer being edited, in its band of the page. */
+export function addStoryObject(kind: NewObject): string | undefined {
+  const el = studio.get().storyEditor?.view.dom as HTMLElement | undefined;
+  if (!el || kind === "connector") return undefined;
+  const story = el.dataset.kind as "headers" | "footers";
+  const sec = studio.get().sections[0];
+  const page = sec?.page;
+  const taken = new Set(Object.keys({ ...sec?.[story]?.default?.objects, ...sec?.[story]?.first?.objects, ...sec?.[story]?.even?.objects }));
+  const id = uniqueId(kind === "textbox" ? "textbox" : "shape", taken);
+  const w = kind === "textbox" ? 160 : kind === "line" ? 200 : 60;
+  const h = kind === "textbox" ? 28 : kind === "line" ? 0 : 40;
+  const y = !page ? 20 : story === "headers" ? page.margins.header : page.height - page.margins.footer - h;
+  updateStoryObjects({
+    [id]: {
+      type: kind === "textbox" ? "textbox" : "shape",
+      ...(kind !== "textbox" ? { shape: kind } : { text: loc("Texte", "Text"), style: { fill: null, line: null, fontSize: 10 } }),
+      placement: "page",
+      relativeTo: "page",
+      plane: "front",
+      box: { x: page ? page.width - page.margins.right - w : 400, y, width: w, height: h },
+    },
+  });
+  studio.set({ storyObjectSel: id });
+  return id;
 }
 
 /** Named paragraph style (headings keep their level; style stored in ms:block). */
@@ -485,6 +592,29 @@ export function insertSectionBreak(props: SectionProps): void {
   if (!editor || !syncRef) return;
   syncRef.touched = true;
   editor.chain().focus().insertContent({ type: "msSection", attrs: { props: JSON.stringify(props) } }).run();
+}
+
+/** Column and column group holding the selection (positions, current backgrounds). */
+export function columnsAt(editor: Editor): { column?: { pos: number; fill: string | null }; columns?: { pos: number; fill: string | null } } {
+  const $from = editor.state.selection.$from;
+  const out: ReturnType<typeof columnsAt> = {};
+  for (let d = $from.depth; d > 0; d--) {
+    const node = $from.node(d);
+    if (node.type.name === "column" && !out.column) out.column = { pos: $from.before(d), fill: node.attrs.fill ?? null };
+    if (node.type.name === "columns" && !out.columns) out.columns = { pos: $from.before(d), fill: node.attrs.fill ?? null };
+  }
+  return out;
+}
+
+/** Background of a column or a column group (`#RRGGBB` or a theme token; null = none). One edit. */
+export function setColumnFill(pos: number, value: string | null): void {
+  const editor = editorRef;
+  if (!editor || !syncRef) return;
+  const node = editor.state.doc.nodeAt(pos);
+  if (node?.type.name !== "column" && node?.type.name !== "columns") return;
+  const fill = value ? resolveColor(value, studio.get().sections[0]?.sheet.theme ?? DEFAULT_THEME) ?? null : null;
+  syncRef.touched = true;
+  editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, fill: fill ? fill.toUpperCase() : null }));
 }
 
 export function setSectionProps(pos: number, props: SectionProps): void {

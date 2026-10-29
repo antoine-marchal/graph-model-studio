@@ -144,9 +144,12 @@ export function resolveStyleSheet(chain: MasterDef[], local: Record<string, Part
   const theme = resolveTheme(chain);
   // Merged definitions (own props only) and where each prop was set.
   const defs = new Map<string, { def: StyleDef; origin: Record<string, { from: StyleOrigin; style: string }>; overridden: boolean }>();
-  const layer = (styles: Record<string, Partial<StyleDef>> | undefined, from: StyleOrigin) => {
+  // `complete`: a Word-imported master defines its styles fully (Word inheritance is basedOn only),
+  // so the built-in defaults under them are dropped.
+  const layer = (styles: Record<string, Partial<StyleDef>> | undefined, from: StyleOrigin, complete = false) => {
     for (const [id, s] of Object.entries(styles ?? {})) {
-      const prev = defs.get(id);
+      const found = defs.get(id);
+      const prev = complete && found && Object.values(found.origin).every((o) => o.from === "default") ? undefined : found;
       const def: StyleDef = {
         ...(prev?.def ?? { id, name: s.name ?? id, type: s.type ?? "paragraph" }),
         ...pick(s, ["name", "type", "basedOn", "next", "outlineLevel"]),
@@ -162,7 +165,7 @@ export function resolveStyleSheet(chain: MasterDef[], local: Record<string, Part
     }
   };
   layer(DEFAULT_STYLES, "default");
-  for (const m of chain) layer(m.styles, `master:${m.id}`);
+  for (const m of chain) layer(m.styles, `master:${m.id}`, m.provenance?.source === "docx");
   if (local) {
     for (const id of Object.keys(local)) if (!defs.has(id) && !local[id]?.type) diagnostics.push(`Local style "${id}" has no definition in the master; created as a paragraph style`);
     layer(local, "local");

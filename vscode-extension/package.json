@@ -258,6 +258,11 @@
         "category": "Markdown Studio"
       },
       {
+        "command": "markdownStudio.importDocx",
+        "title": "%s270.import.word.document.as.paper%",
+        "category": "Markdown Studio"
+      },
+      {
         "command": "markdownStudio.preflight",
         "title": "%s203.run.corporate.preflight%",
         "category": "Markdown Studio"
@@ -536,6 +541,16 @@
         {
           "command": "markdownStudio.createPaper",
           "when": "resourceExtname == .md",
+          "group": "navigation"
+        },
+        {
+          "command": "markdownStudio.importDocx",
+          "when": "resourceExtname == .docx || resourceExtname == .dotx",
+          "group": "navigation"
+        },
+        {
+          "command": "markdownStudio.importTemplate",
+          "when": "resourceExtname == .docx || resourceExtname == .dotx",
           "group": "navigation"
         },
         {
@@ -1210,7 +1225,7 @@
     "build:all": "pnpm run build:source && pnpm run build",
     "build:slides-studio": "pnpm --dir slides-studio install --frozen-lockfile && pnpm --dir slides-studio run build",
     "test:slides-studio": "pnpm --dir slides-studio test",
-    "test:studio": "node --import tsx --test rich-editor/test/studio-core.test.ts rich-editor/test/panel-sync.test.ts rich-editor/test/docx-compile.test.ts rich-editor/test/docx-import.test.ts",
+    "test:studio": "node --import tsx --test rich-editor/test/studio-core.test.ts rich-editor/test/panel-sync.test.ts rich-editor/test/docx-compile.test.ts rich-editor/test/docx-import.test.ts rich-editor/test/docx-document.test.ts",
     "check:rich-editor": "tsc -p rich-editor/tsconfig.json",
     "test:studio:browser": "tsx rich-editor/test/studio.browser.ts",
     "test:studio:host": "node rich-editor/test/host/run.mjs"

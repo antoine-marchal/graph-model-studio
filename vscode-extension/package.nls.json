@@ -128,5 +128,6 @@
   "s267.refresh.masters": "Refresh",
   "s268.duplicate.master": "Duplicate…",
   "s269.no.document.master": "No document master in this workspace yet.\n[Import a Word template](command:markdownStudio.importTemplate)\n[New master](command:markdownStudio.newMaster)",
-  "s207.create.paper.from.markdown": "Create a .paper document from this Markdown"
+  "s207.create.paper.from.markdown": "Create a .paper document from this Markdown",
+  "s270.import.word.document.as.paper": "Import Word document as .paper"
 }
