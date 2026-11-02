@@ -13,7 +13,7 @@ import { useEditorDerived } from "./hooks";
 import {
   alignObjects, applyParagraphStyle, insertStyledParagraph, deleteObjects, duplicateObjects, floatBlockAt, getSync, groupObjects, inlineObject, insertObject, insertSectionBreak, reorder,
   setBlockProps, setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps, setDocumentMaster, enterMasterEdit, exitMasterEdit, addMasterObject, addStoryObject,
-  startConnect, currentBlock, updateMasterObjects, setMasterObjectMode, deleteMasterObjects, type NewObject,
+  startConnect, currentBlock, updateMasterObjects, setMasterObjectMode, deleteMasterObjects, addMasterPicture, masterObjectOf, type NewObject,
 } from "./actions";
 import { parseBlockProps } from "../extensions/blockProps";
 import { setSpanStyle } from "../extensions/StudioNodes";
@@ -279,6 +279,7 @@ function togglePainter(editor: Editor): void {
 
 function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof derive>; ro: boolean }) {
   const masterEdit = useStudio((s) => s.masterEdit);
+  const reference = useStudio((s) => s.masterReference);
   const selection = useStudio((s) => s.selection);
   const chain = () => editor.chain().focus();
   const off = ro;
@@ -294,6 +295,11 @@ function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
               </>
             )}
           </Menu>
+          {masterEdit.thumbnail && (
+            <Big icon="compare" label={tr("Comparer à Word", "Compare with Word")} active={reference > 0} testId="master-reference"
+              title={tr("Superposer le rendu Word du modèle à la première page (réglez l’opacité dans le volet Format)", "Overlay Word’s rendering of the template on the first page (set the opacity in the Format pane)")}
+              onClick={() => studio.set({ masterReference: reference > 0 ? 0 : 0.5 })} />
+          )}
         </Group>
       )}
       {!masterEdit && (
@@ -319,7 +325,9 @@ function InsertTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
         </Group>
       )}
       <Group label={tr("Illustrations", "Illustrations")}>
-        {!masterEdit && <Big icon="image" label="Image" disabled={off} onClick={() => window.dispatchEvent(new CustomEvent("btrmk:showImageDialog"))} />}
+        <Big icon="image" label="Image" disabled={off} testId="insert-image"
+          title={masterEdit ? tr("Image du masque (ou glissez un fichier sur la page)", "Master picture (or drop a file on the page)") : undefined}
+          onClick={() => (masterEdit ? void addMasterPicture() : window.dispatchEvent(new CustomEvent("btrmk:showImageDialog")))} />
         <ShapeGallery onPick={add} trigger={(open) => <Big icon="shape" label={tr("Formes", "Shapes")} caret disabled={off} onClick={open} />} />
         <Big icon="text" label={tr("Zone de texte", "Text box")} disabled={off} onClick={() => add("textbox")} />
         {!masterEdit && <Big icon="connector" label={tr("Relier", "Connect")} disabled={off} title={selection.length === 2 ? tr("Relier les deux objets sélectionnés", "Connect the two selected objects") : tr("Cliquez l’objet de départ puis celui d’arrivée (Échap annule)", "Click the start object, then the end object (Esc cancels)")} onClick={startConnect} />}
@@ -557,7 +565,14 @@ function DesignTab({ editor, ro, d }: { editor: Editor; ro: boolean; d: ReturnTy
         </Col>
       </Group>
       <Group label={tr("Document", "Document")}>
-        <Big icon="field" label={tr("Champs", "Fields")} onClick={() => studio.set({ pane: "document", rightOpen: true })} title={tr("Titre, client, version… : panneau Document", "Title, client, version…: Document panel")} />
+        <Big icon="field" label={tr("Champs", "Fields")} testId="fields"
+          onClick={() => {
+            // Master edit: the master's own fields (create, rename, delete); else the document's values.
+            if (!studio.get().masterEdit) return studio.set({ pane: "document", rightOpen: true });
+            studio.set({ pane: "format", masterSel: [], rightOpen: true });
+            requestAnimationFrame(() => document.getElementById("ms-master-fields")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+          }}
+          title={tr("Titre, client, version… : champs du document (ou du masque en cours de modification)", "Title, client, version…: the document's fields (or the edited master's)")} />
       </Group>
     </>
   );
@@ -642,13 +657,19 @@ function FormatTab({ editor, d, ro }: { editor: Editor; d: ReturnType<typeof der
 function MasterFormatTab() {
   const master = useStudio((s) => s.masterEdit);
   const sel = useStudio((s) => s.masterSel);
-  const o = sel.length === 1 ? master?.background?.[sel[0]] : undefined;
+  const o = sel.length === 1 ? masterObjectOf(master, sel[0]) : undefined;
   if (!o) return null;
   const id = sel[0];
   const set = (patch: Partial<ObjectDescriptor>) => updateMasterObjects({ [id]: patch });
   const mode = o.placeholder ? "placeholder" : o.locked?.geometry ? "fixed" : "floating";
+  const picture = o.type === "image";
   return (
     <>
+      {picture && (
+        <Group label="Image">
+          <Big icon="image" label={tr("Changer l’image", "Change picture")} testId="master-replace-picture" title={tr("Remplacer l’image en gardant sa place (ou double-clic, ou glisser un fichier dessus)", "Replace the picture, keeping its place (or double-click it, or drop a file on it)")} onClick={() => void addMasterPicture({ replace: id })} />
+        </Group>
+      )}
       <Group label={tr("Rôle", "Role")}>
         <Big icon="float" label={tr("Flottant", "Floating")} active={mode === "floating"} onClick={() => setMasterObjectMode(id, "floating")} />
         <Big icon="pin" label={tr("Fixe", "Fixed")} active={mode === "fixed"} onClick={() => setMasterObjectMode(id, "fixed")} />
@@ -660,10 +681,12 @@ function MasterFormatTab() {
           )}
         </Menu>
       </Group>
-      <Group label={tr("Styles de forme", "Shape styles")}>
-        <PaletteMenu value={(o.style?.fill as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, fill: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="fillColor" label={tr("Remplissage", "Fill")} caret onClick={open} />} />
-        <PaletteMenu value={(o.style?.line as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, line: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="borders" label={tr("Contour", "Outline")} caret onClick={open} />} />
-      </Group>
+      {!picture && (
+        <Group label={tr("Styles de forme", "Shape styles")}>
+          <PaletteMenu value={(o.style?.fill as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, fill: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="fillColor" label={tr("Remplissage", "Fill")} caret onClick={open} />} />
+          <PaletteMenu value={(o.style?.line as string) ?? undefined} allowNone onChange={(v) => set({ style: { ...o.style, line: v === "none" ? null : v ?? undefined } })} trigger={(open) => <Big icon="borders" label={tr("Contour", "Outline")} caret onClick={open} />} />
+        </Group>
+      )}
       <Group label={tr("Organiser", "Arrange")}>
         <Col>
           <Small icon="front" label={tr("Devant le texte", "In front of text")} active={o.plane !== "behind"} onClick={() => set({ plane: "front" })} />

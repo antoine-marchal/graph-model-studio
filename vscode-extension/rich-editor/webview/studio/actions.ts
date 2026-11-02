@@ -18,7 +18,7 @@ import { pxToPt } from "../../document/units";
 import { groupParts, inGroup } from "../../../slides-studio/packages/core/src/groups";
 import type { DocumentSync } from "./documentSync";
 import { lookupMaster, notify, objectOf, resolveDocument, studio } from "./store";
-import { saveMaster } from "./bridge";
+import { masterAction, saveMaster } from "./bridge";
 import { parseBlockProps } from "../extensions/blockProps";
 
 let editorRef: Editor | null = null;
@@ -843,22 +843,116 @@ export function updateMaster(patch: Partial<MasterDef>): void {
   setMaster((m) => ({ ...m, ...patch }));
 }
 
+const STORIES = ["headers", "footers"] as const;
+const VARIANTS = ["default", "first", "even"] as const;
+
+/**
+ * A drawing of the master by id: a page drawing (`background`), else a drawing of one of its
+ * header / footer stories (Word templates put their logos and bands there). Story drawings are
+ * edited on the page like page drawings; a drawing shared by several stories is the same object.
+ */
+export function masterObjectOf(m: MasterDef | null | undefined, id: string): ObjectDescriptor | undefined {
+  if (!m) return undefined;
+  if (m.background?.[id]) return m.background[id];
+  for (const k of STORIES) for (const v of VARIANTS) if (m[k]?.[v]?.objects?.[id]) return m[k]![v]!.objects![id];
+  return undefined;
+}
+
+/** Ids of every drawing of the master (page drawings, then story drawings). */
+export function masterObjectIds(m: MasterDef | null | undefined): string[] {
+  if (!m) return [];
+  const ids = new Set(Object.keys(m.background ?? {}));
+  for (const k of STORIES) for (const v of VARIANTS) for (const id of Object.keys(m[k]?.[v]?.objects ?? {})) ids.add(id);
+  return [...ids];
+}
+
+const patchObject = (d: ObjectDescriptor, patch: Partial<ObjectDescriptor>): ObjectDescriptor => ({ ...d, ...patch, box: { ...d.box, ...patch.box } });
+
 export function updateMasterObjects(patches: Record<string, Partial<ObjectDescriptor> | null>): void {
   setMaster((m) => {
     const bg = { ...m.background };
+    const out: MasterDef = { ...m };
     for (const [id, patch] of Object.entries(patches)) {
-      if (patch === null) delete bg[id];
-      else if (bg[id]) bg[id] = { ...bg[id], ...patch, box: { ...bg[id].box, ...patch.box } };
+      if (bg[id]) {
+        if (patch === null) delete bg[id];
+        else bg[id] = patchObject(bg[id], patch);
+        continue;
+      }
+      for (const k of STORIES) for (const v of VARIANTS) {
+        const story = out[k]?.[v];
+        if (!story?.objects?.[id]) continue;
+        const objects = { ...story.objects };
+        if (patch === null) delete objects[id];
+        else objects[id] = patchObject(objects[id], patch);
+        out[k] = { ...out[k], [v]: { ...story, objects: Object.keys(objects).length ? objects : undefined } };
+      }
     }
-    return { ...m, background: bg };
+    return { ...out, background: bg };
   });
+}
+
+/** Read a dropped / pasted file as base64 (no data: prefix). */
+function fileBase64(file: File): Promise<string> {
+  return new Promise((ok, fail) => {
+    const r = new FileReader();
+    r.onload = () => ok(String(r.result).replace(/^data:[^,]*,/, ""));
+    r.onerror = () => fail(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+export const isPictureFile = (f: File) => /^image\/(png|jpe?g|gif|bmp|svg\+xml|webp)$/.test(f.type) || /\.(png|jpe?g|gif|bmp|svg|webp)$/i.test(f.name);
+
+/**
+ * Picture of the master being edited, copied into the master's `assets/`: a new page drawing
+ * (at `at`, pt from the page's top-left, else centred in the upper third), a new drawing of the
+ * header / footer being edited, or the new image of drawing `replace` (it keeps its place and
+ * width; the height follows the new picture's proportions). `file`: dropped / pasted, else the
+ * host asks for one.
+ */
+export async function addMasterPicture(opts: { file?: File; at?: { x: number; y: number }; replace?: string } = {}): Promise<void> {
+  const m = studio.get().masterEdit;
+  if (!m) return;
+  const data = opts.file ? await fileBase64(opts.file) : undefined;
+  const r = (await masterAction("addPicture", { id: m.id, ...(data ? { data, name: opts.file!.name } : {}) })) as { src?: string; width?: number; height?: number; alt?: string; base?: string } | undefined;
+  if (!r?.src) return;
+  if (r.base) studio.set((s) => ({ assetBases: { ...s.assetBases, [m.id]: r.base! } }));
+  const ratio = r.width && r.height ? r.height / r.width : undefined;
+  if (opts.replace) {
+    const d = masterObjectOf(studio.get().masterEdit, opts.replace);
+    if (!d) return;
+    updateMasterObjects({ [opts.replace]: { type: "image", src: r.src, alt: d.alt || r.alt, shape: undefined, text: undefined, placeholder: undefined, box: { ...d.box, height: ratio ? Math.round(d.box.width * ratio * 100) / 100 : d.box.height } } });
+    return;
+  }
+  const page = studio.get().sections[0]?.page;
+  const maxW = page ? (page.width - page.margins.left - page.margins.right) * 0.5 : 240;
+  const w = Math.round(Math.min(r.width ?? 160, maxW) * 100) / 100;
+  const h = Math.round((ratio ? w * ratio : Math.min(r.height ?? 80, w)) * 100) / 100;
+  const pic: ObjectDescriptor = { type: "image", src: r.src, alt: r.alt ?? "", placement: "page", relativeTo: "page", plane: "front", box: { x: 0, y: 0, width: w, height: h } };
+  const story = studio.get().storyEditor?.view.dom as HTMLElement | undefined;
+  const taken = new Set(masterObjectIds(studio.get().masterEdit));
+  const id = uniqueId("image", taken);
+  if (story) {
+    // Header / footer being edited: the picture goes into its band, at the right margin (a logo).
+    const kind = story.dataset.kind as "headers" | "footers";
+    const y = !page ? 20 : kind === "headers" ? page.margins.header : page.height - page.margins.footer - h;
+    updateStoryObjects({ [id]: { ...pic, box: { ...pic.box, x: page ? page.width - page.margins.right - w : 400, y } } });
+    studio.set({ storyObjectSel: id });
+    return;
+  }
+  const clamp = (v: number, max: number) => Math.round(Math.min(Math.max(0, v), Math.max(0, max)) * 100) / 100;
+  const box = opts.at && page
+    ? { x: clamp(opts.at.x - w / 2, page.width - w), y: clamp(opts.at.y - h / 2, page.height - h), width: w, height: h }
+    : { x: page ? (page.width - w) / 2 : 100, y: page ? page.height / 3 : 200, width: w, height: h };
+  setMaster((x) => ({ ...x, background: { ...x.background, [id]: { ...pic, box } } }));
+  studio.set({ masterSel: [id], tab: "format", pane: "format" });
 }
 
 /** New id for a master object (placeholder keys stay as they are). */
 export function renameMasterObject(id: string, next: string): void {
   const d = studio.get().masterEdit?.background?.[id];
   if (!d || next === id) return;
-  if (studio.get().masterEdit?.background?.[next]) return notify("warning", loc(`L’identifiant « ${next} » est déjà utilisé.`, `The id "${next}" is already used.`));
+  if (masterObjectOf(studio.get().masterEdit, next)) return notify("warning", loc(`L’identifiant « ${next} » est déjà utilisé.`, `The id "${next}" is already used.`));
   setMaster((m) => ({ ...m, background: Object.fromEntries(Object.entries(m.background ?? {}).map(([k, v]) => (k === id ? [next, { ...v, name: v.name === id ? undefined : v.name }] : [k, v]))) }));
   studio.set((s) => ({ masterSel: s.masterSel.map((x) => (x === id ? next : x)) }));
 }
@@ -871,7 +965,7 @@ export function renameMasterObject(id: string, next: string): void {
 export function addMasterObject(kind: NewObject, extra: Partial<ObjectDescriptor> = {}, at?: { x: number; y: number }): void {
   const m = studio.get().masterEdit;
   if (!m) return;
-  const taken = new Set(Object.keys(m.background ?? {}));
+  const taken = new Set(masterObjectIds(m));
   const ph = extra.placeholder === "*" ? uniqueId("texte", new Set([...taken, ...TEXT_PRESETS().map((p) => p.key)])) : extra.placeholder && placeholderKey(extra.placeholder);
   const id = uniqueId(ph ?? (kind === "textbox" ? "texte" : "forme"), taken);
   const preset = TEXT_PRESETS().find((p) => p.key === ph);
@@ -900,7 +994,7 @@ export function addMasterObject(kind: NewObject, extra: Partial<ObjectDescriptor
  * document fills with its own text (`key`), or an automatic field (date, page, pages).
  */
 export function setMasterObjectMode(id: string, mode: "floating" | "fixed" | "placeholder", placeholder?: string): void {
-  const d = studio.get().masterEdit?.background?.[id];
+  const d = masterObjectOf(studio.get().masterEdit, id);
   if (!d) return;
   if (mode === "placeholder") {
     const key = placeholderKey(placeholder ?? d.placeholder ?? (TEXT_PRESETS().some((p) => p.key === id) ? id : "title"));
@@ -913,4 +1007,62 @@ export function setMasterObjectMode(id: string, mode: "floating" | "fixed" | "pl
 export function deleteMasterObjects(ids: string[]): void {
   updateMasterObjects(Object.fromEntries(ids.map((id) => [id, null])));
   studio.set({ masterSel: [] });
+}
+
+/* Master fields ------------------------------------------------------------ */
+
+const fieldToken = (key: string) => new RegExp(`\{\{\s*field:${key.replace(/[-]/g, "\-")}\s*\}\}`, "g");
+
+/** Where a master field is used: header / footer text, text boxes and placeholder boxes. */
+export function masterFieldUsage(m: MasterDef, key: string): string[] {
+  const out: string[] = [];
+  const re = fieldToken(key);
+  for (const k of STORIES) for (const v of VARIANTS) {
+    const s = m[k]?.[v];
+    if (!s) continue;
+    if (s.markdown && re.test(s.markdown)) out.push(k === "headers" ? loc("en-tête", "header") : loc("pied de page", "footer"));
+    re.lastIndex = 0;
+  }
+  for (const id of masterObjectIds(m)) {
+    const d = masterObjectOf(m, id)!;
+    if ((d.placeholder && placeholderKey(d.placeholder) === key) || (d.text && fieldToken(key).test(d.text))) out.push(d.name ?? id);
+  }
+  return [...new Set(out)];
+}
+
+/** Add or change a field the master offers its documents (label, default value); `null` deletes it. */
+export function setMasterField(key: string, patch: Partial<{ label: string; default: string }> | null): void {
+  setMaster((m) => {
+    const fields = { ...m.fields };
+    if (patch === null) delete fields[key];
+    else {
+      const next: { label: string; default?: string } = { ...{ label: key }, ...fields[key], ...patch };
+      if (!next.default) delete next.default;
+      fields[key] = next;
+    }
+    return { ...m, fields: Object.keys(fields).length ? fields : undefined };
+  });
+}
+
+/**
+ * New key for a master field: its `{{field:key}}` tokens in the header / footer stories and text
+ * boxes, and placeholder boxes bound to it, follow. Documents keep their value under the old key.
+ */
+export function renameMasterField(key: string, next: string): void {
+  const m = studio.get().masterEdit;
+  if (!m?.fields?.[key] || key === next) return;
+  if (m.fields[next]) return notify("warning", loc(`Le champ « ${next} » existe déjà.`, `The field "${next}" already exists.`));
+  const token = `{{field:${next}}}`;
+  const swap = (s?: string) => s?.replace(fieldToken(key), token);
+  const object = (d: ObjectDescriptor): ObjectDescriptor => ({ ...d, ...(d.text ? { text: swap(d.text) } : {}), ...(d.placeholder && placeholderKey(d.placeholder) === key ? { placeholder: next } : {}) });
+  const objects = (o?: Record<string, ObjectDescriptor>) => (o ? Object.fromEntries(Object.entries(o).map(([id, d]) => [id, object(d)])) : undefined);
+  setMaster((x) => {
+    const out: MasterDef = { ...x, fields: Object.fromEntries(Object.entries(x.fields ?? {}).map(([k, f]) => (k === key ? [next, { ...f, label: f.label === key ? next : f.label }] : [k, f]))), background: objects(x.background) };
+    for (const k of STORIES) {
+      const set = out[k];
+      if (!set) continue;
+      out[k] = Object.fromEntries(Object.entries(set).map(([v, s]) => [v, s && { ...s, ...(s.markdown ? { markdown: swap(s.markdown) } : {}), ...(s.objects ? { objects: objects(s.objects) } : {}) }]));
+    }
+    return out;
+  });
 }

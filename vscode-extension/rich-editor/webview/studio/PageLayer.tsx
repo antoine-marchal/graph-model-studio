@@ -21,7 +21,7 @@ import type { Margins, MasterDef, ObjectDescriptor, StoryDef, StorySet } from ".
 import { cssLineHeight, fontStack, ptToPx, pxToPt } from "../../document/units";
 import { shapeSvg } from "./ObjectView";
 import { studio, useStudio, type PageBox } from "./store";
-import { currentBlock, currentSectionBreak, getEditor, getSync, setBlockProps, updateStoryObjects, setPageSetup, setSectionProps, updateMaster, updateMasterObjects, updateMeta, setGroupText } from "./actions";
+import { addMasterPicture, currentBlock, currentSectionBreak, getEditor, getSync, isPictureFile, masterObjectOf, setBlockProps, updateStoryObjects, setPageSetup, setSectionProps, updateMaster, updateMasterObjects, updateMeta, setGroupText } from "./actions";
 import { parseBlockProps } from "../extensions/blockProps";
 import { useEditorDerived } from "./hooks";
 import { tr } from "./ui";
@@ -146,7 +146,7 @@ function TextContent({ id, d, page, values, theme, master }: { id: string; d: Ob
 function Furniture({ id, d, page, pageNo, assetBase, theme, values, editable, selected, master, story }: { id: string; d: ObjectDescriptor; page: PageBox; pageNo: number; assetBase?: string; theme: any; values: Values; editable?: boolean; selected?: boolean; master: boolean; story?: boolean }) {
   const style = boxStyle(d, page);
   const fillable = !!d.placeholder && !isAutoField(d.placeholder) && !master;
-  const cls = `ms-furniture${editable ? " is-editable" : ""}${selected ? " is-selected" : ""}${d.placeholder ? " is-placeholder" : ""}${fillable ? " is-fillable" : ""}`;
+  const cls = `ms-furniture${editable ? " is-editable" : ""}${selected ? " is-selected" : ""}${d.plane === "behind" ? " is-behind" : ""}${d.type === "image" ? " is-picture" : ""}${d.placeholder ? " is-placeholder" : ""}${fillable ? " is-fillable" : ""}`;
   if (d.type === "image" && d.src) return <img className={cls} data-id={id} data-story-object={story ? "" : undefined} style={style} src={assetBase ? `${assetBase}/${d.src}` : d.src} alt={d.alt ?? ""} draggable={false} />;
   const w = ptToPx(d.box.width);
   const h = ptToPx(d.box.height);
@@ -161,7 +161,14 @@ function Furniture({ id, d, page, pageNo, assetBase, theme, values, editable, se
 
 type StoryKind = "headers" | "footers";
 
-const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundaries, overflow, editing, onEdit, master, masterSel, storySel }: {
+/** Alignment and indents of a whole header / footer story (indents keep its text clear of inline logos). */
+const storyBlockStyle = (block: StoryDef["block"]): React.CSSProperties => ({
+  textAlign: block?.align as React.CSSProperties["textAlign"],
+  paddingLeft: block?.indentLeft ? `${block.indentLeft}pt` : undefined,
+  paddingRight: block?.indentRight ? `${block.indentRight}pt` : undefined,
+});
+
+const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundaries, overflow, editing, onEdit, master, masterSel, storySel, reference }: {
   p: PageBox;
   sec: ResolvedSection | undefined;
   values: Values;
@@ -173,6 +180,7 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
   master: MasterDef | null;
   masterSel: string[];
   storySel: string | null;
+  reference: number;
 }) {
   const evenAndOdd = !!sec?.chain.some((m) => m.evenAndOdd);
   const opts = { firstOfSection: p.firstOfSection, titlePage: !!sec?.titlePage, pageNumber: p.number, evenAndOdd };
@@ -191,7 +199,7 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
         {isEditing ? (
           <StoryEditor initial={s?.markdown ?? ""} block={s?.block} kind={kind} variant={variant} master={!!master} onDone={(value) => onEdit(p.index, null, variant, value === (s?.markdown ?? "") ? null : value)} />
         ) : s?.markdown ? (
-          <div className={`ms-story-text${s.block?.style ? ` ms-s-${s.block.style}` : ""}`} style={{ textAlign: s.block?.align as React.CSSProperties["textAlign"] }} dangerouslySetInnerHTML={{ __html: storyHtml(fillFields(s.markdown, { page: p.number, pages: values.total, title: values.title, fields: values.fields })) }} />
+          <div className={`ms-story-text${s.block?.style ? ` ms-s-${s.block.style}` : ""}`} style={storyBlockStyle(s.block)} dangerouslySetInnerHTML={{ __html: storyHtml(fillFields(s.markdown, { page: p.number, pages: values.total, title: values.title, fields: values.fields })) }} />
         ) : (
           <div className="ms-story-empty">{label}</div>
         )}
@@ -206,11 +214,14 @@ const PageSheet = memo(function PageSheet({ p, sec, values, assetBase, boundarie
       {/* Header / footer drawings: editable while their story is edited. */}
       {theme && ([["headers", header], ["footers", footer]] as const).flatMap(([kind, s]) => Object.entries(s?.objects ?? {}).map(([id, d]) => (
         <Furniture key={`${kind}-${id}`} id={id} d={d} page={p} pageNo={p.number} assetBase={assetBase} theme={theme} values={values} master={!!master}
-          story={editing === kind} editable={editing === kind} selected={editing === kind && storySel === id} />
+          story={editing === kind} editable={editing === kind || !!master} selected={editing === kind ? storySel === id : !!master && masterSel.includes(id)} />
       )))}
       {theme && master && Object.entries(own).map(([id, d]) => (
         <Furniture key={id} id={id} d={d} page={p} pageNo={p.number} assetBase={assetBase} theme={theme} values={values} editable selected={masterSel.includes(id)} master />
       ))}
+      {master && reference > 0 && master.thumbnail && assetBase && p.firstOfSection && (
+        <img className="ms-reference" src={`${assetBase}/${master.thumbnail}`} alt="" draggable={false} style={{ opacity: reference }} />
+      )}
       {(boundaries || master) && <div className="ms-margin-guide" style={{ top: p.margins.top, left: p.margins.left, right: p.margins.right, bottom: p.margins.bottom }} />}
       {story(header, "headers")}
       {story(footer, "footers")}
@@ -231,15 +242,17 @@ export function PageLayer({ editor }: { editor: Editor }) {
   const master = useStudio((s) => s.masterEdit);
   const masterSel = useStudio((s) => s.masterSel);
   const storySel = useStudio((s) => s.storyObjectSel);
+  const reference = useStudio((s) => s.masterReference);
   useStoryObjectTool();
   const [editing, setEditing] = useState<{ page: number; kind: StoryKind } | null>(null);
   const total = layout?.pages.length ?? 0;
   const values = useMemo<Values>(() => {
     const out: Record<string, string> = {};
-    for (const m of sections[0]?.chain ?? []) for (const [k, f] of Object.entries(m.fields ?? {})) if (f.default) out[k] = f.default;
+    // Master edit: a field without a default shows its label, so where it sits stays visible.
+    for (const m of sections[0]?.chain ?? []) for (const [k, f] of Object.entries(m.fields ?? {})) if (f.default || master) out[k] = f.default || `‹${f.label}›`;
     for (const k of placeholders ?? []) if (groupTexts[k] !== undefined) out[k] = groupTexts[k];
     return { title, total, fields: { ...metaFields, ...out } };
-  }, [sections, metaFields, placeholders, groupTexts, title, total]);
+  }, [sections, metaFields, placeholders, groupTexts, title, total, master]);
 
   // Ribbon / context menu: edit the header or footer of the current page, optionally adding a field.
   useEffect(() => {
@@ -289,7 +302,7 @@ export function PageLayer({ editor }: { editor: Editor }) {
         const owner = sec?.chain[sec.chain.length - 1]?.id;
         return (
           <PageSheet key={p.index} p={p} sec={sec} values={values} assetBase={owner ? assetBases[owner] : undefined} boundaries={boundaries} overflow={layout.overflows.some((o) => o.page === p.index)}
-            editing={editing?.page === p.index ? editing.kind : null} onEdit={onEdit} master={master} masterSel={masterSel} storySel={storySel} />
+            editing={editing?.page === p.index ? editing.kind : null} onEdit={onEdit} master={master} masterSel={masterSel} storySel={storySel} reference={reference} />
         );
       })}
       {master && <MasterObjectTool editor={editor} />}
@@ -361,7 +374,7 @@ function StoryEditor({ initial, block, kind, variant, master, onDone }: { initia
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor]);
   return (
-    <div className={`ms-story-editor ms-story-text${block?.style ? ` ms-s-${block.style}` : ""}`} style={{ textAlign: block?.align as React.CSSProperties["textAlign"] }} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
+    <div className={`ms-story-editor ms-story-text${block?.style ? ` ms-s-${block.style}` : ""}`} style={storyBlockStyle(block)} onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
       <EditorContent editor={editor} />
       <div className="ms-story-hint">
         {master ? tr("Masque", "Master") : tr("Document", "Document")} · <kbd>Ctrl+Entrée</kbd> {tr("valider", "save")} · <kbd>Échap</kbd> {tr("annuler", "cancel")} · {tr("champs", "fields")} {"{{page}} {{pages}} {{title}} {{field:nom}}"}
@@ -465,7 +478,8 @@ function MasterObjectTool({ editor }: { editor: Editor }) {
       const handle = t.closest<HTMLElement>(".ms-master-handle");
       const pageEl = t.closest<HTMLElement>(".ms-page");
       if (pageEl) setPressedPage(Number(pageEl.dataset.page) - 1);
-      const obj = t.closest<HTMLElement>(".ms-furniture.is-editable");
+      // Drawings behind a header / footer story are reached through it (the story keeps its double-click).
+      const obj = t.closest<HTMLElement>(".ms-furniture.is-editable") ?? (t.closest(".ms-story:not(.is-editing)") ? document.elementsFromPoint(e.clientX, e.clientY).find((el): el is HTMLElement => el instanceof HTMLElement && el.matches(".ms-furniture.is-editable")) ?? null : null);
       const m = studio.get().masterEdit;
       if (!m) return;
       if (!obj && !handle) {
@@ -481,7 +495,7 @@ function MasterObjectTool({ editor }: { editor: Editor }) {
         ids = e.shiftKey ? (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]) : ids.includes(id) ? ids : [id];
         studio.set({ masterSel: ids, tab: "format", pane: "format" });
       }
-      const d = (id: string) => m.background?.[id];
+      const d = (id: string) => masterObjectOf(m, id);
       const movable = ids.filter((id) => d(id) && !d(id)!.locked?.geometry);
       if (!movable.length) return;
       drag.current = { ids: movable, handle: handle?.dataset.handle, sx: e.clientX, sy: e.clientY, start: Object.fromEntries(movable.map((id) => [id, { ...d(id)!.box }])), page: t.closest(".ms-page"), moved: false };
@@ -531,14 +545,58 @@ function MasterObjectTool({ editor }: { editor: Editor }) {
         e.preventDefault();
         const step = e.shiftKey ? 7.2 : 0.72;
         const [dx, dy] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key as "ArrowLeft"];
-        updateMasterObjects(Object.fromEntries(ids.filter((id) => !m.background?.[id]?.locked?.geometry).map((id) => [id, { box: { ...m.background![id].box, x: m.background![id].box.x + dx, y: m.background![id].box.y + dy } }])));
+        updateMasterObjects(Object.fromEntries(ids.map((id) => [id, masterObjectOf(m, id)] as const).filter(([, d]) => d && !d.locked?.geometry).map(([id, d]) => [id, { box: { ...d!.box, x: d!.box.x + dx, y: d!.box.y + dy } }])));
       } else if (e.key === "Escape") studio.set({ masterSel: [] });
     };
+    // Pictures dropped on the page: onto a picture replaces it, elsewhere adds one where dropped.
+    const pagePoint = (e: MouseEvent) => {
+      const pageEl = (e.target as HTMLElement).closest<HTMLElement>(".ms-page");
+      if (!pageEl) return undefined;
+      const r = pageEl.getBoundingClientRect();
+      const zoom = studio.get().zoom || 1;
+      return { x: pxToPt((e.clientX - r.left) / zoom), y: pxToPt((e.clientY - r.top) / zoom) };
+    };
+    const pictureUnder = (e: Event) => {
+      const el = (e.target as HTMLElement).closest<HTMLElement>(".ms-furniture.is-editable");
+      return el && masterObjectOf(studio.get().masterEdit, el.dataset.id!)?.type === "image" ? el : null;
+    };
+    const dragover = (e: DragEvent) => {
+      if (!e.dataTransfer?.types.includes("Files")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      for (const el of layer.querySelectorAll(".is-drop-target")) el.classList.remove("is-drop-target");
+      (pictureUnder(e) ?? (e.target as HTMLElement).closest(".ms-page"))?.classList.add("is-drop-target");
+    };
+    const dragleave = (e: DragEvent) => !layer.contains(e.relatedTarget as Node) && layer.querySelectorAll(".is-drop-target").forEach((el) => el.classList.remove("is-drop-target"));
+    const drop = (e: DragEvent) => {
+      const file = [...(e.dataTransfer?.files ?? [])].find(isPictureFile);
+      layer.querySelectorAll(".is-drop-target").forEach((el) => el.classList.remove("is-drop-target"));
+      if (!file) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const target = pictureUnder(e);
+      void addMasterPicture(target ? { file, replace: target.dataset.id } : { file, at: pagePoint(e) });
+    };
+    const dblclick = (e: MouseEvent) => {
+      const el = pictureUnder(e);
+      if (!el) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void addMasterPicture({ replace: el.dataset.id });
+    };
+    layer.addEventListener("dragover", dragover as EventListener);
+    layer.addEventListener("dragleave", dragleave as EventListener);
+    layer.addEventListener("drop", drop as EventListener, true);
+    layer.addEventListener("dblclick", dblclick as EventListener, true);
     layer.addEventListener("pointerdown", down as EventListener, true);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     window.addEventListener("keydown", key);
     return () => {
+      layer.removeEventListener("dragover", dragover as EventListener);
+      layer.removeEventListener("dragleave", dragleave as EventListener);
+      layer.removeEventListener("drop", drop as EventListener, true);
+      layer.removeEventListener("dblclick", dblclick as EventListener, true);
       layer.removeEventListener("pointerdown", down as EventListener, true);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
@@ -548,7 +606,7 @@ function MasterObjectTool({ editor }: { editor: Editor }) {
 
   // Selection frame (with handles) on the current page for a single selected object.
   useEffect(() => {
-    const d = sel.length === 1 ? master?.background?.[sel[0]] : undefined;
+    const d = sel.length === 1 ? masterObjectOf(master, sel[0]) : undefined;
     const page = layout?.pages[pressedPage ?? Math.max(0, studio.get().currentPage - 1)];
     if (!d || !page) return setFrame(null);
     const s = boxStyle(d, page);
@@ -556,7 +614,7 @@ function MasterObjectTool({ editor }: { editor: Editor }) {
   }, [sel, master, layout, pressedPage]);
 
   if (!frame) return null;
-  const d = master?.background?.[sel[0]];
+  const d = masterObjectOf(master, sel[0]);
   return (
     <div className={`ms-sel-frame ms-master-frame${d?.locked?.geometry ? " is-locked" : ""}`} style={{ left: frame.rect.x, top: frame.rect.y, width: frame.rect.w, height: frame.rect.h }}>
       {!d?.locked?.geometry && HANDLES.map((h) => <span key={h} className={`ms-handle ms-master-handle ms-handle-${h}`} data-handle={h} />)}

@@ -95,6 +95,8 @@ export interface StudioState {
   contextMenu: { x: number; y: number; target: MenuTarget } | null;
   /** Master edit mode: selected master objects (background ids). */
   masterSel: string[];
+  /** Master edit: opacity of the Word reference rendering laid over the page (0: hidden). */
+  masterReference: number;
   snap: boolean;
   /** Connector tool: null off, "" waiting for the start object, else its id. */
   connectFrom: string | null;
@@ -165,6 +167,7 @@ let state: StudioState = {
   storyObjectSel: null,
   masterEdit: null,
   masterEditOf: null,
+  masterReference: 0,
   report: null,
   notices: [],
   sync: "saved",

@@ -14,6 +14,7 @@ import { XMLParser } from "fast-xml-parser";
 import { posix } from "node:path";
 import { createHash } from "node:crypto";
 import { twipToPt, emuToPt, round2, WORD_LINE_PITCH } from "../../document/units";
+import { resolvePage } from "../../document/schema";
 import type { ImportReportItem, MasterDef, ObjectDescriptor, ParagraphProps, RunProps, StoryDef, StorySet, StyleDef, ThemeSlot } from "../../document/schema";
 
 export const IMPORT_LIMITS = { maxFileBytes: 50 * 1024 * 1024, maxEntries: 3000, maxUncompressedBytes: 300 * 1024 * 1024, maxRatio: 200, maxXmlBytes: 30 * 1024 * 1024 };
@@ -327,11 +328,15 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   const assets = new Map<string, Uint8Array>();
   const storyCache = new Map<string, StoryDef>();
   const counter = { n: 0 };
-  const readStory = async (rId: string): Promise<StoryDef | undefined> => {
+  // Story text line height: the Header / Footer style's font size (else Normal's), Word's single spacing.
+  const sizeOf = (id: string): number => styles[id]?.run?.size ?? (styles[id]?.basedOn && styles[id].basedOn !== id ? sizeOf(styles[id].basedOn!) : styles.Normal?.run?.size ?? 11);
+  const readStory = async (rId: string, kind: "headers" | "footers", page: StoryPage): Promise<StoryDef | undefined> => {
     const rel = docRels.get(rId);
     if (!rel || rel.external) return undefined;
+    // A story shared by sections is laid out on the first section's page that uses it.
     if (storyCache.has(rel.target)) return storyCache.get(rel.target);
-    const story = await parseStory(zip, rel.target, assets, add, counter);
+    const line = round2(sizeOf(kind === "headers" ? "Header" : "Footer") * WORD_LINE_PITCH);
+    const story = await parseStory(zip, rel.target, assets, add, counter, kind, page, line);
     storyCache.set(rel.target, story);
     return story;
   };
@@ -353,15 +358,18 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
       margins: Object.fromEntries((["top", "right", "bottom", "left", "header", "footer"] as const).filter((k) => num(pgMar?.[`@_w:${k}`]) !== undefined).map((k) => [k, twipToPt(Math.abs(Number(pgMar[`@_w:${k}`])))])),
       ...(num(s["w:cols"]?.["@_w:num"]) && Number(s["w:cols"]["@_w:num"]) > 1 ? { columns: { count: Number(s["w:cols"]["@_w:num"]), gap: twipToPt(Number(s["w:cols"]["@_w:space"] ?? 720)) } } : {}),
     };
+    // Page as printed, with Word's default margins where the section sets none.
+    const printed = resolvePage(page);
+    const geo: StoryPage = { width: printed.width, height: printed.height, margins: { ...printed.margins, ...(page.margins?.header === undefined ? { header: 36 } : {}), ...(page.margins?.footer === undefined ? { footer: 36 } : {}) } };
     // Word: a missing header / footer reference links to the previous section's story.
     const headers: StorySet = { ...prevHeaders };
     const footers: StorySet = { ...prevFooters };
     for (const ref of arr(s["w:headerReference"])) {
-      const story = await readStory(ref["@_r:id"]);
+      const story = await readStory(ref["@_r:id"], "headers", geo);
       if (story) headers[(ref["@_w:type"] ?? "default") as keyof StorySet] = story;
     }
     for (const ref of arr(s["w:footerReference"])) {
-      const story = await readStory(ref["@_r:id"]);
+      const story = await readStory(ref["@_r:id"], "footers", geo);
       if (story) footers[(ref["@_w:type"] ?? "default") as keyof StorySet] = story;
     }
     prevHeaders = headers;
@@ -410,39 +418,75 @@ export async function importTemplate(data: Uint8Array, fileName: string, now = n
   return { family, variants, assets, report, fonts: [...fonts].sort(), sectionDesigns: sectionDesigns.length ? sectionDesigns : [0] };
 }
 
+/** Page geometry a story is laid out on (pt, as printed: landscape width > height). */
+export interface StoryPage {
+  width: number;
+  height: number;
+  margins: { top: number; right: number; bottom: number; left: number; header: number; footer: number };
+}
+
+type Add = (f: string, s: ImportReportItem["status"], d?: string, p?: string) => void;
+type Obj = { id: string; object: ObjectDescriptor };
+
+interface StoryCtx {
+  zip: JSZip;
+  part: string;
+  rels: Map<string, Rel>;
+  assets: Map<string, Uint8Array>;
+  add: Add;
+  counter: { n: number };
+  page: StoryPage;
+  /** Line height of the story's text, pt (from its paragraph style's font size). */
+  line: number;
+}
+
 /**
- * A header / footer part → Markdown story with fields, plus its pictures (anchored → page
- * objects, inline → images in the Markdown). Shapes other than pictures, content controls and
- * VML are reported.
+ * A header / footer part → Markdown story with fields, plus its drawings: pictures, shapes (with
+ * their text), groups and VML pictures become page objects placed where Word draws them —
+ * anchored ones from their offset / alignment against the page, the margins or the paragraph,
+ * inline ones in the header / footer band at their paragraph's alignment. The story's alignment
+ * and paragraph style are kept when all its paragraphs share them.
  */
-async function parseStory(zip: JSZip, part: string, assets: Map<string, Uint8Array>, add: (f: string, s: ImportReportItem["status"], d?: string, p?: string) => void, counter: { n: number }): Promise<StoryDef> {
+async function parseStory(zip: JSZip, part: string, assets: Map<string, Uint8Array>, add: Add, counter: { n: number }, kind: "headers" | "footers", page: StoryPage, line: number): Promise<StoryDef> {
   const tree = await xml(zip, part, ordered);
-  const partRels = await rels(zip, part);
-  const objects: Record<string, ObjectDescriptor> = {};
+  const ctx: StoryCtx = { zip, part, rels: await rels(zip, part), assets, add, counter, page, line };
+  // Drawings whose vertical place depends on where the story starts (footers grow upwards).
+  const placed: ((storyTop: number) => Obj[])[] = [];
   const lines: string[] = [];
-  const tag = (n: any) => Object.keys(n).find((k) => k !== ":@");
-  const children = (n: any) => (n[tag(n)!] ?? []) as any[];
-  const find = (nodes: any[], name: string): any[] => nodes.flatMap((n) => (tag(n) === name ? [n] : typeof n === "object" && Array.isArray(n[tag(n)!]) ? find(children(n), name) : []));
-  const story = (tree as any[]).find((n) => tag(n) === "w:hdr" || tag(n) === "w:ftr");
-  const content = story ? children(story) : [];
+  const aligns = new Set<string>();
+  const pStyles = new Set<string>();
+  // Room taken on the text line by inline drawings beside the text (one text paragraph only).
+  const reserve = { left: 0, right: 0, paragraphs: 0 };
+  const story = (tree as any[]).find((n) => tagOf(n) === "w:hdr" || tagOf(n) === "w:ftr");
+  const content = story ? kidsOf(story) : [];
+  // Top of the paragraph being read, from the story's first line (pt).
+  let cursor = 0;
   for (const node of content) {
-    const name = tag(node);
+    const name = tagOf(node);
     if (name === "w:sdt") add("Content control in a story", "flattened", "Kept as its text.", part);
     if (name === "w:tbl") add("Table in a story", "flattened", "Cells are kept as lines of text.", part);
-    const paragraphs = name === "w:p" ? [node] : find(children(node), "w:p");
+    const paragraphs = name === "w:p" ? [node] : findAll(kidsOf(node), "w:p");
     for (const p of paragraphs) {
+      const pPr = child(p, "w:pPr");
+      const jc = at(child(pPr, "w:jc"), "w:val") ?? "left";
+      const align = jc === "center" ? "center" : jc === "right" || jc === "end" ? "right" : "left";
+      const styleId = at(child(pPr, "w:pStyle"), "w:val");
       let text = "";
       let field: string | null = null;
       let inResult = false;
-      const visit = (nodes: any[]) => {
+      let breaks = 0;
+      const inlines: (Inline & { afterText: boolean })[] = [];
+      const top = cursor;
+      const visit = async (nodes: any[]): Promise<void> => {
         for (const n of nodes) {
-          const t = tag(n);
+          const t = tagOf(n);
+          if (t === "w:pPr") continue;
           if (t === "w:fldSimple") {
-            text += fieldToken(String(n[":@"]?.["@_w:instr"] ?? ""), plain(children(n)));
+            text += fieldToken(String(at(n, "w:instr") ?? ""), plain(kidsOf(n)));
             continue;
           }
           if (t === "w:fldChar") {
-            const type = n[":@"]?.["@_w:fldCharType"];
+            const type = at(n, "w:fldCharType");
             if (type === "begin") field = "";
             else if (type === "separate") inResult = true;
             else if (type === "end") {
@@ -453,39 +497,71 @@ async function parseStory(zip: JSZip, part: string, assets: Map<string, Uint8Arr
             continue;
           }
           if (t === "w:instrText" && field !== null) {
-            field += plain(children(n));
+            field += plain(kidsOf(n));
             continue;
           }
-          if (t === "w:t" && !(field !== null && inResult) && field === null) text += plain(children(n)).replace(/([*_`[\]\\{}])/g, "\\$1");
-          if (t === "w:tab") text += " ";
-          if (t === "w:br") text += "  \n";
+          if (t === "w:t" && field === null) text += plain(kidsOf(n)).replace(/([*_`[\]\\{}])/g, "\\$1");
+          if (t === "w:tab" || t === "w:ptab") text += " ";
+          if (t === "w:br") (text += "  \n"), breaks++;
           if (t === "w:drawing") {
-            const pic = drawingObject(n, partRels, zip, assets, part, add, counter);
-            if (pic) {
-              void pic.then((o) => o && (objects[o.id] = o.object));
-              pendingPictures.push(pic);
-            }
+            const d = await drawingObjects(n, ctx);
+            if (d?.inline) inlines.push({ ...d.inline, afterText: !!text.trim() });
+            else if (d?.anchored) placed.push((storyTop) => d.anchored!(storyTop + top));
             continue;
           }
-          if (t === "w:pict" || t === "mc:AlternateContent") {
-            if (t === "w:pict") add("VML drawing (watermark or legacy shape)", "unsupported", "Not imported.", part);
-            if (t === "mc:AlternateContent") {
-              const choice = find(children(n), "w:drawing");
-              if (choice.length) visit([choice[0]]);
-              continue;
-            }
+          if (t === "w:pict") {
+            const pic = await vmlPicture(n, ctx);
+            if (pic) placed.push((storyTop) => [pic(storyTop + top)]);
+            else add("VML drawing (watermark or legacy shape)", "unsupported", "Only VML pictures are imported.", part);
             continue;
           }
-          if (Array.isArray(n[t!])) visit(children(n));
+          if (t === "mc:AlternateContent") {
+            // The DrawingML choice, else the VML fallback.
+            const choice = findAll(kidsOf(n), "w:drawing");
+            await visit(choice.length ? choice.slice(0, 1) : findAll(kidsOf(n), "w:pict").slice(0, 1));
+            continue;
+          }
+          if (Array.isArray(n[t!])) await visit(kidsOf(n));
         }
       };
-      const pendingPictures: Promise<unknown>[] = [];
-      visit(children(p));
-      await Promise.all(pendingPictures);
-      if (text.trim()) lines.push(text.trim());
+      await visit(kidsOf(p));
+      void inResult;
+      const height = Math.max(line * (breaks + 1), ...inlines.map((i) => i.h));
+      // Inline drawings sit side by side on the paragraph's line, at its alignment.
+      if (inlines.length) {
+        const total = inlines.reduce((sum, i) => sum + i.w, 0);
+        const frame = page.width - page.margins.left - page.margins.right;
+        let x = page.margins.left + (align === "center" ? (frame - total) / 2 : align === "right" ? frame - total : 0);
+        for (const i of inlines) {
+          const left = x;
+          placed.push((storyTop) => i.build(left, storyTop + top + height - i.h));
+          x += i.w;
+        }
+      }
+      cursor += height;
+      if (text.trim() && inlines.length) {
+        reserve.paragraphs++;
+        // Word lays the text and the drawings on one line: the text keeps clear of them.
+        const room = (list: typeof inlines) => list.reduce((sum, i) => sum + i.w, 0) + (list.length ? 6 : 0);
+        if (align === "right") reserve.right = round2(room(inlines.filter((i) => i.afterText)));
+        else if (align === "left") reserve.left = round2(room(inlines.filter((i) => !i.afterText)));
+      }
+      if (text.trim()) {
+        lines.push(text.trim());
+        aligns.add(align);
+        pStyles.add(styleId ?? "");
+      }
     }
   }
-  return { markdown: lines.join("\n\n"), ...(Object.keys(objects).length ? { objects } : {}) };
+  // Word: the header grows down from its distance to the page edge, the footer up from its own.
+  const storyTop = kind === "headers" ? page.margins.header : page.height - page.margins.footer - cursor;
+  const objects: Record<string, ObjectDescriptor> = {};
+  for (const build of placed) for (const { id, object } of build(storyTop)) objects[id] = object;
+  const onlyAlign = aligns.size === 1 ? [...aligns][0] : undefined;
+  const onlyStyle = pStyles.size === 1 ? [...pStyles][0] : undefined;
+  const indents = lines.length === 1 && reserve.paragraphs === 1 ? { ...(reserve.left ? { indentLeft: reserve.left } : {}), ...(reserve.right ? { indentRight: reserve.right } : {}) } : {};
+  const block = { ...(onlyAlign && onlyAlign !== "left" ? { align: onlyAlign as "center" | "right" } : {}), ...(onlyStyle ? { style: onlyStyle } : {}), ...indents };
+  return { markdown: lines.join("\n\n"), ...(Object.keys(block).length ? { block } : {}), ...(Object.keys(objects).length ? { objects } : {}) };
 }
 
 const plain = (nodes: any[]): string => nodes.map((n) => (typeof n?.["#text"] !== "undefined" ? String(n["#text"]) : Array.isArray(n?.[Object.keys(n)[0]]) ? plain(n[Object.keys(n)[0]]) : "")).join("");
@@ -500,53 +576,238 @@ function fieldToken(instr: string, cached: string): string {
   return cached;
 }
 
-async function drawingObject(node: any, partRels: Map<string, Rel>, zip: JSZip, assets: Map<string, Uint8Array>, part: string, add: (f: string, s: ImportReportItem["status"], d?: string, p?: string) => void, counter: { n: number }): Promise<{ id: string; object: ObjectDescriptor } | undefined> {
-  const tag = (n: any) => Object.keys(n).find((k) => k !== ":@");
-  const kids = (n: any): any[] => (Array.isArray(n?.[tag(n)!]) ? n[tag(n)!] : []);
-  const find = (nodes: any[], name: string): any[] => nodes.flatMap((n) => (tag(n) === name ? [n] : find(kids(n), name)));
-  const anchor = find(kids(node), "wp:anchor")[0] ?? find(kids(node), "wp:inline")[0];
-  if (!anchor) return undefined;
-  const blip = find(kids(anchor), "a:blip")[0];
-  const extent = find(kids(anchor), "wp:extent")[0]?.[":@"];
-  const width = emuToPt(Number(extent?.["@_cx"] ?? 0));
-  const height = emuToPt(Number(extent?.["@_cy"] ?? 0));
-  if (!blip) {
-    const shape = find(kids(anchor), "wps:wsp")[0];
-    if (shape) {
-      const geom = find(kids(shape), "a:prstGeom")[0]?.[":@"]?.["@_prst"];
-      const fill = find(kids(find(kids(shape), "wps:spPr")[0] ?? {}), "a:srgbClr")[0]?.[":@"]?.["@_val"];
-      const pos = position(anchor, find, kids);
-      const id = `shape${++counter.n}`;
-      add("Shape in a story", "supported", `${geom ?? "shape"} kept as a page object (text inside shapes is not kept).`, part);
-      return { id, object: { type: "shape", shape: geom === "ellipse" ? "ellipse" : geom === "line" ? "line" : "rect", placement: "page", relativeTo: pos.relativeTo, box: { x: pos.x, y: pos.y, width, height }, plane: pos.behind ? "behind" : "front", style: fill ? { fill: String(fill).toUpperCase(), line: null } : undefined, locked: { geometry: true } } };
-    }
-    add("Drawing in a story", "unsupported", "Only pictures and simple shapes are imported.", part);
-    return undefined;
-  }
-  const rel = partRels.get(blip[":@"]?.["@_r:embed"]);
+/* DrawingML ------------------------------------------------------------- */
+
+const tagOf = (n: any): string | undefined => (n && typeof n === "object" ? Object.keys(n).find((k) => k !== ":@") : undefined);
+const kidsOf = (n: any): any[] => (Array.isArray(n?.[tagOf(n)!]) ? n[tagOf(n)!] : []);
+const findAll = (nodes: any[], name: string): any[] => nodes.flatMap((n) => (tagOf(n) === name ? [n] : findAll(kidsOf(n), name)));
+const first = (n: any, name: string): any => findAll(kidsOf(n), name)[0];
+/** Direct child only (a group's own transform, not a member's). */
+const child = (n: any, name: string): any => kidsOf(n).find((k) => tagOf(k) === name);
+const at = (n: any, key: string): string | undefined => n?.[":@"]?.[`@_${key}`];
+
+const SCHEME: Record<string, ThemeSlot> = { tx1: "dk1", bg1: "lt1", tx2: "dk2", bg2: "lt2", dk1: "dk1", lt1: "lt1", dk2: "dk2", lt2: "lt2", accent1: "accent1", accent2: "accent2", accent3: "accent3", accent4: "accent4", accent5: "accent5", accent6: "accent6", hlink: "hlink", folHlink: "folHlink" };
+const PRESETS: Record<string, NonNullable<ObjectDescriptor["shape"]>> = { rect: "rect", roundRect: "roundRect", ellipse: "ellipse", triangle: "triangle", rtTriangle: "triangle", diamond: "diamond", rightArrow: "rightArrow", chevron: "chevron", homePlate: "chevron", line: "line", straightConnector1: "line" };
+
+/** Color in a fill / line node: RGB or a theme slot (`theme.accent1`), `null` for noFill, alpha as transparency. */
+function colorOf(node: any): { color?: string | null; transparency?: number } {
+  if (!node) return {};
+  if (child(node, "a:noFill")) return { color: null };
+  const solid = tagOf(node) === "a:solidFill" ? node : child(node, "a:solidFill");
+  if (!solid) return {};
+  const rgb = child(solid, "a:srgbClr");
+  const scheme = child(solid, "a:schemeClr");
+  const sys = child(solid, "a:sysClr");
+  const c = rgb ?? scheme ?? sys;
+  const alpha = Number(at(child(c, "a:alpha"), "val") ?? 100000);
+  const color = rgb ? String(at(rgb, "val")).toUpperCase() : scheme && SCHEME[at(scheme, "val") ?? ""] ? `theme.${SCHEME[at(scheme, "val")!]}` : sys ? String(at(sys, "lastClr") ?? "000000").toUpperCase() : undefined;
+  return { color, ...(alpha < 100000 ? { transparency: Math.round(100 - alpha / 1000) } : {}) };
+}
+
+interface Frame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Text of a text box (`wps:txbx`) with the look of its first run. */
+function shapeText(sp: any): { text?: string; color?: string; fontSize?: number; align?: "center" | "right" } {
+  const box = first(sp, "wps:txbx");
+  if (!box) return {};
+  const text = findAll(kidsOf(box), "w:p").map((p) => findAll(kidsOf(p), "w:t").map((t) => plain(kidsOf(t))).join("")).filter(Boolean).join("\n");
+  const rPr = first(box, "w:rPr");
+  const sz = Number(at(child(rPr, "w:sz"), "w:val") ?? 0);
+  const color = child(rPr, "w:color");
+  const themeColor = at(color, "w:themeColor");
+  const jc = at(first(box, "w:jc"), "w:val");
+  return {
+    ...(text ? { text } : {}),
+    ...(sz ? { fontSize: sz / 2 } : {}),
+    ...(themeColor && THEME_COLOR[themeColor] ? { color: `theme.${THEME_COLOR[themeColor]}` } : /^[0-9A-F]{6}$/i.test(at(color, "w:val") ?? "") ? { color: at(color, "w:val")!.toUpperCase() } : {}),
+    ...(jc === "center" ? { align: "center" as const } : jc === "right" || jc === "end" ? { align: "right" as const } : {}),
+  };
+}
+
+/** A picture of the story part → `assets/<name>` (PNG, JPEG, GIF, BMP). */
+async function pictureAsset(rId: string | undefined, ctx: StoryCtx): Promise<string | undefined> {
+  const rel = rId ? ctx.rels.get(rId) : undefined;
   if (!rel || rel.external) {
-    add("Linked picture", "unsupported", "Externally linked pictures are not fetched.", part);
+    ctx.add("Linked picture", "unsupported", "Externally linked pictures are not fetched.", ctx.part);
     return undefined;
   }
-  const file = zip.file(rel.target);
+  const file = ctx.zip.file(rel.target);
   if (!file) return undefined;
   const ext = posix.extname(rel.target).toLowerCase();
   if (![".png", ".jpg", ".jpeg", ".gif", ".bmp"].includes(ext)) {
-    add("Picture format", "unsupported", `${posix.basename(rel.target)} (${ext}) is not imported; use PNG or JPEG.`, part);
+    ctx.add("Picture format", "unsupported", `${posix.basename(rel.target)} (${ext}) is not imported; use PNG or JPEG.`, ctx.part);
     return undefined;
   }
   const name = `${posix.basename(rel.target, ext).replace(/[^\w-]/g, "_")}${ext}`;
-  assets.set(name, await file.async("uint8array"));
-  const pos = position(anchor, find, kids);
-  const id = `picture${++counter.n}`;
-  add("Picture in a story", "supported", `${name} (${Math.round(width)}×${Math.round(height)} pt) kept as a recurring page object.`, part);
-  return { id, object: { type: "image", placement: "page", relativeTo: pos.relativeTo, box: { x: pos.x, y: pos.y, width, height }, src: `assets/${name}`, alt: find(kids(anchor), "wp:docPr")[0]?.[":@"]?.["@_descr"] ?? "", plane: pos.behind ? "behind" : "front", locked: { geometry: true } } };
+  ctx.assets.set(name, await file.async("uint8array"));
+  return `assets/${name}`;
 }
 
-function position(anchor: any, find: (n: any[], name: string) => any[], kids: (n: any) => any[]): { x: number; y: number; relativeTo: "page" | "margin"; behind: boolean } {
-  const h = find(kids(anchor), "wp:positionH")[0];
-  const v = find(kids(anchor), "wp:positionV")[0];
-  const offset = (n: any) => emuToPt(Number(plain(kids(find(kids(n ?? {}), "wp:posOffset")[0] ?? {})) || 0));
-  const relH = h?.[":@"]?.["@_relativeFrom"];
-  return { x: offset(h), y: offset(v), relativeTo: relH === "page" ? "page" : "margin", behind: anchor[":@"]?.["@_behindDoc"] === "1" };
+/** One shape or picture (`wps:wsp`, `pic:pic`) drawn in `frame` (page pt). Never locked: masters are edited. */
+async function memberObject(node: any, frame: Frame, ctx: StoryCtx, base: Partial<ObjectDescriptor>): Promise<Obj | undefined> {
+  const spPr = child(node, "wps:spPr") ?? child(node, "pic:spPr");
+  const rot = Number(at(child(spPr, "a:xfrm"), "rot") ?? 0) / 60000;
+  const turn = rot ? { rotation: Math.round(rot * 100) / 100 } : {};
+  const box = { x: round2(frame.x), y: round2(frame.y), width: round2(frame.width), height: round2(frame.height) };
+  const blip = first(node, "a:blip");
+  if (blip) {
+    const src = await pictureAsset(at(blip, "r:embed"), ctx);
+    if (!src) return undefined;
+    const alpha = Number(at(child(blip, "a:alphaModFix"), "amt") ?? 100000);
+    ctx.add("Picture in a story", "supported", `${src.slice(7)} (${Math.round(box.width)}×${Math.round(box.height)} pt) kept as a page object.`, ctx.part);
+    return { id: `picture${++ctx.counter.n}`, object: { type: "image", placement: "page", relativeTo: "page", box, src, ...turn, ...(alpha < 100000 ? { style: { transparency: Math.round(100 - alpha / 1000) } } : {}), ...base } };
+  }
+  if (tagOf(node) !== "wps:wsp") return undefined;
+  const geom = at(child(spPr, "a:prstGeom"), "prst");
+  const custom = !!child(spPr, "a:custGeom");
+  const fill = colorOf(spPr);
+  const ln = child(spPr, "a:ln");
+  const line = colorOf(ln);
+  // Theme style references give the look a shape does not set itself.
+  const style = child(node, "wps:style");
+  const ref = (name: string) => {
+    const r = child(style, name);
+    return r && at(r, "idx") !== "0" ? colorOf({ "a:solidFill": kidsOf(r) }) : {};
+  };
+  const refFill = ref("a:fillRef");
+  const refLine = ref("a:lnRef");
+  const t = shapeText(node);
+  const shape = custom ? "rect" : PRESETS[geom ?? "rect"] ?? "rect";
+  if (custom || (geom && !PRESETS[geom])) ctx.add("Shape geometry", "flattened", `${custom ? "Custom geometry" : geom} drawn as a rectangle.`, ctx.part);
+  const look: NonNullable<ObjectDescriptor["style"]> = {
+    fill: fill.color !== undefined ? fill.color : refFill.color ?? null,
+    line: line.color !== undefined ? line.color : refLine.color ?? null,
+    ...(at(ln, "w") ? { lineWidth: emuToPt(Number(at(ln, "w"))) } : {}),
+    ...(fill.transparency ? { transparency: fill.transparency } : {}),
+    ...(t.color ? { color: t.color } : {}),
+    ...(t.fontSize ? { fontSize: t.fontSize } : {}),
+    ...(t.align ? { align: t.align } : {}),
+  };
+  const textOnly = !!t.text && shape === "rect" && !look.fill && !look.line;
+  ctx.add(textOnly ? "Text box in a story" : "Shape in a story", "supported", `${geom ?? "shape"} kept as a page object${t.text ? " with its text" : ""}.`, ctx.part);
+  return { id: `${textOnly ? "textbox" : "shape"}${++ctx.counter.n}`, object: { type: textOnly ? "textbox" : "shape", ...(textOnly ? {} : { shape }), placement: "page", relativeTo: "page", box, ...turn, style: look, ...(t.text ? { text: t.text } : {}), ...base } };
+}
+
+type Inline = { w: number; h: number; build: (x: number, y: number) => Obj[] };
+
+/**
+ * A `w:drawing` → page objects, built in a 0,0 frame then moved: anchored drawings to their
+ * position (offset or alignment against the page, the margins, a margin area or the paragraph),
+ * inline ones onto their paragraph's line by the caller. Groups are flattened into members (one
+ * `group`), each mapped from the group's child coordinates.
+ */
+async function drawingObjects(node: any, ctx: StoryCtx): Promise<{ anchored?: (paragraphTop: number) => Obj[]; inline?: Inline } | undefined> {
+  const anchor = first(node, "wp:anchor");
+  const host = anchor ?? first(node, "wp:inline");
+  if (!host) return undefined;
+  const extent = child(host, "wp:extent");
+  const width = emuToPt(Number(at(extent, "cx") ?? 0));
+  const height = emuToPt(Number(at(extent, "cy") ?? 0));
+  const docPr = child(host, "wp:docPr");
+  const name = at(docPr, "name");
+  const alt = at(docPr, "descr");
+  const top = kidsOf(first(host, "a:graphicData")).find((k) => ["wps:wsp", "pic:pic", "wpg:wgp"].includes(tagOf(k)!));
+  if (!top) {
+    ctx.add("Drawing in a story", "unsupported", "Charts, SmartArt and drawing canvases are not imported.", ctx.part);
+    return undefined;
+  }
+  const base: Partial<ObjectDescriptor> = { plane: at(anchor, "behindDoc") === "1" ? "behind" : "front", ...(alt ? { alt } : {}) };
+  const unit: Obj[] = [];
+  if (tagOf(top) !== "wpg:wgp") {
+    const o = await memberObject(top, { x: 0, y: 0, width, height }, ctx, { ...base, ...(name ? { name } : {}) });
+    if (o) unit.push(o);
+  } else {
+    const walk = async (group: any, gf: Frame, path: string) => {
+      const xfrm = child(child(group, "wpg:grpSpPr"), "a:xfrm");
+      const chOff = child(xfrm, "a:chOff");
+      const chExt = child(xfrm, "a:chExt");
+      const sx = gf.width / Math.max(0.01, emuToPt(Number(at(chExt, "cx") ?? 1)));
+      const sy = gf.height / Math.max(0.01, emuToPt(Number(at(chExt, "cy") ?? 1)));
+      for (const m of kidsOf(group)) {
+        const t = tagOf(m);
+        if (t !== "wps:wsp" && t !== "pic:pic" && t !== "wpg:grpSp") continue;
+        const mx = child(child(m, t === "wpg:grpSp" ? "wpg:grpSpPr" : t === "pic:pic" ? "pic:spPr" : "wps:spPr"), "a:xfrm");
+        const f: Frame = {
+          x: gf.x + (emuToPt(Number(at(child(mx, "a:off"), "x") ?? 0)) - emuToPt(Number(at(chOff, "x") ?? 0))) * sx,
+          y: gf.y + (emuToPt(Number(at(child(mx, "a:off"), "y") ?? 0)) - emuToPt(Number(at(chOff, "y") ?? 0))) * sy,
+          width: emuToPt(Number(at(child(mx, "a:ext"), "cx") ?? 0)) * sx,
+          height: emuToPt(Number(at(child(mx, "a:ext"), "cy") ?? 0)) * sy,
+        };
+        if (t === "wpg:grpSp") await walk(m, f, `${path}/group${++ctx.counter.n}`);
+        else {
+          const o = await memberObject(m, f, ctx, { ...base, group: path });
+          if (o) unit.push(o);
+        }
+      }
+    };
+    await walk(top, { x: 0, y: 0, width, height }, (name ?? `group${++ctx.counter.n}`).replace(/[^\w-]+/g, "-"));
+    if (unit.length) ctx.add("Group in a story", "supported", `${unit.length} member(s) kept as page objects of one group.`, ctx.part);
+  }
+  if (!unit.length) return undefined;
+  const moved = (dx: number, dy: number): Obj[] => unit.map(({ id, object }) => ({ id, object: { ...object, box: { ...object.box, x: round2(object.box.x + dx), y: round2(object.box.y + dy) } } }));
+  if (!anchor) return { inline: { w: width, h: height, build: moved } };
+  const pos = anchorPosition(anchor, width, height, ctx);
+  return { anchored: (paragraphTop) => moved(pos.x, pos.y(paragraphTop)) };
+}
+
+/** Page position (pt) of an anchored drawing; `y` needs the paragraph's top for paragraph / line anchors. */
+function anchorPosition(anchor: any, w: number, h: number, ctx: StoryCtx): { x: number; y: (paragraphTop: number) => number } {
+  const { page } = ctx;
+  const m = page.margins;
+  const ph = child(anchor, "wp:positionH");
+  const pv = child(anchor, "wp:positionV");
+  const offset = (n: any) => emuToPt(Number(plain(kidsOf(child(n, "wp:posOffset")))) || 0);
+  const alignOf = (n: any) => (child(n, "wp:align") ? plain(kidsOf(child(n, "wp:align"))).trim() : undefined);
+  const relH = at(ph, "relativeFrom") ?? "column";
+  const [h0, h1] = relH === "page" ? [0, page.width] : relH === "leftMargin" || relH === "insideMargin" ? [0, m.left] : relH === "rightMargin" || relH === "outsideMargin" ? [page.width - m.right, page.width] : [m.left, page.width - m.right];
+  const ah = alignOf(ph);
+  const x = ah ? (ah === "center" ? h0 + (h1 - h0 - w) / 2 : ah === "right" || ah === "outside" ? h1 - w : h0) : h0 + offset(ph);
+  const relV = at(pv, "relativeFrom") ?? "paragraph";
+  const av = alignOf(pv);
+  return {
+    x: round2(x),
+    y: (paragraphTop) => {
+      const [v0, v1] = relV === "page" ? [0, page.height] : relV === "margin" ? [m.top, page.height - m.bottom] : relV === "topMargin" || relV === "insideMargin" ? [0, m.top] : relV === "bottomMargin" || relV === "outsideMargin" ? [page.height - m.bottom, page.height] : [paragraphTop, paragraphTop + ctx.line];
+      return round2(av ? (av === "center" ? v0 + (v1 - v0 - h) / 2 : av === "bottom" || av === "outside" ? v1 - h : v0) : v0 + offset(pv));
+    },
+  };
+}
+
+/**
+ * VML picture (`w:pict` › `v:shape` › `v:imagedata`: legacy logos and picture watermarks): its
+ * CSS-like style gives the size and the offset or alignment against the page or the margins.
+ */
+async function vmlPicture(pict: any, ctx: StoryCtx): Promise<((paragraphTop: number) => Obj) | undefined> {
+  const shape = findAll(kidsOf(pict), "v:shape")[0];
+  const data = shape && findAll(kidsOf(shape), "v:imagedata")[0];
+  if (!data) return undefined;
+  const src = await pictureAsset(at(data, "r:id"), ctx);
+  if (!src) return undefined;
+  const raw = String(at(shape, "style") ?? "");
+  const css: Record<string, string> = Object.fromEntries(raw.split(";").map((d) => d.split(":").map((x) => x.trim())).filter((d) => d.length === 2));
+  const len = (v?: string) => {
+    const n = parseFloat(v ?? "0") || 0;
+    return /in$/.test(v ?? "") ? n * 72 : /cm$/.test(v ?? "") ? (n * 72) / 2.54 : /mm$/.test(v ?? "") ? (n * 72) / 25.4 : /px$/.test(v ?? "") ? n * 0.75 : n;
+  };
+  const w = len(css.width);
+  const h = len(css.height);
+  const m = ctx.page.margins;
+  const [h0, h1] = css["mso-position-horizontal-relative"] === "page" ? [0, ctx.page.width] : [m.left, ctx.page.width - m.right];
+  const ah = css["mso-position-horizontal"];
+  const x = ah === "center" ? h0 + (h1 - h0 - w) / 2 : ah === "right" ? h1 - w : ah === "left" ? h0 : h0 + len(css["margin-left"] ?? css.left);
+  const relV = css["mso-position-vertical-relative"];
+  const av = css["mso-position-vertical"];
+  const id = `picture${++ctx.counter.n}`;
+  const watermark = /WaterMark/i.test(String(at(shape, "id") ?? ""));
+  ctx.add(watermark ? "Picture watermark" : "VML picture in a story", "supported", `${src.slice(7)} kept as a page object.`, ctx.part);
+  return (paragraphTop) => {
+    const [v0, v1] = relV === "page" ? [0, ctx.page.height] : relV === "margin" ? [m.top, ctx.page.height - m.bottom] : [paragraphTop, paragraphTop + ctx.line];
+    const y = av === "center" ? v0 + (v1 - v0 - h) / 2 : av === "bottom" ? v1 - h : av === "top" ? v0 : v0 + len(css["margin-top"] ?? css.top);
+    return { id, object: { type: "image", placement: "page", relativeTo: "page", box: { x: round2(x), y: round2(y), width: round2(w), height: round2(h) }, src, plane: watermark || /z-index:\s*-/.test(raw) ? "behind" : "front", ...(watermark ? { name: "Watermark" } : {}) } };
+  };
 }

@@ -130,7 +130,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     return { entries, masters, assetBases };
   }
 
-  private async masterAction(document: vscode.TextDocument, msg: any): Promise<unknown> {
+  private async masterAction(document: vscode.TextDocument, msg: any, webview?: vscode.Webview): Promise<unknown> {
     const uri = document.uri;
     switch (msg.action) {
       case "import":
@@ -170,6 +170,23 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
       }
       case "save":
         return this.library.save(uri, msg.master);
+      // Picture for the master being edited: dropped / pasted bytes, else picked from disk.
+      case "addPicture": {
+        const id = String(msg.id);
+        let bytes: Uint8Array;
+        let name: string;
+        if (typeof msg.data === "string") {
+          bytes = Buffer.from(msg.data, "base64");
+          name = String(msg.name || "picture.png");
+        } else {
+          const picked = (await vscode.window.showOpenDialog({ canSelectMany: false, filters: { [loc("Images", "Pictures")]: ["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"] }, openLabel: loc("Insérer dans le masque", "Insert into the master") }))?.[0];
+          if (!picked) return undefined;
+          bytes = await vscode.workspace.fs.readFile(picked);
+          name = path.basename(picked.fsPath);
+        }
+        const pic = await this.library.addPicture(uri, id, bytes, name);
+        return { ...pic, alt: path.basename(name, path.extname(name)), base: webview?.asWebviewUri(this.library.folderOf(uri, id)).toString() };
+      }
       case "usage": {
         const u = await this.library.usage(uri, String(msg.id));
         return { documents: u.documents.map((d) => vscode.workspace.asRelativePath(d)), masters: u.masters };
@@ -498,7 +515,7 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
           return;
         }
         if (msg.type === "masterAction") {
-          const result = await this.masterAction(document, msg);
+          const result = await this.masterAction(document, msg, webview);
           webview.postMessage({ type: "masterActionResult", requestId: msg.requestId, result: result ?? null, ...(await this.mastersPayload(document, webview)) });
           return;
         }

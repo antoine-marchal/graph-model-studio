@@ -353,7 +353,7 @@ function GraphEditorInner() {
 
   // ── drag commit + drop-to-reparent + drag-to-sort ──
   const onNodeDragStart = useCallback(
-    (event: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
+    (event: MouseEvent | TouchEvent, node: GraphNode, dragged: GraphNode[]) => {
       shiftPressed.current = event.shiftKey
       const moving = dragged.some(candidate => candidate.id === node.id) ? dragged : [node, ...dragged]
       dragGesture.current = {
@@ -365,7 +365,7 @@ function GraphEditorInner() {
   )
 
   const onNodeDragStop = useCallback(
-    (event: React.MouseEvent, node: GraphNode, dragged: GraphNode[]) => {
+    (event: MouseEvent | TouchEvent, node: GraphNode, dragged: GraphNode[]) => {
       const gesture = dragGesture.current
       dragGesture.current = null
       const liveNodesWith = (moved: GraphNode[]) => {
@@ -375,7 +375,8 @@ function GraphEditorInner() {
       // The pointer, rather than an arbitrary amount of node overlap, decides
       // the destination. Any model node may receive a child and thereby become
       // a container; nested targets still prefer the smallest node.
-      const drop = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event
+      const drop = screenToFlowPosition({ x: point.clientX, y: point.clientY })
       const dropTarget = (excluded: Set<string>, accept: (candidate: GraphNode) => boolean = () => true) => {
         const liveNodes = liveNodesWith(dragged)
         let target: GraphNode | undefined

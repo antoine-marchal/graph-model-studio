@@ -48,7 +48,7 @@ async function template(): Promise<Buffer> {
         children: [new d.Paragraph({ style: "Heading1", text: "Sample title" }), new d.Paragraph({ style: "CorpBody", text: "Sample body text that is template content." }), new d.Paragraph({ style: "CorpBody", text: "More sample text." }), new d.Paragraph({ numbering: { reference: "corp", level: 0 }, text: "Sample bullet" })],
       },
       { properties: { page: { size: { width: 11906, height: 16838, orientation: d.PageOrientation.LANDSCAPE } } }, children: [new d.Paragraph("Landscape sample")] },
-      { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, bottom: 1440, left: 1300, right: 1300 } } }, headers: { default: header("Annex") }, children: [new d.Paragraph("Annex sample")] },
+      { properties: { page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, bottom: 1440, left: 1300, right: 1300 } } }, headers: { default: new d.Header({ children: [new d.Paragraph({ alignment: d.AlignmentType.RIGHT, children: [new d.TextRun("Annex "), new d.ImageRun({ type: "png", data: logo, transformation: { width: 60, height: 20 } })] })] }) }, children: [new d.Paragraph("Annex sample")] },
     ],
   });
   const zip = await JSZip.loadAsync(await d.Packer.toBuffer(doc));
@@ -93,7 +93,16 @@ test("a corporate template becomes a master family with variants and a report", 
   assert.equal(pictures.length, 1);
   assert.equal(pictures[0].relativeTo, "page");
   assert.equal(pictures[0].box.x, 36);
+  assert.equal(pictures[0].box.y, 18);
+  assert.equal(pictures[0].locked, undefined, "imported drawings stay movable in master edit");
   assert.ok(assets.has(pictures[0].src!.replace("assets/", "")));
+  // Inline logo of the annex header: in the header band (header distance 36 pt), right-aligned at the margin.
+  const annex = variants.find((v) => Object.keys(v.headers?.default?.objects ?? {}).length)!;
+  const inline = Object.values(annex.headers!.default!.objects!)[0];
+  assert.equal(inline.relativeTo, "page");
+  assert.equal(annex.headers!.default!.block?.align, "right");
+  assert.ok(Math.abs(inline.box.x + inline.box.width - (595.3 - 65)) < 1, `inline logo ends at the right margin (x ${inline.box.x})`);
+  assert.ok(inline.box.y > 34 && inline.box.y < 80, `inline logo in the header band (y ${inline.box.y})`);
   // Landscape section links to the previous stories; the annex has its own header.
   assert.equal(variants.length, 2);
   assert.equal(variants[0].page.orientation, "landscape");

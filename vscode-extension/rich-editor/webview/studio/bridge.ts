@@ -21,7 +21,8 @@ export function request<T = any>(type: string, payload: Record<string, unknown> 
 
 function applyMasters(msg: any): void {
   if (!Array.isArray(msg.masters)) return;
-  studio.set({ masters: msg.masters, entries: msg.entries ?? [], assetBases: msg.assetBases ?? {} });
+  // A master being created (a starter copy) has assets before its master.json: keep its base.
+  studio.set((s) => ({ masters: msg.masters, entries: msg.entries ?? [], assetBases: { ...s.assetBases, ...msg.assetBases } }));
   resolveDocument();
 }
 

@@ -54,7 +54,9 @@ window.acquireVsCodeApi = () => ({
     if (m.type === 'masterAction') {
       window.__masters = window.__masters || ${JSON.stringify(masters)};
       if (m.action === 'save') window.__masters = [...window.__masters.filter((x) => x.id !== m.master.id), m.master];
-      reply({ requestId: m.requestId, masters: window.__masters, entries: window.__masters.map((x) => ({ id: x.id, name: x.name, source: x.id.startsWith('studio-') ? 'starter' : 'user', readonly: x.id.startsWith('studio-') })), assetBases: {}, result: { documents: [] } });
+      // Picture for a master: the fixture logo, served from the first master folder.
+      const picture = m.action === 'addPicture' ? { src: 'assets/logo.png', width: 90, height: 30, alt: 'logo', base: Object.values(${JSON.stringify(assetBases)})[0] } : undefined;
+      reply({ requestId: m.requestId, masters: window.__masters, entries: window.__masters.map((x) => ({ id: x.id, name: x.name, source: x.id.startsWith('studio-') ? 'starter' : 'user', readonly: x.id.startsWith('studio-') })), assetBases: {}, result: picture ?? { documents: [] } });
     }
   },
   getState() {}, setState() {},

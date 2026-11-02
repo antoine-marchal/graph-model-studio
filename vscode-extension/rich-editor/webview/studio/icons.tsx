@@ -12,6 +12,7 @@ const EXTRA = {
   lineNumbers: "M2.5 3.5h1.5v4M2.5 7.5h3M2.5 10h2.2a.9.9 0 0 1 0 1.8H3.3a.9.9 0 0 0 0 1.8H5.5M8 4h6M8 8h6M8 12h6",
   info: "M8 14.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM8 7.5v4M8 5v.01",
   page: "M4 1.5h5.5L12.5 4.5V14.5H4zM9.5 1.5v3h3",
+  compare: "M2.5 2.5h11v11h-11zM8 1v14M10 5h2M10 8h2M10 11h2",
   pages: "M3 3.5h6.5l3 3v8H3zM5.5 1.5h6l3 3",
   pageBreak: "M3.5 1.5v4.5h9V1.5M3.5 14.5V10h9v4.5M1.5 8h2M6 8h1.5M9.5 8H11M13 8h1.5",
   section: "M2 2.5h12M2 13.5h12M4.5 5.5h7v5h-7z",

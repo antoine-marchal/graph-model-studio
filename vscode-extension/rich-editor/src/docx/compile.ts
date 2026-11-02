@@ -867,7 +867,10 @@ async function storyParagraphs(story: StoryDef | undefined, ctx: Ctx, title: str
   if (!paragraphs.length) paragraphs.push({ type: "paragraph", children: [] });
   // The story's own style / alignment (`blocks.<id>`, a master story's `block`) override Header / Footer.
   const align = story?.block?.align;
-  paragraphs.forEach((node: any, i: number) => out.push(new d.Paragraph({ style: story?.block?.style ?? style, ...(align ? { alignment: ALIGN[align] } : {}), children: [...(i === 0 ? drawings : []), ...withFields(node, title, fields, ctx)] })));
+  const indentLeft = story?.block?.indentLeft;
+  const indentRight = story?.block?.indentRight;
+  const indent = indentLeft || indentRight ? { indent: { ...(indentLeft ? { left: Math.round(indentLeft * 20) } : {}), ...(indentRight ? { right: Math.round(indentRight * 20) } : {}) } } : {};
+  paragraphs.forEach((node: any, i: number) => out.push(new d.Paragraph({ style: story?.block?.style ?? style, ...(align ? { alignment: ALIGN[align] } : {}), ...indent, children: [...(i === 0 ? drawings : []), ...withFields(node, title, fields, ctx)] })));
   return out;
 }
 

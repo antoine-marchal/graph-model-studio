@@ -12,7 +12,7 @@ import type { BlockProps, MasterDef, ObjectDescriptor, SectionProps, StyleDef } 
 import { studio, useStudio, objectOf, notify, type Pane } from "./store";
 import {
   applyLayerOrder, currentBlock, currentSectionBreak, deleteMasterObjects, floatBlockAt, getSync, inlineObject, reorder, selectObject, setBlockProps, setMasterObjectMode, setPageSetup, setPlacement,
-  setSectionProps, setStyleOverride, columnsAt, setColumnFill, updateMaster, updateMasterObjects, updateMeta, updateObjects, exitMasterEdit, renameObject, renameMasterObject,
+  setSectionProps, setStyleOverride, columnsAt, setColumnFill, updateMaster, updateMasterObjects, updateMeta, updateObjects, exitMasterEdit, renameObject, renameMasterObject, addMasterPicture, masterObjectOf, masterObjectIds, setMasterField, renameMasterField, masterFieldUsage, addMasterObject,
 } from "./actions";
 import { parseBlockProps } from "../extensions/blockProps";
 import { setSpanStyle } from "../extensions/StudioNodes";
@@ -307,6 +307,7 @@ function BlockFormat({ editor, readonly }: { editor: Editor; readonly: boolean }
 /** Document pane: master, page setup of the caret's section, document fields. */
 function DocumentPane({ editor, readonly }: { editor: Editor; readonly: boolean }) {
   const c = useEditorDerived(editor, caretOf);
+  const masterEdit = useStudio((s) => s.masterEdit);
   const sections = useStudio((s) => s.sections);
   const meta = useStudio((s) => s.meta);
   const entries = useStudio((s) => s.entries);
@@ -345,9 +346,13 @@ function DocumentPane({ editor, readonly }: { editor: Editor; readonly: boolean 
           </>
         )}
       </Section>
-      <Section title={tr("Champs du document", "Document fields")}>
-        <FieldsEditor readonly={readonly} />
-      </Section>
+      {masterEdit ? (
+        <MasterFields master={masterEdit} />
+      ) : (
+        <Section title={tr("Champs du document", "Document fields")}>
+          <FieldsEditor readonly={readonly} />
+        </Section>
+      )}
     </>
   );
 }
@@ -383,12 +388,13 @@ function FieldsEditor({ readonly }: { readonly: boolean }) {
 
 function MasterFormat({ master }: { master: MasterDef }) {
   const sel = useStudio((s) => s.masterSel);
-  const d = sel.length === 1 ? master.background?.[sel[0]] : undefined;
+  const d = sel.length === 1 ? masterObjectOf(master, sel[0]) : undefined;
   if (d) return <MasterObjectFormat id={sel[0]} d={d} />;
   return <MasterPage master={master} />;
 }
 
 function MasterObjectFormat({ id, d }: { id: string; d: ObjectDescriptor }) {
+  const assetBase = useStudio((s) => (s.masterEdit ? s.assetBases[s.masterEdit.id] : undefined));
   const set = (patch: Partial<ObjectDescriptor>) => updateMasterObjects({ [id]: patch });
   const mode = d.placeholder ? "placeholder" : d.locked?.geometry ? "fixed" : "floating";
   return (
@@ -399,6 +405,20 @@ function MasterObjectFormat({ id, d }: { id: string; d: ObjectDescriptor }) {
         <span className="grow" />
         <IconButton icon="trash" label={tr("Supprimer du masque", "Delete from master")} onClick={() => deleteMasterObjects([id])} />
       </div>
+      {d.type === "image" && (
+        <Section title="Image">
+          <div className="ms-picture-row">
+            <span className="ms-picture-thumb">{d.src && assetBase && <img src={`${assetBase}/${d.src}`} alt="" />}</span>
+            <span className="ms-picture-name" title={d.src}>{d.src?.split("/").pop()}</span>
+            <IconButton icon="image" label={tr("Changer l’image", "Change picture")} onClick={() => void addMasterPicture({ replace: id })}>{tr("Changer…", "Change…")}</IconButton>
+          </div>
+          <label className="field">
+            <span>{tr("Texte de remplacement", "Alt text")}</span>
+            <input className="select" key={`alt-${id}-${d.alt ?? ""}`} defaultValue={d.alt ?? ""} onBlur={(e) => e.target.value !== (d.alt ?? "") && set({ alt: e.target.value || undefined })} />
+          </label>
+          <p className="hint">{tr("Double-cliquez l’image sur la page, ou glissez un fichier dessus, pour la remplacer.", "Double-click the picture on the page, or drop a file on it, to replace it.")}</p>
+        </Section>
+      )}
       <Section title={tr("Rôle dans le masque", "Role in the master")}>
         <Seg label={tr("Rôle", "Role")} value={mode} onChange={(m) => setMasterObjectMode(id, m)}
           options={[{ id: "floating", icon: "float", label: tr("Flottant", "Floating") }, { id: "fixed", icon: "pin", label: tr("Fixe", "Fixed") }, { id: "placeholder", icon: "placeholder", label: tr("Réservé", "Placeholder") }]} />
@@ -485,8 +505,11 @@ function MasterPage({ master }: { master: MasterDef }) {
         ))}
       </Section>
       <Section title={tr("En-têtes et pieds", "Headers and footers")}>
-        <p className="hint">{tr("Double-cliquez l’en-tête ou le pied sur la page pour les modifier.", "Double-click the header or footer on the page to edit them.")}</p>
+        <p className="hint">{tr("Double-cliquez l’en-tête ou le pied sur la page pour modifier leur texte. Leurs images et formes se déplacent directement sur la page.", "Double-click the header or footer on the page to edit their text. Their pictures and shapes move directly on the page.")}</p>
       </Section>
+      <MasterFields master={master} />
+      <MasterDrawings master={master} />
+      {master.thumbnail && <MasterReference master={master} />}
       <div className="insp-section">
         <div className="row">
           <button type="button" className="btn btn-primary" data-testid="master-done" onClick={() => void exitMasterEdit(true)}><Icon name="done" /> {tr("Terminer", "Done")}</button>
@@ -495,6 +518,113 @@ function MasterPage({ master }: { master: MasterDef }) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Fields the master offers its documents (client, version…): each document types its value in the
+ * Document pane; the master shows it through `{{field:key}}` in a header / footer or a placeholder
+ * box. Create, rename (references follow), relabel, set a default, insert, delete.
+ */
+function MasterFields({ master }: { master: MasterDef }) {
+  const fields = Object.entries(master.fields ?? {});
+  const [draft, setDraft] = useState("");
+  const key = draft.trim().replace(/\s+/g, "-");
+  const valid = /^[A-Za-z][\w-]{0,63}$/.test(key);
+  const taken = !!master.fields?.[key];
+  const create = () => {
+    if (!valid || taken) return;
+    setMasterField(key, { label: draft.trim() });
+    setDraft("");
+  };
+  const insert = (k: string, where: "headers" | "footers") => window.dispatchEvent(new CustomEvent("ms:editStory", { detail: `${where}:${k}` }));
+  return (
+    <div id="ms-master-fields">
+      <Section title={tr("Champs", "Fields")} aside={<span className="hint">{fields.length}</span>}>
+        {fields.length ? (
+          <ul className="ms-field-list">
+            {fields.map(([k, f]) => {
+              const used = masterFieldUsage(master, k);
+              return (
+                <li key={k} className="ms-field-row" data-testid={`master-field-${k}`}>
+                  <div className="ms-field-head">
+                    <EditableId value={k} title={tr("Clé du champ", "Field key")} onRename={(next) => renameMasterField(k, next)} />
+                    <span className="hint ms-field-used" title={used.join(", ")}>{used.length ? tr(`utilisé : ${used.join(", ")}`, `used in ${used.join(", ")}`) : tr("non placé", "not placed")}</span>
+                    <IconButton icon="header" label={tr("Insérer dans l’en-tête", "Insert in the header")} onClick={() => insert(k, "headers")} />
+                    <IconButton icon="footer" label={tr("Insérer dans le pied de page", "Insert in the footer")} onClick={() => insert(k, "footers")} />
+                    <IconButton icon="placeholder" label={tr("Zone sur la page", "Box on the page")} onClick={() => addMasterObject("textbox", { placeholder: k, text: f.label })} />
+                    <IconButton icon="trash" label={used.length ? tr("Supprimer (les références restantes s’afficheront vides)", "Delete (remaining references will show empty)") : tr("Supprimer", "Delete")} onClick={() => setMasterField(k, null)} />
+                  </div>
+                  <div className="grid2">
+                    <label className="field">
+                      <span>{tr("Libellé", "Label")}</span>
+                      <input className="select" key={`l-${k}-${f.label}`} defaultValue={f.label} onBlur={(e) => e.target.value.trim() && e.target.value !== f.label && setMasterField(k, { label: e.target.value.trim() })} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+                    </label>
+                    <label className="field">
+                      <span>{tr("Valeur par défaut", "Default value")}</span>
+                      <input className="select" key={`d-${k}-${f.default ?? ""}`} defaultValue={f.default ?? ""} placeholder={tr("aucune", "none")} onBlur={(e) => e.target.value !== (f.default ?? "") && setMasterField(k, { default: e.target.value })} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()} />
+                    </label>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="hint">{tr("Aucun champ. Ajoutez-en (client, version, référence…) : chaque document saisira sa valeur dans le volet Document.", "No fields yet. Add some (client, version, reference…): each document types its value in the Document pane.")}</p>
+        )}
+        <form className="ms-field-add" onSubmit={(e) => (e.preventDefault(), create())}>
+          <input className="select" data-testid="master-field-new" value={draft} placeholder={tr("Nouveau champ, ex. client", "New field, e.g. client")} aria-label={tr("Nouveau champ", "New field")} aria-invalid={!!draft && (!valid || taken)} onChange={(e) => setDraft(e.target.value)} />
+          <button type="submit" className="btn" disabled={!valid || taken}><Icon name="plus" /> {tr("Ajouter", "Add")}</button>
+        </form>
+        {draft && (!valid || taken) && <p className="hint ms-field-error">{taken ? tr("Ce champ existe déjà.", "This field already exists.") : tr("Commencez par une lettre ; lettres, chiffres, - et _ uniquement.", "Start with a letter; letters, digits, - and _ only.")}</p>}
+      </Section>
+    </div>
+  );
+}
+
+/** Every drawing of the master (page drawings and header / footer drawings): click to select. */
+function MasterDrawings({ master }: { master: MasterDef }) {
+  const ids = masterObjectIds(master);
+  const where = (id: string) => (master.background?.[id] ? tr("Page", "Page") : Object.values(master.headers ?? {}).some((st) => st?.objects?.[id]) ? tr("En-tête", "Header") : tr("Pied", "Footer"));
+  return (
+    <Section title={tr("Images et formes", "Pictures and shapes")} aside={<span className="hint">{ids.length}</span>}>
+      {ids.length ? (
+        <ul className="ms-drawing-list">
+          {ids.map((id) => {
+            const d = masterObjectOf(master, id)!;
+            return (
+              <li key={id}>
+                <button type="button" className="ms-drawing-row" onClick={() => studio.set({ masterSel: [id], pane: "format" })}>
+                  <Icon name={d.type === "image" ? "image" : d.type === "textbox" ? "text" : d.placeholder ? "placeholder" : "shape"} size={14} />
+                  <span className="ms-drawing-name">{d.name ?? id}</span>
+                  <span className="hint">{where(id)}</span>
+                  {d.locked?.geometry && <Icon name="lock" size={12} />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="hint">{tr("Aucune. Insertion › Image, ou glissez un fichier image sur la page.", "None yet. Insert › Image, or drop a picture file on the page.")}</p>
+      )}
+    </Section>
+  );
+}
+
+/** Word's own rendering of the imported template, laid over the first page to check the likeness. */
+function MasterReference({ master }: { master: MasterDef }) {
+  const reference = useStudio((s) => s.masterReference);
+  const base = useStudio((s) => s.assetBases[master.id]);
+  return (
+    <Section title={tr("Référence Word", "Word reference")}>
+      {base && <img className="ms-reference-thumb" src={`${base}/${master.thumbnail}`} alt={tr("Rendu Word de la première page du modèle", "Word rendering of the template's first page")} />}
+      <label className="field ms-reference-range">
+        <span>{tr("Superposer sur la page", "Overlay on the page")}</span>
+        <input type="range" min={0} max={100} step={5} value={Math.round(reference * 100)} aria-valuetext={`${Math.round(reference * 100)} %`} onChange={(e) => studio.set({ masterReference: Number(e.target.value) / 100 })} />
+        <output>{Math.round(reference * 100)} %</output>
+      </label>
+      <p className="hint">{tr("Alignez images et formes sur le rendu de Word, puis remettez à 0 %.", "Line pictures and shapes up with Word's rendering, then set it back to 0 %.")}</p>
+    </Section>
   );
 }
 

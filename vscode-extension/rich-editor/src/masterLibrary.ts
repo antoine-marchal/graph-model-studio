@@ -12,6 +12,7 @@ import type { MasterDef } from "../document/schema";
 import type { ImportedTemplate } from "./docx/importTemplate";
 import { importDocument, importMasters } from "./docx/importDocument";
 import { renderSectionThumbnails } from "./docx/wordThumbnails";
+import { imageSize } from "./docx/imageSize";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
@@ -73,7 +74,9 @@ export class MasterLibrary {
     }
     for (const [name, type] of names) {
       if (type !== vscode.FileType.Directory) continue;
-      const m = await this.read(vscode.Uri.joinPath(root, name, MASTER_FILE));
+      // A folder with only assets: a master being created in the editor, not saved yet.
+      if (!(await this.statOk(vscode.Uri.joinPath(root, name, MASTER_FILE)))) continue;
+      const m =await this.read(vscode.Uri.joinPath(root, name, MASTER_FILE));
       if ("errors" in m) {
         entries.push({ id: name, name, source: "user", readonly: true, errors: m.errors });
         continue;
@@ -341,6 +344,26 @@ export class MasterLibrary {
     await text.save();
     this.cache.delete(file.toString());
     return master.id;
+  }
+
+  /**
+   * Picture for master `id` (also a master being created from a starter): copied into its
+   * `assets/` under a free name. Returns the master-relative src and the natural size in pt.
+   */
+  async addPicture(doc: vscode.Uri, id: string, bytes: Uint8Array, fileName: string): Promise<{ src: string; width?: number; height?: number }> {
+    if (!/^[a-z0-9][\w-]{0,63}$/i.test(id)) throw new Error(`Invalid master id "${id}"`);
+    const ext = path.extname(fileName).toLowerCase();
+    if (![".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg", ".webp"].includes(ext)) throw new Error(`Unsupported picture format ${ext || "(none)"}: use PNG, JPEG, GIF, SVG or WebP.`);
+    if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Picture too large (20 MB limit).");
+    const dir = vscode.Uri.joinPath(this.folderOf(doc, id), "assets");
+    await vscode.workspace.fs.createDirectory(dir);
+    const base = path.basename(fileName, path.extname(fileName)).replace(/[^\w-]+/g, "_").slice(0, 40) || "picture";
+    let name = `${base}${ext}`;
+    for (let i = 2; await this.statOk(vscode.Uri.joinPath(dir, name)); i++) name = `${base}-${i}${ext}`;
+    await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(dir, name), bytes);
+    const px = imageSize(bytes);
+    // 96 dpi: pixels → points.
+    return { src: `assets/${name}`, ...(px ? { width: Math.round(px.width * 0.75 * 100) / 100, height: Math.round(px.height * 0.75 * 100) / 100 } : {}) };
   }
 
   invalidate(): void {

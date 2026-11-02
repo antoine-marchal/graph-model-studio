@@ -13,7 +13,7 @@ import { tr, hexOf } from "./ui";
 import { studio, useStudio, type MenuTarget } from "./store";
 import {
   addMasterObject, alignObjects, applyParagraphStyle, deleteMasterObjects, deleteObjects, duplicateObjects, enterMasterEdit, exitMasterEdit, floatBlockAt, getEditor, getSync, groupObjects, inlineObject,
-  insertSectionBreak, reorder, setBlockProps, setMasterObjectMode, setPageSetup, setPlacement, startConnect, ungroup, updateMasterObjects, updateObjects, currentSectionBreak,
+  insertSectionBreak, reorder, setBlockProps, setMasterObjectMode, addMasterPicture, masterObjectOf, setPageSetup, setPlacement, startConnect, ungroup, updateMasterObjects, updateObjects, currentSectionBreak,
 } from "./actions";
 import { parseBlockProps } from "../extensions/blockProps";
 import { setSpanStyle } from "../extensions/StudioNodes";
@@ -314,7 +314,7 @@ function masterCommands(): { quick: Cmd[]; entries: Entry[] } {
   const s = studio.get();
   const ids = s.masterSel;
   const at = pagePointOfMenu();
-  const d = ids.length === 1 ? s.masterEdit?.background?.[ids[0]] : undefined;
+  const d = ids.length === 1 ? masterObjectOf(s.masterEdit, ids[0]) : undefined;
   const mode = d?.placeholder ? "placeholder" : d?.locked?.geometry ? "fixed" : "floating";
   const cur = d?.placeholder && placeholderKey(d.placeholder);
   // Placeholder kinds: text the document types (presets, or a new key), then automatic fields.
@@ -327,6 +327,7 @@ function masterCommands(): { quick: Cmd[]; entries: Entry[] } {
   return {
     quick: [],
     entries: [
+      ...(d?.type === "image" ? [{ id: "replace-picture", label: tr("Changer l’image…", "Change picture…"), icon: "image" as const, run: () => void addMasterPicture({ replace: ids[0] }) }, "sep" as const] : []),
       ...(d ? [
         { id: "floating", label: tr("Flottant (déplaçable)", "Floating (movable)"), icon: "float" as const, checked: mode === "floating", run: () => setMasterObjectMode(ids[0], "floating") },
         { id: "fixed", label: tr("Fixe (verrouillé sur la page)", "Fixed (locked on the page)"), icon: "pin" as const, checked: mode === "fixed", run: () => setMasterObjectMode(ids[0], "fixed") },
@@ -339,6 +340,7 @@ function masterCommands(): { quick: Cmd[]; entries: Entry[] } {
       ] : []),
       ...(d ? ["sep" as const] : []),
       { id: "add", label: tr("Insérer dans le masque", "Insert in the master"), icon: "plus", items: [
+        { id: "add-picture", label: tr("Image…", "Picture…"), icon: "image", run: () => void addMasterPicture({ at }) },
         { id: "add-text", label: tr("Zone de texte", "Text box"), icon: "text", run: () => addMasterObject("textbox", {}, at) },
         { id: "add-rect", label: tr("Rectangle", "Rectangle"), icon: "shape", run: () => addMasterObject("rect", {}, at) },
         { id: "add-line", label: tr("Ligne", "Line"), icon: "line", run: () => addMasterObject("line", {}, at) },

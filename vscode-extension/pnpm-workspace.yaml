@@ -1,5 +1,7 @@
 allowBuilds:
+  '@vscode/vsce-sign': set this to true or false
   esbuild: set this to true or false
+  keytar: set this to true or false
 
 # Rich editor: keep every Tiptap package on the version Markdown Studio was
 # tested with (a mix of core/pm versions breaks schema and plugin identity).
