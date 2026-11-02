@@ -4,7 +4,7 @@ import { PPI } from '@corporate-slides/renderer';
 import { currentSlide, trackPointer, useEditor, type EditorState } from './store';
 import { post } from './host';
 import { Icon } from './icons';
-import { ColorPicker, EditableId, IconButton, NumField, Section } from './Panels';
+import { ColorPicker, EditableId, IconButton, NumField, Section } from './ui';
 
 /*
  * Master editing mode (Design › Edit master): the static objects of the slide's layout (logos,

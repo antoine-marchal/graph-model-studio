@@ -11,7 +11,7 @@ import { extractFrontmatter } from "../frontmatter";
 import { readMeta, writeMeta } from "../../document/meta";
 import { STUDIO_VERSION, type BlockProps, type StudioMeta } from "../../document/schema";
 import { nonGroupBlocks } from "../../document/groups";
-import { parseBlockProps } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
 import { mapLoadedDoc, nodeHtml, planBodyUpdate, serializeBody, sourceBlocks, type NodeRanges } from "./sourceMap";
 import { notify, resolveDocument, studio } from "./store";
 import { vscodeApi } from "../vscode-api";

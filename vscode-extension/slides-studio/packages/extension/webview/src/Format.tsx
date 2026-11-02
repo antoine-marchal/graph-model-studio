@@ -20,7 +20,7 @@ import {
 } from '@corporate-slides/core';
 import { shapePath } from '@corporate-slides/renderer';
 import { Icon } from './icons';
-import { ColorPicker, Menu, NumField, Section } from './Panels';
+import { ColorPicker, Menu, NumField, Section } from './ui';
 import { currentSlide, useEditor } from './store';
 
 /* ------------------------------------------------------------------ */

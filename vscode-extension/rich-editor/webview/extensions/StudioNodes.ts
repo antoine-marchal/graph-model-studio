@@ -11,6 +11,7 @@ import { Extension, Mark, Node, mergeAttributes } from "@tiptap/core";
 import { NodeSelection, Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { sanitizeSpanStyle } from "../../document/remarkStudio";
 import type { BlockProps } from "../../document/schema";
+import { parseBlockProps } from "./blockProps";
 import { createObjectView } from "../studio/ObjectView";
 import { PAPER, studio } from "../studio/store";
 import { cssLineHeight } from "../../document/units";
@@ -21,16 +22,6 @@ export const TOP_LEVEL_TYPES = [
   "msObject", "msPageBreak", "msSection", "msStory",
 ];
 const BLOCK_PROPS_TYPES = ["paragraph", "heading", "blockquote", "bulletList", "orderedList", "taskList", "codeBlock", "table", "image"];
-
-export function parseBlockProps(value: unknown): BlockProps {
-  if (!value || typeof value !== "string") return {};
-  try {
-    const v = JSON.parse(value);
-    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
-  } catch {
-    return {};
-  }
-}
 
 /** Inline CSS showing direct paragraph formatting of a block (named styles come from the style sheet). */
 function blockCss(p: BlockProps): string {

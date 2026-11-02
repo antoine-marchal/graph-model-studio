@@ -7,7 +7,7 @@ import React, { useState } from "react";
 import type { Editor } from "@tiptap/core";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { formatRange, type BorderEdges, type BorderStyle, type CellLook, type CellRange } from "../../document/tableLook";
-import { parseBlockProps } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
 import { setBlockProps } from "./actions";
 import { useEditorDerived } from "./hooks";
 import { ColorPicker, NumField, Section, Seg, hexOf, tr } from "./ui";

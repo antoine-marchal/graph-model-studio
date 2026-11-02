@@ -14,7 +14,8 @@ import {
   applyLayerOrder, currentBlock, currentSectionBreak, deleteMasterObjects, floatBlockAt, getSync, inlineObject, reorder, selectObject, setBlockProps, setMasterObjectMode, setPageSetup, setPlacement,
   setSectionProps, setStyleOverride, columnsAt, setColumnFill, updateMaster, updateMasterObjects, updateMeta, updateObjects, exitMasterEdit, renameObject, renameMasterObject,
 } from "./actions";
-import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
+import { setSpanStyle } from "../extensions/StudioNodes";
 import { masterAction } from "./bridge";
 import { AUTO_FIELDS, AUTO_LABELS, TEXT_PRESETS, isAutoField, placeholderKey, placeholderPrompt } from "../../document/placeholders";
 import { useEditorDerived } from "./hooks";

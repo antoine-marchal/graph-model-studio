@@ -15,7 +15,8 @@ import {
   setBlockProps, setPageSetup, setPlacement, ungroup, updateObjects, currentSectionBreak, setSectionProps, setDocumentMaster, enterMasterEdit, exitMasterEdit, addMasterObject, addStoryObject,
   startConnect, currentBlock, updateMasterObjects, setMasterObjectMode, deleteMasterObjects, type NewObject,
 } from "./actions";
-import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
+import { setSpanStyle } from "../extensions/StudioNodes";
 import type { ObjectDescriptor } from "../../document/schema";
 import { AUTO_FIELDS, AUTO_LABELS, TEXT_PRESETS, placeholderKey } from "../../document/placeholders";
 import { masterAction, runPreflight } from "./bridge";

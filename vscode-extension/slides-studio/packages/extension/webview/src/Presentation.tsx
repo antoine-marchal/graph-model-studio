@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PPI, SlideView } from '@corporate-slides/renderer';
 import { tr } from '@corporate-slides/core';
 import { useEditor } from './store';
-import { useAssets } from './Canvas';
+import { useAssets } from './assets';
 import { post } from './host';
 import { Icon } from './icons';
 

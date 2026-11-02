@@ -19,7 +19,7 @@ import { groupParts, inGroup } from "../../../slides-studio/packages/core/src/gr
 import type { DocumentSync } from "./documentSync";
 import { lookupMaster, notify, objectOf, resolveDocument, studio } from "./store";
 import { saveMaster } from "./bridge";
-import { parseBlockProps } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
 
 let editorRef: Editor | null = null;
 let syncRef: DocumentSync | null = null;

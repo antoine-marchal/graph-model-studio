@@ -1,0 +1,5 @@
+# Built esbuild bundles committed for packaging. They inline third-party
+# libraries (markdown-it, domino, entities, turndown) and minified symbols,
+# which otherwise dominate god nodes and communities. Sources stay indexed.
+vscode-extension/integrations/markdown-toolkit/extension.js
+vscode-extension/integrations/paste-as-markdown/extension.js

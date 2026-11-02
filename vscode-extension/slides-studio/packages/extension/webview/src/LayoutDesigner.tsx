@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { placeholderTable, placeholderTypeOf, resolveColor, tr, uniqueId, type LayoutDef, type PlaceholderDef, type SlideElement } from '@corporate-slides/core';
 import { SlideView } from '@corporate-slides/renderer';
-import { useAssets } from './Canvas';
+import { useAssets } from './assets';
 import { currentSlide, updateDesignLayout, useEditor } from './store';
 import { post } from './host';
 import { Icon } from './icons';
-import { ColorPicker, EditableId, IconButton, Section, Thumb } from './Panels';
+import { ColorPicker, EditableId, IconButton, Section, Thumb } from './ui';
 
 /*
  * Layout designer (Design › Edit master › All slides): the layout is a virtual slide, so the whole

@@ -22,7 +22,7 @@ import { cssLineHeight, fontStack, ptToPx, pxToPt } from "../../document/units";
 import { shapeSvg } from "./ObjectView";
 import { studio, useStudio, type PageBox } from "./store";
 import { currentBlock, currentSectionBreak, getEditor, getSync, setBlockProps, updateStoryObjects, setPageSetup, setSectionProps, updateMaster, updateMasterObjects, updateMeta, setGroupText } from "./actions";
-import { parseBlockProps } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
 import { useEditorDerived } from "./hooks";
 import { tr } from "./ui";
 

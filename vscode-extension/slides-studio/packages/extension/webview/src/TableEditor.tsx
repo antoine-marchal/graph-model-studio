@@ -4,9 +4,9 @@ import { fmtNumber, mergeRuns, tableWeights, tr, type CellStyle, type ElementPat
 import { PPI, tableCellStyle, tableTextCss, tokenHex } from '@corporate-slides/renderer';
 import { trackPointer, useEditor } from './store';
 import { Icon, type IconName } from './icons';
-import { Menu, PaletteGrid, PaletteMenu } from './Panels';
+import { Menu, PaletteGrid, PaletteMenu } from './ui';
 import { htmlTableGrid, tsvRows } from './clipboard';
-import { formatSelection, RunView, textBeforeCaret } from './Canvas';
+import { formatSelection, RunView, textBeforeCaret } from './richText';
 import { inlineEditor } from './Format';
 
 /*

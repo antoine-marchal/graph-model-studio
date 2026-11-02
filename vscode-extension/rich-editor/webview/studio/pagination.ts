@@ -22,7 +22,7 @@ import { contentHeight, contentWidth, type ResolvedPage } from "../../document/s
 import { ptToPx } from "../../document/units";
 import { defaultStyleFor } from "../../document/styles";
 import { objectOf, resolveDocument, studio, type Layout, type PageBox } from "./store";
-import { parseBlockProps } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
 
 export const paginationKey = new PluginKey<DecorationSet>("msPagination");
 export const PAGE_GAP = 28;

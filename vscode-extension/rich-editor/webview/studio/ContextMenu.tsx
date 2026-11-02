@@ -15,7 +15,8 @@ import {
   addMasterObject, alignObjects, applyParagraphStyle, deleteMasterObjects, deleteObjects, duplicateObjects, enterMasterEdit, exitMasterEdit, floatBlockAt, getEditor, getSync, groupObjects, inlineObject,
   insertSectionBreak, reorder, setBlockProps, setMasterObjectMode, setPageSetup, setPlacement, startConnect, ungroup, updateMasterObjects, updateObjects, currentSectionBreak,
 } from "./actions";
-import { parseBlockProps, setSpanStyle } from "../extensions/StudioNodes";
+import { parseBlockProps } from "../extensions/blockProps";
+import { setSpanStyle } from "../extensions/StudioNodes";
 import { paletteTokens } from "../../document/styles";
 import { pxToPt } from "../../document/units";
 import { groupParts } from "../../../slides-studio/packages/core/src/groups";

@@ -6,7 +6,8 @@ import { fmtNumber, findLayout, findPlaceholder, isDiagramSrc, paletteTokens, pl
 import { Icon, type IconName } from './icons';
 import { post } from './host';
 import { currentSlide, useEditor, type RibbonTab } from './store';
-import { AddSlideMenu, Menu, PaletteMenu } from './Panels';
+import { AddSlideMenu } from './Panels';
+import { Menu, PaletteMenu } from './ui';
 import { alignMutations, connectMutation, groupMutations, groupState, FONT_SIZES, inlineEditor, keepFocus, ParagraphTools, ShapeGallery, stepFontSize, type AlignMode } from './Format';
 import { copyFromRibbon, copyStyle, pasteFromRibbon } from './clipboard';
 import { useAnchors, useDiff } from './Review';
