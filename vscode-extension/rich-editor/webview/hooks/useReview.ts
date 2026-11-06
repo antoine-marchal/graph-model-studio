@@ -16,7 +16,25 @@ export interface ReviewComposer {
  * a block-count mismatch (one source block rendered as several nodes) means
  * no exact mapping, so every thread then stacks at the top of the file.
  */
-export function useReview(editor: Editor | null) {
+export interface ReviewAnchors {
+  /** Markdown the threads' line numbers refer to (the new version of a diff). */
+  source: string;
+  /** Source line of each top-level editor node; NaN for nodes with no new-version line (removed blocks, gaps). */
+  blockLines: number[];
+}
+
+/** Last top-level node starting at or before `line`, skipping nodes without a line. */
+function anchoredIndex(lines: number[], line: number): number {
+  let index = -1;
+  for (let i = 0; i < lines.length; i++) if (lines[i] <= line) index = i;
+  return index;
+}
+
+/**
+ * `anchors`: explicit node → line map (the rendered diff, whose top-level
+ * nodes are diff blocks rather than the document's own blocks).
+ */
+export function useReview(editor: Editor | null, anchors?: ReviewAnchors) {
   const [enabled, setEnabled] = useState(false);
   const [source, setSource] = useState("");
   const [data, setData] = useState<ReviewData | null>(null);
@@ -87,19 +105,26 @@ export function useReview(editor: Editor | null) {
   }, [editor, enabled]);
 
   const lines = useMemo(() => {
+    if (anchors) return anchors.blockLines;
     try {
       return sourceBlockLines(source);
     } catch {
       return [];
     }
-  }, [source]);
+  }, [source, anchors]);
   const aligned = useMemo(
-    () => !!editor && lines.length > 0 && sourceBlockCount(editor.state.doc, lines.length) === lines.length,
+    () =>
+      !!editor &&
+      lines.length > 0 &&
+      (anchors ? editor.state.doc.childCount >= lines.length : sourceBlockCount(editor.state.doc, lines.length) === lines.length),
     // docVersion: re-check whenever the rendered document changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [editor, lines, docVersion],
+    [editor, lines, docVersion, anchors],
   );
-  const indexOf = useCallback((line: number) => (aligned ? reviewBlockIndex(lines, line) : -1), [aligned, lines]);
+  const indexOf = useCallback(
+    (line: number) => (!aligned ? -1 : anchors ? anchoredIndex(lines, line) : reviewBlockIndex(lines, line)),
+    [aligned, lines, anchors],
+  );
   const byBlock = useMemo(() => {
     const map = new Map<number, ReviewThread[]>();
     for (const t of data?.threads ?? []) {
@@ -110,8 +135,9 @@ export function useReview(editor: Editor | null) {
   }, [data, indexOf]);
 
   return {
-    enabled,
-    source,
+    // Explicit anchors come from a host that already decided to show the review.
+    enabled: enabled || !!anchors,
+    source: anchors?.source ?? source,
     data,
     error,
     busy,

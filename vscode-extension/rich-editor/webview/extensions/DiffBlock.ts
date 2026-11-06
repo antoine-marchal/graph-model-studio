@@ -15,12 +15,12 @@ export const DiffBlock = Node.create({
   isolating: true,
 
   addAttributes() {
-    const attr = (name: string, fallback: string | null = null) => ({
+    const attr = (name: string, fallback: string | null = null, dom = name) => ({
       default: fallback,
-      parseHTML: (el: HTMLElement) => el.getAttribute(`data-${name}`) ?? fallback,
-      renderHTML: (a: any) => (a[name] != null ? { [`data-${name}`]: a[name] } : {}),
+      parseHTML: (el: HTMLElement) => el.getAttribute(`data-${dom}`) ?? fallback,
+      renderHTML: (a: any) => (a[name] != null ? { [`data-${dom}`]: a[name] } : {}),
     });
-    return { diff: attr("diff", "same"), pair: attr("pair"), far: attr("far") };
+    return { diff: attr("diff", "same"), pair: attr("pair"), far: attr("far"), line: attr("line"), oldLine: attr("oldLine", null, "old-line") };
   },
 
   parseHTML() {

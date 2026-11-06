@@ -3400,6 +3400,79 @@ body.col-resizing { user-select: none; }
   background: var(--md-diff-line);
 }
 .diff-rendered-doc.changes-only .diff-block[data-diff="gap"] p { margin: 0; }
+/* A folded block that carries a discussion stays visible, so the thread keeps its context. */
+.diff-rendered-doc.changes-only .diff-block[data-far="true"]:has(+ .rv-slot) { display: block; }
+
+/* Modified pairs: the block tint stays faint so the changed words carry the
+   signal; wholly added / removed blocks keep the full tint. */
+.diff-doc .diff-block[data-diff="new"] { background: color-mix(in srgb, var(--md-diff-ins-bg) 40%, transparent); }
+.diff-doc .diff-block[data-diff="old"] { background: color-mix(in srgb, var(--md-diff-del-bg) 40%, transparent); }
+
+/* New version only: the earlier half of a modified pair is hidden (it still
+   feeds the word highlights); a removed block folds to one line, opened on click. */
+.diff-rendered-doc.is-new-only .diff-block[data-diff="old"] { display: none; }
+.diff-rendered-doc.is-new-only .diff-block[data-diff="new"] { margin-top: 6px; border-radius: 6px; box-shadow: none; }
+.diff-rendered-doc.is-new-only .diff-block[data-diff="del"]:not(.is-open) {
+  max-height: 1.9em;
+  overflow: hidden;
+  cursor: pointer;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--md-diff-del-fg) 35%, transparent);
+}
+.diff-rendered-doc.is-new-only .diff-block[data-diff="del"]:not(.is-open) > * { visibility: hidden; }
+.diff-rendered-doc.is-new-only .diff-block[data-diff="del"]:not(.is-open)::before {
+  content: "Removed block · click to show";
+  position: absolute;
+  inset: 0 0 0 30px;
+  width: auto;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--md-diff-del-fg);
+}
+.diff-rendered-doc.is-new-only .diff-block[data-diff="del"].is-open { cursor: pointer; }
+
+/* Earlier version unreadable: say so instead of showing everything as added. */
+.diff-notice {
+  flex: none;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--md-diff-line);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 12%, transparent);
+  color: var(--vscode-foreground);
+  font-size: 12px;
+}
+
+/* Review in the diff panel: the GitLab bar sits under the diff toolbar;
+   threads are top-level widgets, so side by side they span both columns. */
+.diff-review-bar {
+  flex: none;
+  display: flex;
+  padding: 6px 16px;
+  border-bottom: 1px solid var(--rv-border);
+}
+.diff-rendered-doc { position: relative; }
+.diff-rendered-doc.is-sbs .rv-slot { grid-column: 1 / -1; }
+.diff-comment-add {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: 4px 0 0 -28px;
+  padding: 0;
+  border: 1px solid var(--rv-border);
+  border-radius: 4px;
+  background: var(--vscode-editor-background);
+  color: var(--rv-open);
+  cursor: pointer;
+}
+.diff-comment-add:hover { background: color-mix(in srgb, var(--rv-open) 14%, var(--vscode-editor-background)); }
+.diff-comment-add:focus-visible { outline: 2px solid var(--vscode-focusBorder, #007fd4); outline-offset: 1px; }
 
 .diff-doc .diff-block.diff-hunk-current {
   outline: 2px solid var(--vscode-focusBorder, #007fd4);
@@ -3443,7 +3516,7 @@ body.col-resizing { user-select: none; }
 /* ---------- GitLab rendered review (ReviewThreads) ----------
    Discussions live inside the document, under the block they annotate.
    Thread state carries the colour everywhere: gutter marker, pill, card. */
-.has-review {
+.has-review, .diff-view {
   --rv-open: var(--vscode-charts-blue, #3794ff);
   --rv-resolved: var(--vscode-charts-green, #4fb35a);
   --rv-note: var(--vscode-charts-purple, #b180d7);
@@ -3776,3 +3849,34 @@ body.indent-headings .tiptap-editor > [style*="--ms-hdepth"] {
 
 /* The editing surface itself never shows the chrome focus ring (Slides stylesheet :focus-visible). */
 .tiptap-editor:focus-visible { outline: none; }
+
+/* Source line numbers, in a gutter left of each block: the new version's
+   line, or the earlier version's for removed text. Changed blocks extend
+   30px left for their +/− sign, so their number sits 30px closer. */
+.diff-doc .diff-block:is([data-line], [data-old-line])::after {
+  position: absolute;
+  top: calc(1px + 0.35em);
+  right: calc(100% + 36px);
+  min-width: 3ch;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--ms-line-height, 1.6);
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground, #6e7681);
+  pointer-events: none;
+  user-select: none;
+}
+.diff-doc .diff-block[data-line]::after { content: attr(data-line); }
+.diff-doc .diff-block:is([data-diff="del"], [data-diff="old"])[data-old-line]::after {
+  content: attr(data-old-line);
+  color: color-mix(in srgb, var(--md-diff-del-fg) 70%, var(--vscode-editorLineNumber-foreground, #6e7681));
+}
+.diff-doc .diff-block:is([data-diff="ins"], [data-diff="del"], [data-diff="old"], [data-diff="new"])::after {
+  top: calc(3px + 0.35em);
+  right: calc(100% + 6px);
+}
+.diff-doc .diff-block:is([data-diff="ins"], [data-diff="new"])::after { color: color-mix(in srgb, var(--md-diff-ins-fg) 70%, var(--vscode-editorLineNumber-foreground, #6e7681)); }
+/* Side by side the grid fills the width: reserve the line-number gutter inside it. */
+.diff-rendered-doc.is-sbs .tiptap-editor.diff-doc { padding-left: calc(32px + 4.5ch + 30px); }
+.diff-rendered-doc.is-sbs .diff-sides { padding-left: calc(2rem + 4.5ch + 30px); }

@@ -102,6 +102,27 @@ export interface DiffBase {
   text: string | null;
   label: string;
   error?: string;
+  /** Document of the base revision, for opening the side-by-side diff. */
+  uri?: vscode.Uri;
+}
+
+/** `git:` URI of a file at a revision, as the Git extension builds them (its content provider serves it). */
+export function gitRevisionUri(file: vscode.Uri, ref: string): vscode.Uri {
+  return vscode.Uri.from({ scheme: 'git', path: file.path, query: JSON.stringify({ path: file.fsPath, ref }) });
+}
+
+/** Short name of one side of a diff: working tree, index, HEAD, a commit, a merge request side. */
+export function diffSideLabel(uri: vscode.Uri): string {
+  if (uri.scheme === 'file') return tr('copie de travail', 'working tree');
+  const m = mrRef(uri);
+  if (m) return m.side === 'old' ? tr(`base de !${m.iid}`, `base of !${m.iid}`) : `!${m.iid}`;
+  try {
+    const ref = String((JSON.parse(uri.query) as { ref?: string }).ref ?? 'HEAD');
+    if (ref === '~' || ref === '') return tr('index', 'index');
+    return /^[0-9a-f]{12,}$/i.test(ref) ? ref.slice(0, 7) : ref;
+  } catch {
+    return uri.scheme;
+  }
 }
 
 /**
@@ -118,7 +139,7 @@ export async function loadDiffBase(document: vscode.TextDocument, kind: DiffBase
       const o = mrRef(d.uri);
       return o?.side === 'old' && o.iid === m.iid && o.project === m.project && o.newPath === m.newPath;
     });
-    return old ? { text: old.getText(), label: tr(`base de !${m.iid}`, `base of !${m.iid}`) } : { text: '', label: tr(`base de !${m.iid}`, `base of !${m.iid}`) };
+    return old ? { text: old.getText(), label: tr(`base de !${m.iid}`, `base of !${m.iid}`), uri: old.uri } : { text: '', label: tr(`base de !${m.iid}`, `base of !${m.iid}`) };
   }
   if (document.uri.scheme !== 'file') return { text: null, label: '', error: tr('Comparaison indisponible pour ce document.', 'Comparison unavailable for this document.') };
   const cwd = dirname(document.uri.fsPath);
@@ -127,12 +148,12 @@ export async function loadDiffBase(document: vscode.TextDocument, kind: DiffBase
     if (kind === 'head') {
       // An untracked file has no base: everything is new.
       const text = await git(cwd, ['show', `HEAD:${file}`]).catch(() => '');
-      return { text, label: 'HEAD' };
+      return { text, label: 'HEAD', uri: gitRevisionUri(document.uri, 'HEAD') };
     }
     const target = await mrTarget(cwd);
     const base = (await git(cwd, ['merge-base', 'HEAD', target])).trim();
     const text = await git(cwd, ['show', `${base}:${file}`]).catch(() => '');
-    return { text, label: `merge-base ${target} (${base.slice(0, 8)})` };
+    return { text, label: `merge-base ${target} (${base.slice(0, 8)})`, uri: gitRevisionUri(document.uri, base) };
   } catch (e) {
     return { text: null, label: '', error: (e as Error).message };
   }

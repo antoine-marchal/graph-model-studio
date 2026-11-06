@@ -2,7 +2,7 @@ import { registerMasterView } from "./masterTree";
 import * as vscode from "vscode";
 import * as path from "path";
 import { BetterMarkdownProvider } from "./provider";
-import { BetterMarkdownDiffPanel } from "./diffPanel";
+import { BetterMarkdownDiffPanel, diffTitle } from "./diffPanel";
 import { SETTING_KEYS } from "../webview/settings";
 import { registerDirectiveCommands } from "./directives";
 import { exportDocx, preflight } from "./exportDocx";
@@ -363,11 +363,7 @@ async function resolveDiffArgs(
 }> {
   // Case: two URI args
   if (arg instanceof vscode.Uri && second instanceof vscode.Uri) {
-    return {
-      leftUri: arg,
-      rightUri: second,
-      title: path.basename(second.fsPath || second.path),
-    };
+    return { leftUri: arg, rightUri: second, title: diffTitle(arg, second) };
   }
 
   // Case: single URI arg → diff vs HEAD
@@ -384,13 +380,7 @@ async function resolveDiffArgs(
   // No args: look at active tab for a diff editor, else active text editor
   const activeTab = vscode.window.tabGroups.activeTabGroup.activeTab?.input;
   if (activeTab && activeTab instanceof vscode.TabInputTextDiff) {
-    return {
-      leftUri: activeTab.original,
-      rightUri: activeTab.modified,
-      title: path.basename(
-        activeTab.modified.fsPath || activeTab.modified.path
-      ),
-    };
+    return { leftUri: activeTab.original, rightUri: activeTab.modified, title: diffTitle(activeTab.original, activeTab.modified) };
   }
 
   const activeEditor = vscode.window.activeTextEditor;
@@ -412,6 +402,6 @@ function withHead(fileUri: vscode.Uri) {
   return {
     leftUri: gitUri,
     rightUri: fileUri,
-    title: `${path.basename(fileUri.fsPath)} · HEAD ↔ working`,
+    title: diffTitle(gitUri, fileUri),
   };
 }

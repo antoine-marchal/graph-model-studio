@@ -1075,6 +1075,7 @@ async function run() {
       JSON.stringify(split),
       JSON.stringify({
         blocks: ["```yaml\ntitle: x\n```", "# A", "para [l][r]", "<!-- embed:toc -->\n\n- [A](#a)\n\n<!-- embed:toc:end -->", "| a |\n| - |\n| 1 |\n\n<!-- ms-table:cols=90 -->"],
+        lines: [1, 4, 6, 8, 14],
         defs: ["[r]: http://x"],
       }));
     const kinds = (o: string, n: string, ctx = 1) => diffBlocks(o, n, ctx).entries.map((e) => e.kind + (e.far ? "*" : "") + (e.pair !== undefined ? e.pair : "")).join(",");
@@ -1084,6 +1085,12 @@ async function run() {
     eq("diffBlocks: far unchanged blocks folded behind a gap",
       kinds("a\n\nb\n\nc\n\nd\n\ne", "a\n\nb\n\nc\n\nd\n\nE!"),
       "gap,same*,same*,same*,same,del,ins");
+    eq("diffBlocks: CRLF working copy vs LF blob is no change",
+      kinds("# A\n\npara\n\nlast", "# A\r\n\r\npara\r\n\r\nlast"),
+      "gap,same*,same*,same*");
+    eq("diffBlocks: new-side blocks carry their source line (review anchors)",
+      diffBlocks("# A\n\nold text", "# A\n\nold text here\n\nadded").entries.map((e) => `${e.kind}:${e.line ?? "-"}`).join(","),
+      "same:1,old:-,new:3,ins:5");
     eq("similarity: identical / disjoint", `${similarity("a b", "a b")},${similarity("abc", "xyz")}`, "1,0");
   }
 

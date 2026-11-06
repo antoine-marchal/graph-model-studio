@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { diffWordsWithSpace, structuredPatch } from "diff";
-import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { ChevronDown, ChevronUp, MessageSquarePlus, X } from "lucide-react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { markdownToHtml, restoreTabs } from "../hooks/useVSCodeSync";
 import { contentExtensions } from "../editorExtensions";
 import { DiffBlock, DiffWords } from "../extensions/DiffBlock";
-import { diffBlocks, similarity, type DiffEntry } from "../renderedDiff";
+import { diffBlocks, normalizeEol, similarity, type DiffEntry } from "../renderedDiff";
+import { ReviewBar, ReviewLayer, ReviewThreads } from "./ReviewThreads";
+import { useReview, type ReviewAnchors } from "../hooks/useReview";
+import type { Editor } from "@tiptap/react";
 
 export type DiffMode = "source" | "rendered";
-export type DiffLayout = "unified" | "side-by-side";
+export type DiffLayout = "unified" | "side-by-side" | "new-only";
 
 /**
  * Side by side, a removed / added run is laid out row by row: each removed
@@ -67,6 +71,8 @@ async function renderDiffHtml(oldContent: string, newContent: string, baseUri: s
       const attrs = [`data-diff="${e.kind}"`];
       if (e.pair !== undefined) attrs.push(`data-pair="${e.pair}"`);
       if (e.far) attrs.push(`data-far="true"`);
+      if (e.line !== undefined) attrs.push(`data-line="${e.line}"`);
+      if (e.oldLine !== undefined) attrs.push(`data-old-line="${e.oldLine}"`);
       return `<div data-type="diff" ${attrs.join(" ")}>${htmls[i]}</div>`;
     })
     .join("");
@@ -238,6 +244,10 @@ interface DiffViewProps {
   title?: string; // e.g. "Diff vs HEAD" or "abc123 → def456"
   /** Webview URI of the document folder, for relative images. */
   baseUri?: string;
+  /** GitLab discussions of the new version, anchored under its blocks (standalone diff panel). */
+  review?: boolean;
+  /** Why the earlier version could not be read (shown instead of a silent all-added diff). */
+  baseError?: string;
 }
 
 export function DiffView({
@@ -251,9 +261,14 @@ export function DiffView({
   onModeChange,
   title,
   baseUri,
+  review,
+  baseError,
 }: DiffViewProps) {
+  oldContent = useMemo(() => normalizeEol(oldContent), [oldContent]);
+  newContent = useMemo(() => normalizeEol(newContent), [newContent]);
   const noChanges = oldContent === newContent;
   const sideBySide = layout === "side-by-side";
+  const newOnly = layout === "new-only";
 
   // Rendered diff — block diff rendered by a read-only read-mode editor.
   const [rendered, setRendered] = useState<{ html: string; stats: DiffStats } | null>(null);
@@ -261,7 +276,7 @@ export function DiffView({
   const [changesOnly, setChangesOnly] = useState(true);
   const diffEditor = useEditor(
     {
-      extensions: [...contentExtensions(), DiffBlock, DiffWords],
+      extensions: [...contentExtensions(), DiffBlock, DiffWords, ReviewThreads],
       editable: false,
       editorProps: { attributes: { class: "tiptap-editor diff-doc" } },
     },
@@ -286,11 +301,21 @@ export function DiffView({
   }, [mode, oldContent, newContent, noChanges, baseUri, sideBySide]);
 
   const renderedHtml = rendered?.html ?? "";
+  // Review anchors: each top-level diff block's new-version line (NaN: removed / gap / pad).
+  const [anchors, setAnchors] = useState<ReviewAnchors | undefined>(undefined);
   useEffect(() => {
     if (diffEditor && renderedHtml) {
       diffEditor.commands.setContent(renderedHtml, { emitUpdate: false });
       restoreTabs(diffEditor);
+      const blockLines: number[] = [];
+      diffEditor.state.doc.forEach((node) => {
+        const kind = node.attrs?.diff;
+        const anchored = node.type.name === "diffBlock" && kind !== "old" && kind !== "del" && node.attrs.line != null;
+        blockLines.push(anchored ? Number(node.attrs.line) : NaN);
+      });
+      setAnchors({ source: newContent, blockLines });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [diffEditor, renderedHtml]);
 
   // --- Navigation through rendered-diff hunks (Prev / Next, j / k, ↑ / ↓) ---
@@ -312,6 +337,9 @@ export function DiffView({
       const firsts = Array.from(
         root.querySelectorAll<HTMLElement>('.diff-block:is([data-diff="ins"], [data-diff="del"], [data-diff="old"], [data-diff="new"])'),
       ).filter((el) => {
+        // New version only: the earlier half of a modified pair is hidden.
+        if (newOnly && el.dataset.diff === "old") return false;
+        if (newOnly && el.dataset.diff === "new") return true;
         const prev = el.previousElementSibling as HTMLElement | null;
         if (el.dataset.diff === "new") return !(prev?.dataset.diff === "old" && prev.dataset.pair === el.dataset.pair);
         if (el.dataset.diff === "ins" && sideBySide) return !(prev && /^(del|pad-old)$/.test(prev.dataset.diff ?? ""));
@@ -321,7 +349,7 @@ export function DiffView({
       setCursor(-1);
     });
     return () => cancelAnimationFrame(id);
-  }, [renderedHtml, mode, diffEditor, sideBySide]);
+  }, [renderedHtml, mode, diffEditor, sideBySide, newOnly]);
 
   // Mark the focused hunk and center it in .diff-body (scrollIntoView would
   // also shift outer scroll containers in integrated mode).
@@ -409,27 +437,49 @@ export function DiffView({
             </button>
           </div>
           <div className="settings-segmented" role="group" aria-label="Layout">
-            <button className={"settings-segment" + (layout === "unified" ? " active" : "")} aria-pressed={layout === "unified"} onClick={() => onLayoutChange("unified")}>
-              Unified
-            </button>
-            <button className={"settings-segment" + (sideBySide ? " active" : "")} aria-pressed={sideBySide} onClick={() => onLayoutChange("side-by-side")}>
+            <button className={"settings-segment" + (sideBySide ? " active" : "")} aria-pressed={sideBySide} onClick={() => onLayoutChange("side-by-side")} title="Earlier version on the left, new version on the right">
               Side by side
             </button>
+            <button className={"settings-segment" + (layout === "unified" ? " active" : "")} aria-pressed={layout === "unified"} onClick={() => onLayoutChange("unified")} title="Each change shown before, then after, in one column">
+              Unified
+            </button>
+            {mode === "rendered" && (
+              <button className={"settings-segment" + (newOnly ? " active" : "")} aria-pressed={newOnly} onClick={() => onLayoutChange("new-only")} title="The new version only: added and changed text highlighted, removed blocks folded">
+                New version
+              </button>
+            )}
           </div>
           <button className="diff-icon-btn diff-close" onClick={onClose} title="Close diff" aria-label="Close diff">
             <X size={16} />
           </button>
         </div>
       </div>
+      {review && diffEditor && mode === "rendered" && !noChanges && renderedHtml && (
+        <DiffReview editor={diffEditor} anchors={anchors} rootRef={renderedRef} />
+      )}
+      {baseError && (
+        <div className="diff-notice" role="alert">
+          Could not read the earlier version ({baseError}), so every block shows as added.
+        </div>
+      )}
       <div className="diff-body">
         {noChanges ? (
           <div className="diff-empty">No changes</div>
         ) : mode === "source" ? (
-          <SourceDiff oldContent={oldContent} newContent={newContent} layout={layout} />
+          <SourceDiff oldContent={oldContent} newContent={newContent} layout={newOnly ? "unified" : layout} />
         ) : renderedErr ? (
           <div className="diff-empty">Rendered diff failed: {renderedErr}</div>
         ) : renderedHtml ? (
-          <div ref={renderedRef} className={"diff-rendered-doc" + (changesOnly ? " changes-only" : "") + (sideBySide ? " is-sbs" : "")}>
+          <div
+            ref={renderedRef}
+            className={"diff-rendered-doc" + (changesOnly ? " changes-only" : "") + (sideBySide ? " is-sbs" : "") + (newOnly ? " is-new-only" : "")}
+            onClick={(e) => {
+              // New version only: a folded removed block opens on click.
+              if (!newOnly) return;
+              const del = (e.target as HTMLElement).closest<HTMLElement>('.diff-block[data-diff="del"]');
+              if (del) del.classList.toggle("is-open");
+            }}
+          >
             {sideBySide && (
               <div className="diff-sides" aria-hidden>
                 <span>Before</span>
@@ -443,5 +493,79 @@ export function DiffView({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * GitLab discussions in the rendered diff: threads sit under the diff block
+ * holding their new-version line, and hovering a block offers a new comment
+ * on it. Mounted only by the standalone diff panel (the editor's own diff
+ * overlay leaves review to the editor).
+ */
+function DiffReview({ editor, anchors, rootRef }: { editor: Editor; anchors?: ReviewAnchors; rootRef: React.RefObject<HTMLDivElement | null> }) {
+  const review = useReview(editor, anchors);
+  const [hover, setHover] = useState<{ line: number; top: number; left: number } | null>(null);
+  const canCreate = review.enabled && !!review.data?.canCreate && review.aligned;
+
+  // Mounted after the host's first message: ask for the discussions ourselves.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => review.send("load"), []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !canCreate) {
+      setHover(null);
+      return;
+    }
+    const move = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest(".diff-comment-add")) return;
+      const block = target.closest<HTMLElement>(".diff-block[data-line]");
+      if (!block || target.closest(".rv-slot")) {
+        setHover(null);
+        return;
+      }
+      const r = block.getBoundingClientRect();
+      const base = root.getBoundingClientRect();
+      // Inside the block's top-right corner: reachable without leaving the block.
+      setHover({ line: Number(block.dataset.line), top: r.top - base.top, left: r.right - base.left });
+    };
+    const leave = () => setHover(null);
+    root.addEventListener("mousemove", move);
+    root.addEventListener("mouseleave", leave);
+    return () => {
+      root.removeEventListener("mousemove", move);
+      root.removeEventListener("mouseleave", leave);
+    };
+  }, [rootRef, canCreate]);
+
+  if (!review.enabled) return null;
+  const root = rootRef.current;
+  return (
+    <>
+      <div className="diff-review-bar">
+        <ReviewBar review={review} />
+      </div>
+      <ReviewLayer editor={editor} review={review} />
+      {root &&
+        hover &&
+        canCreate &&
+        createPortal(
+          <button
+            type="button"
+            className="diff-comment-add"
+            style={{ top: hover.top, left: hover.left }}
+            title={`Comment on line ${hover.line}`}
+            aria-label={`Comment on line ${hover.line}`}
+            onClick={() => {
+              review.openComposer(hover.line);
+              setHover(null);
+            }}
+          >
+            <MessageSquarePlus size={14} aria-hidden />
+          </button>,
+          root,
+        )}
+    </>
   );
 }

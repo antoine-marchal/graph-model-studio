@@ -11,7 +11,7 @@ import { readPowerPointClipboard } from './pptClipboard';
 import { validateDocument } from '@corporate-slides/core';
 import { webviewHtml } from './webviewHtml';
 import { createGmc, gmsEditorBundle, openGmc, renderGmc } from './gmc';
-import { linkMrRevision, loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
+import { diffSideLabel, linkMrRevision, loadDiffBase, localPath, mrRef, mrTwin, reviewRequest, trackMrRevision } from './review';
 import { log } from './log';
 import { minimalEdit, withEol } from '../../../../shared/minimal-edit';
 
@@ -37,7 +37,20 @@ interface PanelState {
   zen?: boolean;
   /** Diagram writes and the close-time render, in arrival order (the render must read the last write). */
   gmcOps?: Promise<unknown>;
+  /** When the editor was resolved: the two sides of a VS Code diff resolve together. */
+  opened: number;
+  /** The webview asked for its document (pushDiffBase can run). */
+  ready?: boolean;
+  /** Other side of the VS Code diff this editor is shown in. */
+  peer?: PanelState;
+  /** Base of the `diff` comparison: the other side's document. */
+  diffSide?: { uri: vscode.Uri; text: string; label: string };
+  /** Document of the current comparison base, for reopening it side by side. */
+  baseUri?: vscode.Uri;
 }
+
+/** Base for the next editor opened on a URI ("new version only" keeps comparing with the diff's other side). */
+type DiffSide = NonNullable<PanelState['diffSide']>;
 
 /**
  * Custom *text* editor: the VS Code TextDocument (Markdown/DSL source) stays the single durable truth.
@@ -56,6 +69,7 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
   /** Documents being edited by `applyTransaction` (their change events are our own). */
   private applying = new Set<string>();
   private panels = new Map<string, Set<PanelState>>();
+  private pendingDiffSides = new Map<string, DiffSide>();
   /** Last parse of each document: reused while its version, kind and master are unchanged. */
   private parsed = new WeakMap<vscode.TextDocument, { version: number; kind: SourceKind; master: CorporateMaster | null; result: ReturnType<typeof parseSource> }>();
   /** Picture sizes for validation, kept while the file's mtime is unchanged (each read loads the whole file). */
@@ -363,7 +377,14 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     panel.webview.html = webviewHtml(panel.webview, this.context.extensionUri, 'editor');
 
     const key = document.uri.toString();
-    const state: PanelState = { document, kind, panel, diffBase: mrRef(document.uri)?.side === 'new' ? 'mr' : 'head', externalVersion: document.version };
+    const state: PanelState = { document, kind, panel, diffBase: mrRef(document.uri)?.side === 'new' ? 'mr' : 'head', externalVersion: document.version, opened: Date.now() };
+    const pending = this.pendingDiffSides.get(key);
+    if (pending) {
+      this.pendingDiffSides.delete(key);
+      state.diffSide = pending;
+      state.diffBase = 'diff';
+    }
+    this.pairDiffSides(state);
     if (!this.panels.has(key)) this.panels.set(key, new Set());
     this.panels.get(key)!.add(state);
 
@@ -396,8 +417,61 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
       if (state.zen) void presentationMode(false);
       clearTimeout(timer);
       this.panels.get(key)?.delete(state);
+      if (state.peer) state.peer.peer = undefined;
       subs.forEach((s) => s.dispose());
     });
+  }
+
+  /**
+   * Both sides of a VS Code diff (Source Control, Git history, merge request) open this editor
+   * together: the new side then compares with the other side's document, changes shown, and
+   * both offer the switch to the new version alone.
+   */
+  private pairDiffSides(state: PanelState): void {
+    const path = localPath(state.document.uri).toLowerCase();
+    let partner: PanelState | undefined;
+    for (const p of this.allPanels()) {
+      if (p.peer || state.opened - p.opened > 3000 || p.document.uri.toString() === state.document.uri.toString()) continue;
+      if (localPath(p.document.uri).toLowerCase() !== path) continue;
+      if (p.document.uri.scheme === 'file' && state.document.uri.scheme === 'file') continue;
+      partner = p;
+    }
+    if (!partner) return;
+    // VS Code resolves the original side first; a working file is always the new one.
+    const stateIsOriginal = state.document.uri.scheme !== 'file' && partner.document.uri.scheme === 'file';
+    const original = stateIsOriginal ? state : partner;
+    const modified = stateIsOriginal ? partner : state;
+    original.peer = modified;
+    modified.peer = original;
+    // The original side is the reference: no comparison of its own (and no "unavailable" warning).
+    original.diffBase = 'none';
+    // A merge request diff already compares with its base (`mr`), discussions included.
+    if (!mrRef(modified.document.uri)) {
+      modified.diffSide = { uri: original.document.uri, text: original.document.getText(), label: diffSideLabel(original.document.uri) };
+      modified.diffBase = 'diff';
+    }
+    for (const s of [original, modified]) if (s.ready) void this.getMaster(s.document.uri).then((m) => this.pushDiffBase(s, m?.master ?? null));
+  }
+
+  /** "Side by side" ⇄ "New version": reopen the comparison as a VS Code diff, or the new version alone. */
+  private async switchDiffLayout(state: PanelState, layout: 'side-by-side' | 'new-only'): Promise<void> {
+    const viewType = /\.deck$/i.test(state.document.uri.path) ? SlidesEditorProvider.deckViewType : SlidesEditorProvider.viewType;
+    const name = basename(state.document.uri.path);
+    if (layout === 'new-only') {
+      // The new side: the working file, else the side comparing with the other (git revisions, merge request).
+      const pair = state.peer ? [state, state.peer] : [state];
+      const modified = pair.find((p) => p.document.uri.scheme === 'file') ?? pair.find((p) => p.diffSide || mrRef(p.document.uri)?.side === 'new') ?? state;
+      if (!modified.peer) return;
+      if (modified.diffSide) this.pendingDiffSides.set(modified.document.uri.toString(), modified.diffSide);
+      const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => (t.input === undefined || (t.input instanceof vscode.TabInputCustom && t.input.uri.toString() === modified.document.uri.toString())) && t.label !== name && t.label.includes(name));
+      await vscode.window.tabGroups.close(tabs).then(undefined, () => undefined);
+      await vscode.commands.executeCommand('vscode.openWith', modified.document.uri, viewType, { preview: false });
+      return;
+    }
+    if (!state.baseUri) return;
+    const single = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((t) => t.input instanceof vscode.TabInputCustom && t.input.uri.toString() === state.document.uri.toString() && t.label === name);
+    await vscode.commands.executeCommand('vscode.diff', state.baseUri, state.document.uri, `${name} (${diffSideLabel(state.baseUri)}) ↔ ${name} (${diffSideLabel(state.document.uri)})`, { preview: false });
+    await vscode.window.tabGroups.close(single).then(undefined, () => undefined);
   }
 
   /** Parsed document (read-only: shared by every caller until the source or the master changes). */
@@ -476,10 +550,15 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
 
   /** `linked`: merge request revision already looked up (true also opens the comments pane). */
   private async pushDiffBase(state: PanelState, master: CorporateMaster | null, linked?: boolean): Promise<void> {
-    const base = await loadDiffBase(state.document, state.diffBase);
+    const side = state.diffBase === 'diff' ? state.diffSide : undefined;
+    const base = side ? { text: side.text, label: side.label, uri: side.uri } : await loadDiffBase(state.document, state.diffBase === 'diff' ? 'none' : state.diffBase);
     const available: DiffBaseKind[] = mrRef(state.document.uri) ? (mrRef(state.document.uri)!.side === 'new' ? ['none', 'mr'] : ['none']) : ['none', 'head', 'mr'];
+    if (state.diffSide) available.push('diff');
     const doc = base.text === null ? null : parseSource(base.text, state.kind, master ? { dimensions: master.dimensions, master } : {}).doc;
-    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error, openComments: linked || undefined } satisfies HostMessage);
+    state.baseUri = base.text === null ? undefined : base.uri;
+    // Inside a VS Code diff: offer the new version alone; alone with a base revision: offer side by side.
+    const layout = state.peer ? 'side-by-side' : state.baseUri ? 'new-only' : undefined;
+    state.panel.webview.postMessage({ type: 'diffBase', base: state.diffBase, label: base.label, doc, available, error: base.error, openComments: linked || undefined, showChanges: !!side || undefined, layout } satisfies HostMessage);
     // Comparing with the merge request: bring its discussions too.
     if (state.diffBase === 'mr' && (linked ?? (await linkMrRevision(state.document).catch((e) => (log.warn('merge request lookup failed', e), false))))) {
       await this.pushDocument(state);
@@ -527,10 +606,12 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
     try {
       switch (msg.type) {
         case 'ready': {
+          state.ready = true;
           await this.pushDocument(state);
           // A local file changed by its branch's open merge request opens compared with it, comments shown.
           const linked = document.uri.scheme === 'file' && (await linkMrRevision(document).catch((e) => (log.warn('merge request lookup failed', e), false)));
-          if (linked) state.diffBase = 'mr';
+          // Opened from a diff: keep comparing with its other side (discussions still load below).
+          if (linked && state.diffBase !== 'diff') state.diffBase = 'mr';
           await this.pushDiffBase(state, (await this.getMaster(document.uri))?.master ?? null, linked || undefined);
           // Missing or older than the deck: render it now (a deck block may be waiting for it).
           if (wantsThumbnail(document.uri)) {
@@ -702,6 +783,9 @@ export class SlidesEditorProvider implements vscode.CustomTextEditorProvider {
         }
         case 'newFromLayout':
           await this.commands.newFromLayout(msg.layout);
+          break;
+        case 'diffLayout':
+          await this.switchDiffLayout(state, msg.layout);
           break;
         case 'setDiffBase':
           state.diffBase = msg.base;

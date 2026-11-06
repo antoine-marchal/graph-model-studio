@@ -1,7 +1,9 @@
+# esbuild needs its platform binary; VSCE signing / keytar are unused for an
+# unsigned local VSIX. Explicit false keeps pnpm from failing on ignored builds.
 allowBuilds:
-  '@vscode/vsce-sign': set this to true or false
-  esbuild: set this to true or false
-  keytar: set this to true or false
+  '@vscode/vsce-sign': false
+  esbuild: true
+  keytar: false
 
 # Rich editor: keep every Tiptap package on the version Markdown Studio was
 # tested with (a mix of core/pm versions breaks schema and plugin identity).

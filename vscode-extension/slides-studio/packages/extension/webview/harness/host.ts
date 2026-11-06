@@ -109,7 +109,8 @@ window.acquireVsCodeApi = () => ({
         if (reviewMode) reviewAction({ type: 'review', action: 'load', requestId: 0 });
         return;
       case 'setDiffBase':
-        return void pushBase(msg.base);
+        // The browser harness has no VS Code diff: "other side" compares with HEAD.
+        return void pushBase(msg.base === 'diff' ? 'head' : msg.base);
       case 'review':
         return reviewAction(msg);
       case 'gmcOpen':

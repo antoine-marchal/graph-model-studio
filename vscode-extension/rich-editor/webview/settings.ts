@@ -48,10 +48,12 @@ export interface BetterMarkdownSettings {
   defaultCodeBlockLang: string;
 
   // --- diff view ---
-  /** Layout for the source (line-level) diff toggle. */
-  diffLayout: "unified" | "side-by-side";
+  /** Diff layout: both versions stacked, side by side, or the new version only with its changes marked. */
+  diffLayout: "unified" | "side-by-side" | "new-only";
   /** Default diff view mode: source (line diff) or rendered (HTML diff). */
   diffMode: "source" | "rendered";
+  /** Diffs opened by Source Control / Git history / merge requests open in the rich diff panel. */
+  openDiffAsRich: boolean;
 
   // --- saving ---
   /** Save the file automatically after every change in the rich editor. */
@@ -158,6 +160,7 @@ export const DEFAULT_SETTINGS: BetterMarkdownSettings = {
   defaultCodeBlockLang: "",
   diffLayout: "side-by-side",
   diffMode: "rendered",
+  openDiffAsRich: true,
   saveOnEdit: false,
   bubbleMenuShortcut: "Mod+/",
   theme: "default",
@@ -195,6 +198,7 @@ export const SETTING_KEYS: (keyof BetterMarkdownSettings)[] = [
   "defaultCodeBlockLang",
   "diffLayout",
   "diffMode",
+  "openDiffAsRich",
   "saveOnEdit",
   "bubbleMenuShortcut",
   "theme",

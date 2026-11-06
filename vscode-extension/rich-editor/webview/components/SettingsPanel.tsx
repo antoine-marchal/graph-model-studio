@@ -348,15 +348,16 @@ export function SettingsPanel({
               />
             </Row>
 
-            <Row label="Source layout">
+            <Row label="Diff layout">
               <Segmented
                 value={settings.diffLayout}
                 options={[
+                  { value: "side-by-side", label: "Side by side" },
                   { value: "unified", label: "Unified" },
-                  { value: "side-by-side", label: "Side-by-side" },
+                  { value: "new-only", label: "New version" },
                 ]}
                 onChange={(v) =>
-                  set("diffLayout", v as "unified" | "side-by-side")
+                  set("diffLayout", v as "unified" | "side-by-side" | "new-only")
                 }
               />
             </Row>

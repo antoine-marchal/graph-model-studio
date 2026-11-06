@@ -2,6 +2,8 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
+import { execFile } from "child_process";
+import { linkMrRevision, sendReview } from "./review";
 
 const CONFIG_NAMESPACE = "markdownStudio";
 
@@ -105,6 +107,14 @@ export class BetterMarkdownDiffPanel {
         if (msg.type === "diffReady") {
           await this.postInit();
           await this.postCustomCss();
+        } else if (msg.type === "review") {
+          // Discussions belong to the new version (right side), never to a URI from the webview.
+          const doc = await vscode.workspace.openTextDocument(this.rightUri);
+          if (msg.action === "load" && doc.uri.scheme === "file" && !(await linkMrRevision(doc).catch(() => false))) {
+            this.panel.webview.postMessage({ type: "reviewResult", requestId: msg.requestId, action: "load", error: "No open merge request of the current branch changes this file." });
+            return;
+          }
+          await sendReview(doc, this.panel.webview, msg);
         } else if (msg.type === "closeDiff") {
           this.panel.dispose();
         } else if (msg.type === "saveSettings") {
@@ -148,13 +158,11 @@ export class BetterMarkdownDiffPanel {
 
   private async refresh() {
     try {
-      const [oldContent, newContent] = await Promise.all([
-        this.readUri(this.leftUri),
-        this.readUri(this.rightUri),
-      ]);
+      const [left, newContent] = await Promise.all([this.readBase(), this.readUri(this.rightUri)]);
       this.panel.webview.postMessage({
         type: "diffUpdate",
-        oldContent,
+        oldContent: left.text,
+        baseError: left.error,
         newContent,
       });
     } catch (err: any) {
@@ -162,23 +170,41 @@ export class BetterMarkdownDiffPanel {
     }
   }
 
+  /** Earlier version; a file absent at that revision is empty, any other failure is reported. */
+  private async readBase(): Promise<{ text: string; error?: string }> {
+    try {
+      return { text: await this.readUri(this.leftUri) };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return /exist|not found|ENOENT|unknown revision|bad revision/i.test(message) ? { text: "" } : { text: "", error: message };
+    }
+  }
+
+  /** The right side has GitLab discussions: a merge request revision, or a local file its branch's MR changes. */
+  private async hasReview(): Promise<boolean> {
+    if (this.rightUri.scheme === "pi-mr") return true;
+    if (this.rightUri.scheme !== "file") return false;
+    try {
+      return await linkMrRevision(await vscode.workspace.openTextDocument(this.rightUri));
+    } catch {
+      return false;
+    }
+  }
+
   private async postInit() {
     const settings = readSettings();
-    let oldContent = "";
+    const left = await this.readBase();
     let newContent = "";
-    try {
-      oldContent = await this.readUri(this.leftUri);
-    } catch {
-      // File didn't exist at ref → empty
-    }
     try {
       newContent = await this.readUri(this.rightUri);
     } catch {
-      // File didn't exist at ref → empty
+      // File deleted at that revision → empty
     }
     this.panel.webview.postMessage({
       type: "diffInit",
-      oldContent,
+      oldContent: left.text,
+      baseError: left.error,
+      review: await this.hasReview(),
       newContent,
       fileName: path.basename(this.rightUri.fsPath || this.leftUri.fsPath),
       title: this.title,
@@ -200,6 +226,12 @@ export class BetterMarkdownDiffPanel {
   }
 
   private async readUri(uri: vscode.Uri): Promise<string> {
+    // git: revisions straight from git, so the diff never depends on the Git
+    // extension having discovered the repository (nested repos, late activation).
+    if (uri.scheme === "git") {
+      const fromGit = await gitShow(uri).catch(() => undefined);
+      if (fromGit !== undefined) return fromGit;
+    }
     const doc = await vscode.workspace.openTextDocument(uri);
     return doc.getText();
   }
@@ -244,4 +276,65 @@ function getNonce(): string {
     text += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return text;
+}
+
+/**
+ * Content of a `git:` URI (`{ path, ref }` query, as the Git extension builds
+ * them): `~` is the index, `""` / `HEAD` / a sha a commit. Rejects when the
+ * file is absent at that revision.
+ */
+function gitShow(uri: vscode.Uri): Promise<string> {
+  let file = uri.fsPath;
+  let ref = "HEAD";
+  try {
+    const q = JSON.parse(uri.query) as { path?: string; ref?: string };
+    file = q.path ?? file;
+    ref = q.ref ?? ref;
+  } catch {
+    // Not a Git extension URI: HEAD of the path.
+  }
+  const spec = ref === "~" || ref === "" ? `:./${path.basename(file)}` : `${ref}:./${path.basename(file)}`;
+  return new Promise((resolve, reject) =>
+    execFile("git", ["show", spec], { cwd: path.dirname(file), maxBuffer: 64 * 1024 * 1024, encoding: "utf8" }, (err, stdout) =>
+      err ? reject(err) : resolve(stdout),
+    ),
+  );
+}
+
+/** Short name of one side of a diff: working tree, index, HEAD, a commit, a merge request side. */
+function sideLabel(uri: vscode.Uri): string {
+  if (uri.scheme === "file") return "working tree";
+  if (uri.scheme === "pi-mr") return /side=old|"side":"old"/.test(uri.query) ? "MR base" : "MR";
+  try {
+    const ref = String((JSON.parse(uri.query) as { ref?: string }).ref ?? "HEAD");
+    if (ref === "~" || ref === "") return "index";
+    return /^[0-9a-f]{12,}$/i.test(ref) ? ref.slice(0, 7) : ref;
+  } catch {
+    return uri.scheme;
+  }
+}
+
+export function diffTitle(left: vscode.Uri, right: vscode.Uri): string {
+  return `${path.basename(right.fsPath || right.path)} · ${sideLabel(left)} ↔ ${sideLabel(right)}`;
+}
+
+/**
+ * Close the VS Code diff tab comparing `left` and `right` (replaced by the
+ * rich diff). A diff of two custom editors is not a TabInputTextDiff in the
+ * tab API, so it is recognised by its label: the file name plus the sides.
+ */
+export async function closeNativeDiffTab(left: vscode.Uri, right: vscode.Uri): Promise<boolean> {
+  const name = path.basename(right.fsPath || right.path);
+  const same = (a: vscode.Uri, b: vscode.Uri) => a.toString() === b.toString();
+  const tabs = vscode.window.tabGroups.all.flatMap((g) => g.tabs).filter((tab) => {
+    const input = tab.input;
+    if (input instanceof vscode.TabInputTextDiff) return same(input.original, left) && same(input.modified, right);
+    if (input instanceof vscode.TabInputCustom && !same(input.uri, right)) return false;
+    if (input && !(input instanceof vscode.TabInputCustom)) return false;
+    // "a.md (Working Tree)", "a.md (abc123) ↔ a.md (def456)"…, never the plain "a.md" of a single editor.
+    return tab.label.includes(name) && tab.label !== name;
+  });
+  if (!tabs.length) return false;
+  await vscode.window.tabGroups.close(tabs).then(undefined, () => undefined);
+  return true;
 }

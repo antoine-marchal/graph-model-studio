@@ -430,7 +430,7 @@
       "commandPalette": [
         {
           "command": "betterMarkdown.openDiff",
-          "when": "resourceExtname == .md || isInDiffEditor"
+          "when": "resourceExtname =~ /^\\.(md|paper)$/ || isInDiffEditor"
         },
         {
           "command": "markdownStudio.editMaster",
@@ -470,7 +470,7 @@
         {
           "command": "betterMarkdown.openDiff",
           "group": "navigation",
-          "when": "isInDiffEditor && resourceExtname == .md"
+          "when": "isInDiffEditor && resourceExtname =~ /^\\.(md|paper)$/"
         },
         {
           "command": "gmc.openPreview",
@@ -502,7 +502,7 @@
         {
           "command": "betterMarkdown.openDiff",
           "group": "1_modification",
-          "when": "scmProvider == git && resourceExtname == .md"
+          "when": "scmProvider == git && resourceExtname =~ /^\\.(md|paper)$/"
         }
       ],
       "editor/context": [
@@ -754,6 +754,12 @@
             "order": 30,
             "markdownDescription": "%s064.language.label.applied.to.unlabelled%"
           },
+          "markdownStudio.openDiffAsRich": {
+            "type": "boolean",
+            "default": true,
+            "order": 39,
+            "markdownDescription": "%s063b.open.diff.as.rich%"
+          },
           "markdownStudio.diffMode": {
             "type": "string",
             "enum": [
@@ -772,11 +778,13 @@
             "type": "string",
             "enum": [
               "unified",
-              "side-by-side"
+              "side-by-side",
+              "new-only"
             ],
             "enumDescriptions": [
               "%s068.unified%",
-              "%s069.side.by.side%"
+              "%s069.side.by.side%",
+              "%s069b.new.only%"
             ],
             "default": "side-by-side",
             "order": 41,

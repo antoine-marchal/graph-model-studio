@@ -98,7 +98,8 @@ export function App({ mode }: { mode: 'editor' | 'masters' }) {
           break;
         case 'diffBase':
           // A merge request revision opens with its changes visible; local files keep them on demand.
-          st.set({ diff: { base: m.base, label: m.label, doc: m.doc as SlideDocument | null, available: m.available, error: m.error }, showDiff: m.doc ? st.showDiff || m.base === 'mr' : false, showBase: m.doc ? st.showBase : false, ghostSlideId: null });
+          // A diff (VS Code diff side, merge request revision) opens with its changes visible; local files keep them on demand.
+          st.set({ diff: { base: m.base, label: m.label, doc: m.doc as SlideDocument | null, available: m.available, error: m.error, layout: m.layout }, showDiff: m.doc ? st.showDiff || m.base === 'mr' || !!m.showChanges : false, showBase: m.doc ? st.showBase : false, ghostSlideId: null });
           if (m.error && m.base !== 'none') st.notify('warning', m.error);
           if (m.openComments) st.set({ pane: 'comments', tab: 'review' });
           break;

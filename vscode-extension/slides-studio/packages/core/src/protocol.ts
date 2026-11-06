@@ -4,7 +4,11 @@ import { LayoutDef, MasterOverride } from './schema.js';
 import { tr } from './i18n.js';
 
 /** Which revision the visual diff compares the document with. */
-export const DiffBaseKind = z.enum(['none', 'head', 'mr']);
+/** `diff`: the other side of the VS Code diff this editor was opened in. */
+export const DiffBaseKind = z.enum(['none', 'head', 'mr', 'diff']);
+/** How a comparison is shown: both versions side by side (VS Code diff) or the new version only, its changes marked. */
+export const DiffLayout = z.enum(['side-by-side', 'new-only']);
+export type DiffLayout = z.infer<typeof DiffLayout>;
 export type DiffBaseKind = z.infer<typeof DiffBaseKind>;
 
 /** GitLab review payload relayed from the Project Integration companion. Lines are 1-based source lines. */
@@ -64,6 +68,8 @@ export const WebviewMessage = z.discriminatedUnion('type', [
   /** Slide show started / ended: the host hides the workbench (zen mode) when the webview cannot go full screen. */
   z.object({ type: z.literal('presentation'), active: z.boolean() }),
   z.object({ type: z.literal('setDiffBase'), base: DiffBaseKind }),
+  /** Switch between the side-by-side diff and the new version alone (the host reopens the matching view). */
+  z.object({ type: z.literal('diffLayout'), layout: DiffLayout }),
   z.object({
     type: z.literal('review'),
     action: z.enum(['load', 'create', 'reply', 'resolve']),
@@ -109,7 +115,19 @@ export type HostMessage =
       /** Set when the document is one side of a GitLab merge request diff. */
       review?: { mr: string; side: 'old' | 'new' };
     }
-  | { type: 'diffBase'; base: DiffBaseKind; label: string; doc: unknown | null; available: DiffBaseKind[]; error?: string; openComments?: boolean }
+  | {
+      type: 'diffBase';
+      base: DiffBaseKind;
+      label: string;
+      doc: unknown | null;
+      available: DiffBaseKind[];
+      error?: string;
+      openComments?: boolean;
+      /** Opened as a diff: changes shown from the start. */
+      showChanges?: boolean;
+      /** Current layout when the view can switch to the other one. */
+      layout?: DiffLayout;
+    }
   | { type: 'review'; requestId?: number; action?: string; data?: ReviewData; error?: string }
   | { type: 'revealReviewComment'; noteId: number }
   | { type: 'gmcFiles'; files: string[] }

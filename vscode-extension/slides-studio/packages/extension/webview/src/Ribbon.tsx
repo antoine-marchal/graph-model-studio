@@ -589,6 +589,7 @@ const BASES: { id: DiffBaseKind; label: string }[] = [
   { id: 'none', label: tr('Aucune', 'None') },
   { id: 'head', label: 'HEAD' },
   { id: 'mr', label: tr('Base MR', 'MR base') },
+  { id: 'diff', label: tr('Autre côté', 'Other side') },
 ];
 
 function ReviewTab() {
@@ -625,11 +626,23 @@ function ReviewTab() {
         <Col>
           <div className="seg seg-compact" role="radiogroup" aria-label={tr("Version de référence", "Reference version")}>
             {BASES.filter((b) => diffState.available.includes(b.id)).map((b) => (
-              <button key={b.id} type="button" role="radio" aria-checked={diffState.base === b.id} className={`ibtn${diffState.base === b.id ? ' is-active' : ''}`} data-testid={`diff-base-${b.id}`} onClick={() => post({ type: 'setDiffBase', base: b.id })}>
+              <button key={b.id} type="button" role="radio" aria-checked={diffState.base === b.id} className={`ibtn${diffState.base === b.id ? ' is-active' : ''}`} data-testid={`diff-base-${b.id}`} title={b.id === 'diff' && diffState.base === 'diff' ? diffState.label : undefined} onClick={() => post({ type: 'setDiffBase', base: b.id })}>
                 {b.label}
               </button>
             ))}
           </div>
+          {diffState.layout && (
+            <div className="seg seg-compact" role="radiogroup" aria-label={tr("Affichage de la comparaison", "Comparison layout")}>
+              {([
+                ['side-by-side', tr('Côte à côte', 'Side by side'), tr('Les deux versions côte à côte, sur la même diapositive', 'Both versions side by side, on the same slide')],
+                ['new-only', tr('Nouvelle version', 'New version'), tr('La nouvelle version seule, ses modifications signalées', 'The new version alone, its changes marked')],
+              ] as const).map(([id, label, title]) => (
+                <button key={id} type="button" role="radio" aria-checked={diffState.layout === id} className={`ibtn${diffState.layout === id ? ' is-active' : ''}`} data-testid={`diff-layout-${id}`} title={title} onClick={() => diffState.layout !== id && post({ type: 'diffLayout', layout: id })}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           <Row>
             <Small iconOnly icon="prev" label={tr("Modification précédente", "Previous change")} disabled={!changed.length} onClick={() => step(-1)} />
             <Small iconOnly icon="next" label={tr("Modification suivante", "Next change")} disabled={!changed.length} onClick={() => step(1)} />

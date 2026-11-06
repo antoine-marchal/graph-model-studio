@@ -4,6 +4,7 @@ import { SETTING_KEYS } from "../webview/settings";
 import { onCustomCssChange, readCustomCss } from "./customCss";
 import { gmcViewNames } from "../webview/conversion-utils";
 import { linkMrRevision, sendReview } from "./review";
+import { BetterMarkdownDiffPanel, diffTitle, closeNativeDiffTab } from "./diffPanel";
 import { PanelSync, enqueue } from "./panelSync";
 import { MasterLibrary } from "./masterLibrary";
 import { preflight, reportMarkdown, type ExportHost } from "./exportDocx";
@@ -916,11 +917,35 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     }
     partner.peer = pane;
     pane.peer = partner;
+    // VS Code resolves the original side first; a working file is always the modified one.
     const paneIsOriginal = pane.document.uri.scheme !== "file" && partner.document.uri.scheme === "file";
     pane.side = paneIsOriginal ? "original" : "modified";
     partner.side = paneIsOriginal ? "modified" : "original";
-    sendDiff(pane);
-    sendDiff(partner);
+    const original = paneIsOriginal ? pane : partner;
+    const modified = paneIsOriginal ? partner : pane;
+    const fallback = () => {
+      sendDiff(pane);
+      sendDiff(partner);
+    };
+    if (!this.redirectToRichDiff(original.document.uri, modified.document.uri, fallback)) fallback();
+  }
+
+  /**
+   * A diff VS Code opened with this editor on both sides (Source Control,
+   * Git history, merge request) becomes the rich diff panel: one diff viewer
+   * whatever opened it. Diffs from other tools (their own URI schemes, e.g.
+   * an AI assistant's proposed edit) keep VS Code's diff.
+   */
+  private redirectToRichDiff(left: vscode.Uri, right: vscode.Uri, fallback: () => void): boolean {
+    const known = (u: vscode.Uri) => ["file", "git", "gitlens", "pi-mr"].includes(u.scheme);
+    if (!known(left) || !known(right)) return false;
+    if (!vscode.workspace.getConfiguration(CONFIG_NAMESPACE).get<boolean>("openDiffAsRich", true)) return false;
+    setTimeout(async () => {
+      // Two editors opened together without a diff tab (e.g. a file and its HEAD copy): not a diff.
+      if (!(await closeNativeDiffTab(left, right))) return fallback();
+      await BetterMarkdownDiffPanel.createOrShow(this.context, left, right, diffTitle(left, right));
+    }, 0);
+    return true;
   }
 
   private pngSequence = 0;

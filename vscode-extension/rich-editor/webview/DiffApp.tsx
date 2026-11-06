@@ -16,6 +16,9 @@ interface DiffInit {
   title?: string;
   baseUri?: string;
   settings?: Partial<BetterMarkdownSettings>;
+  /** The new version has GitLab discussions (merge request revision or linked local file). */
+  review?: boolean;
+  baseError?: string;
 }
 
 /**
@@ -44,6 +47,8 @@ export function DiffApp() {
           fileName: msg.fileName || "file.md",
           title: msg.title,
           baseUri: msg.baseUri,
+          review: !!msg.review,
+          baseError: msg.baseError,
         });
       } else if (msg.type === "diffUpdate") {
         // Host can push refreshed content (e.g. underlying file changed)
@@ -53,6 +58,7 @@ export function DiffApp() {
                 ...prev,
                 oldContent: msg.oldContent ?? prev.oldContent,
                 newContent: msg.newContent ?? prev.newContent,
+                baseError: msg.baseError,
               }
             : prev,
         );
@@ -85,6 +91,8 @@ export function DiffApp() {
       fileName={data.fileName}
       title={data.title}
       baseUri={data.baseUri}
+      review={data.review}
+      baseError={data.baseError}
       layout={settings.diffLayout}
       mode={settings.diffMode}
       onClose={() => vscodeApi.postMessage({ type: "closeDiff" })}

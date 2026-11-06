@@ -35,6 +35,8 @@ export interface DiffState {
   doc: SlideDocument | null;
   available: DiffBaseKind[];
   error?: string;
+  /** Side by side (VS Code diff) or new version only; unset when the view cannot switch. */
+  layout?: 'side-by-side' | 'new-only';
 }
 
 /** Layout designer session: the layout is edited as the virtual slide `doc.slides[0]`. */
