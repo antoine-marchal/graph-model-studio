@@ -71,6 +71,8 @@ function themedRoots(theme: ExportTheme): { html: HTMLElement; body: HTMLElement
     body.classList.remove(...DARK_BODY_CLASSES);
     body.classList.add("vscode-light");
     body.setAttribute("data-vscode-theme-kind", "vscode-light");
+    body.removeAttribute("data-vscode-theme-name");
+    body.removeAttribute("data-vscode-theme-id");
     // VS Code's (possibly dark) colors; fonts and sizes stay.
     for (const name of Array.from(html.style)) {
       if (name.startsWith("--vscode-") && !/font/i.test(name)) html.style.removeProperty(name);
@@ -248,8 +250,10 @@ export async function buildExportSnapshot(theme: ExportTheme = "light"): Promise
   });
 
   clone.querySelectorAll(CHROME).forEach((el) => el.remove());
-  clone.querySelectorAll("[contenteditable]").forEach((el) => el.removeAttribute("contenteditable"));
-  clone.querySelectorAll("[draggable]").forEach((el) => el.removeAttribute("draggable"));
+  // The editor root carries contenteditable / tabindex itself: querySelectorAll skips it.
+  for (const el of [clone, ...Array.from(clone.querySelectorAll<HTMLElement>("[contenteditable], [draggable], [tabindex], [spellcheck]"))]) {
+    for (const name of ["contenteditable", "draggable", "tabindex", "spellcheck", "translate"]) el.removeAttribute(name);
+  }
   for (const cls of TRANSIENT_CLASSES) clone.querySelectorAll(`.${cls}`).forEach((el) => el.classList.remove(cls));
   clone.classList.remove("ProseMirror-focused");
   // Checkbox state lives in the property, not the attribute.
