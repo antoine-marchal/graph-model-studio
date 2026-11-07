@@ -284,23 +284,35 @@ async function waitForStableGraph(wrapper: GraphCaptureWorkspace): Promise<void>
   if (!previous) throw new Error('The active graph view has no measured content to export.')
 }
 
+/**
+ * The rasterizer doesn't resolve CSS variables in SVG paint: a `var(--edge)`
+ * stroke vanishes and a `var(--surface-1)` fill turns black. Edge paths and
+ * every SVG shape painted through a variable (sequence lifelines and
+ * activation bars, timeline spines, lanes…) get their computed colors inline.
+ */
+const PAINT_PROPERTIES = ['stroke', 'fill'] as const
+
 function materializeEdgeStrokes(wrapper: HTMLElement) {
-  const strokes = Array.from(wrapper.querySelectorAll<SVGPathElement>('.react-flow__edge-path')).map(path => ({
-    path,
-    value: path.style.getPropertyValue('stroke'),
-    priority: path.style.getPropertyPriority('stroke'),
-  }))
-  for (const { path } of strokes) {
-    const stroke = getComputedStyle(path).stroke
-    if (stroke && stroke !== 'none') path.style.setProperty('stroke', stroke, 'important')
+  const saved: { element: SVGElement; property: string; value: string; priority: string }[] = []
+  const shapes = wrapper.querySelectorAll<SVGElement>('svg :is(path, line, polyline, polygon, rect, circle, ellipse, text)')
+  for (const element of Array.from(shapes)) {
+    const isEdge = element.classList.contains('react-flow__edge-path')
+    for (const property of PAINT_PROPERTIES) {
+      const declared = `${element.getAttribute(property) ?? ''} ${element.style.getPropertyValue(property)}`
+      if (!(isEdge && property === 'stroke') && !declared.includes('var(')) continue
+      const computed = getComputedStyle(element).getPropertyValue(property)
+      if (!computed || computed === 'none') continue
+      saved.push({ element, property, value: element.style.getPropertyValue(property), priority: element.style.getPropertyPriority(property) })
+      element.style.setProperty(property, computed, 'important')
+    }
   }
-  return strokes
+  return saved
 }
 
-function restoreEdgeStrokes(strokes: ReturnType<typeof materializeEdgeStrokes>) {
-  for (const { path, value, priority } of strokes) {
-    if (value) path.style.setProperty('stroke', value, priority)
-    else path.style.removeProperty('stroke')
+function restoreEdgeStrokes(saved: ReturnType<typeof materializeEdgeStrokes>) {
+  for (const { element, property, value, priority } of saved) {
+    if (value) element.style.setProperty(property, value, priority)
+    else element.style.removeProperty(property)
   }
 }
 
