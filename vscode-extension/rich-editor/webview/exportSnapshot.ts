@@ -46,6 +46,9 @@ html, body { height: auto !important; min-height: 0 !important; overflow: visibl
 /** Light export: no page background, and light values for the VS Code
  *  variables the theme layer (base.css) leaves to VS Code. */
 const LIGHT_CSS = `
+/* The chrome stylesheet (Slides Studio) defaults :root to color-scheme: dark,
+   which would paint the transparent page's canvas dark in the browser. */
+:root, html { color-scheme: light !important; }
 html, body, .btrmk-export-chain, .tiptap-editor { background: transparent !important; }
 body[data-theme] {
   color-scheme: light;
@@ -67,6 +70,7 @@ function themedRoots(theme: ExportTheme): { html: HTMLElement; body: HTMLElement
     body.dataset.theme = current.includes("light") ? current : "github-light";
     body.classList.remove(...DARK_BODY_CLASSES);
     body.classList.add("vscode-light");
+    body.setAttribute("data-vscode-theme-kind", "vscode-light");
     // VS Code's (possibly dark) colors; fonts and sizes stay.
     for (const name of Array.from(html.style)) {
       if (name.startsWith("--vscode-") && !/font/i.test(name)) html.style.removeProperty(name);
@@ -193,6 +197,33 @@ function addHeadingIds(root: HTMLElement) {
     const count = seen.get(base) ?? 0;
     seen.set(base, count + 1);
     if (!h.id) h.id = count ? `${base}-${count}` : base;
+  });
+  resolveInPageLinks(root);
+}
+
+/** In-page links (TOC) whose target id doesn't exist exactly — other slug
+ *  flavours (GitHub keeps one hyphen per space, encoded accents…) — point to
+ *  the heading whose slug matches once reduced to letters and digits. */
+function resolveInPageLinks(root: HTMLElement) {
+  const loose = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  const byLoose = new Map<string, string[]>();
+  const ids = new Set<string>();
+  root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6").forEach((h) => {
+    if (!h.id) return;
+    ids.add(h.id);
+    const key = loose(h.id);
+    byLoose.set(key, [...(byLoose.get(key) ?? []), h.id]);
+  });
+  root.querySelectorAll<HTMLAnchorElement>('a[href^="#"]').forEach((a) => {
+    let target = a.getAttribute("href")!.slice(1);
+    try { target = decodeURIComponent(target); } catch { /* keep raw */ }
+    if (ids.has(target)) return void a.setAttribute("href", `#${target}`);
+    // A trailing -N picks the Nth duplicate.
+    const dup = /^(.*?)-(\d+)$/.exec(target);
+    const candidates = byLoose.get(loose(target)) ?? (dup ? byLoose.get(loose(dup[1])) : undefined);
+    if (!candidates?.length) return;
+    const id = byLoose.has(loose(target)) || !dup ? candidates[0] : candidates[Number(dup[2])];
+    if (id) a.setAttribute("href", `#${id}`);
   });
 }
 

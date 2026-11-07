@@ -11,6 +11,42 @@ const { MarkdownEmbedder } = require('../../markdown-code-embedder/embedder')
 
 const md = new MarkdownIt({ html: true, linkify: true, typographer: false })
 
+const looseSlug = value => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+
+/** Heading ids (same slugs as the TOC generator) and in-page links resolved
+ *  to them, so the exported table of contents works. */
+md.core.ruler.push('export_heading_ids', state => {
+  const seen = new Map()
+  const ids = new Set()
+  const byLoose = new Map()
+  const tokens = state.tokens
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i].type !== 'heading_open' || tokens[i].attrGet('id')) continue
+    const text = (tokens[i + 1]?.children || []).filter(t => t.type === 'text' || t.type === 'code_inline').map(t => t.content).join('')
+    const base = text.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').trim().replace(/\s+/g, '-')
+    if (!base) continue
+    const count = seen.get(base) || 0
+    seen.set(base, count + 1)
+    const id = count ? `${base}-${count}` : base
+    tokens[i].attrSet('id', id)
+    ids.add(id)
+    byLoose.set(looseSlug(id), [...(byLoose.get(looseSlug(id)) || []), id])
+  }
+  for (const token of tokens) {
+    for (const child of token.children || []) {
+      const href = child.type === 'link_open' && child.attrGet('href')
+      if (!href || !href.startsWith('#')) continue
+      let target = href.slice(1)
+      try { target = decodeURIComponent(target) } catch {}
+      if (ids.has(target)) continue
+      const dup = /^(.*?)-(\d+)$/.exec(target)
+      const exact = byLoose.get(looseSlug(target))
+      const id = exact ? exact[0] : dup && byLoose.get(looseSlug(dup[1]))?.[Number(dup[2])]
+      if (id) child.attrSet('href', `#${id}`)
+    }
+  }
+})
+
 function parseOptions(info) {
   const options = {}
   for (const match of info.matchAll(/([a-zA-Z_][\w-]*)=("[^"]*"|'[^']*'|\S+)/g)) {
@@ -114,7 +150,7 @@ function documentHtml(title, body, dark) {
     ? 'color:#d4d4d4;background:#1e1e1e;--border:#444;--code:#2b2b2b;--link:#4daafc'
     : 'color:#24292f;background:transparent;--border:#d0d7de;--code:#f6f8fa;--link:#0969da'
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(title)}</title><style>
-@page{margin:18mm}*{box-sizing:border-box}body{${colors};font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;max-width:1100px;margin:0 auto;padding:32px}a{color:var(--link)}img{max-width:100%;height:auto}h1,h2{border-bottom:1px solid var(--border);padding-bottom:.3em}pre{background:var(--code);padding:16px;overflow:auto;border-radius:6px}code{background:var(--code);padding:.15em .35em;border-radius:3px}pre code{padding:0}blockquote{border-left:4px solid var(--border);margin-left:0;padding-left:16px}table{border-collapse:collapse;width:max-content;max-width:100%;margin:16px 0}th,td{border:1px solid var(--border);padding:6px 13px}th{background:var(--code)}.gmc-export-diagram{margin:24px 0;text-align:center}.gmc-export-diagram img{display:block;margin:auto}@media print{body{max-width:none;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+:root{color-scheme:${dark ? 'dark' : 'light'}}@page{margin:18mm}*{box-sizing:border-box}body{${colors};font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;max-width:1100px;margin:0 auto;padding:32px}a{color:var(--link)}img{max-width:100%;height:auto}h1,h2{border-bottom:1px solid var(--border);padding-bottom:.3em}pre{background:var(--code);padding:16px;overflow:auto;border-radius:6px}code{background:var(--code);padding:.15em .35em;border-radius:3px}pre code{padding:0}blockquote{border-left:4px solid var(--border);margin-left:0;padding-left:16px}table{border-collapse:collapse;width:max-content;max-width:100%;margin:16px 0}th,td{border:1px solid var(--border);padding:6px 13px}th{background:var(--code)}.gmc-export-diagram{margin:24px 0;text-align:center}.gmc-export-diagram img{display:block;margin:auto}@media print{body{max-width:none;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>${body}</body></html>`
 }
 
