@@ -917,8 +917,10 @@ export class BetterMarkdownProvider implements vscode.CustomTextEditorProvider, 
     }
     partner.peer = pane;
     pane.peer = partner;
-    // VS Code resolves the original side first; a working file is always the modified one.
-    const paneIsOriginal = pane.document.uri.scheme !== "file" && partner.document.uri.scheme === "file";
+    // Resolution order is NOT reliable: each side resolves once its content
+    // is loaded, so two remote sides (merge request base / head) race. Ask the
+    // URIs and the diff tab first, resolution order only as a last resort.
+    const paneIsOriginal = isOriginalSide(pane.document.uri, partner.document.uri);
     pane.side = paneIsOriginal ? "original" : "modified";
     partner.side = paneIsOriginal ? "modified" : "original";
     const original = paneIsOriginal ? pane : partner;
@@ -1072,6 +1074,41 @@ interface DiffPane {
   peer?: DiffPane;
   side?: "original" | "modified";
   disposed?: boolean;
+}
+
+/** Side a URI declares itself: a working file is modified, a merge request URI carries `m.side`. */
+function declaredSide(uri: vscode.Uri): "original" | "modified" | undefined {
+  if (uri.scheme === "file") return "modified";
+  if (uri.scheme === "pi-mr") {
+    try {
+      const side = (JSON.parse(uri.query) as { m?: { side?: string } }).m?.side;
+      if (side === "old") return "original";
+      if (side === "new") return "modified";
+    } catch {
+      // Malformed query: fall through.
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether `uri` is the original side of the diff it forms with `other`
+ * (`other` resolved first). Order of evidence: what either URI declares, an
+ * open diff tab of the pair, then resolution order (the earlier one is original).
+ */
+function isOriginalSide(uri: vscode.Uri, other: vscode.Uri): boolean {
+  const mine = declaredSide(uri);
+  const theirs = declaredSide(other);
+  if (mine && mine !== theirs) return mine === "original";
+  if (theirs && theirs !== mine) return theirs === "modified";
+  const same = (a: vscode.Uri, b: vscode.Uri) => a.toString() === b.toString();
+  for (const tab of vscode.window.tabGroups.all.flatMap((g) => g.tabs)) {
+    const input = tab.input;
+    if (!(input instanceof vscode.TabInputTextDiff)) continue;
+    if (same(input.original, uri) && same(input.modified, other)) return true;
+    if (same(input.original, other) && same(input.modified, uri)) return false;
+  }
+  return false;
 }
 
 function diffKey(uri: vscode.Uri): string {
